@@ -1,0 +1,81 @@
+.conversation-create-actions { display: inline-flex; align-items: center; gap: 2px; }
+.federation-button { height: 30px; padding: 0 10px; display: inline-flex; align-items: center; gap: 6px; border: 1px solid rgba(67, 184, 255, .2); border-radius: 9px; background: rgba(67, 184, 255, .05); color: #8fa9c6; font-size: 10px; cursor: pointer; }
+.federation-button:hover, .federation-button.is-active { border-color: rgba(67, 184, 255, .48); background: rgba(67, 184, 255, .14); color: #bce2ff; }
+.mention-toolbar--federated { border-color: rgba(34, 211, 238, .25); background: linear-gradient(90deg, rgba(34, 211, 238, .07), rgba(139, 92, 246, .07)); }
+.mention-toolbar--federated button.is-participant { border-color: rgba(34, 211, 238, .55); background: rgba(34, 211, 238, .14); color: #b8f4ff; }
+
+.federation-panel { position: absolute; inset: 0 0 0 auto; z-index: 24; width: min(400px, 94vw); display: flex; flex-direction: column; overflow-y: auto; border-left: 1px solid var(--line); background: rgba(12, 17, 27, .985); box-shadow: -24px 0 60px rgba(0, 0, 0, .34); overscroll-behavior: contain; }
+.federation-panel__header { min-height: 58px; padding: 12px 14px; display: flex; align-items: center; justify-content: space-between; gap: 12px; position: sticky; top: 0; z-index: 2; border-bottom: 1px solid var(--line); background: rgba(12, 17, 27, .97); backdrop-filter: blur(14px); }
+.federation-panel__header strong, .federation-panel__header span { display: block; }
+.federation-panel__header strong { color: #ecf3fb; font-size: 13px; }
+.federation-panel__header span { margin-top: 3px; color: #738298; font-size: 9px; }
+.federation-panel > section { padding: 14px; border-bottom: 1px solid var(--line); }
+.federation-section-title { margin-bottom: 10px; display: flex; align-items: center; gap: 6px; color: #77869a; font-size: 9px; font-weight: 750; letter-spacing: .08em; text-transform: uppercase; }
+.federation-mode-row { display: grid; grid-template-columns: 32px minmax(0, 1fr); align-items: center; gap: 10px; padding: 11px; border: 1px solid rgba(67, 184, 255, .18); border-radius: 12px; background: rgba(67, 184, 255, .045); color: #7dd3fc; }
+.federation-mode-row strong, .federation-mode-row small { display: block; }
+.federation-mode-row strong { color: #dce9f5; font-size: 11px; }
+.federation-mode-row small { margin-top: 4px; color: #77869a; font-size: 8px; line-height: 1.45; }
+.federation-actions { margin-top: 9px; display: flex; gap: 7px; }
+.federation-actions button, .capsule-composer > button, .capsule-card footer button, .workflow-detail header button { min-height: 29px; padding: 0 9px; display: inline-flex; align-items: center; justify-content: center; gap: 5px; border: 1px solid rgba(148, 163, 184, .18); border-radius: 8px; background: rgba(255, 255, 255, .025); color: #9cabbf; font-size: 9px; cursor: pointer; }
+.federation-actions button:first-child { border-color: rgba(34, 211, 238, .3); color: #9aeafb; }
+.federation-actions button:disabled, .capsule-composer button:disabled, .capsule-card button:disabled { opacity: .45; cursor: default; }
+.federation-lanes { margin-top: 10px; display: flex; flex-wrap: wrap; gap: 5px; }
+.lane-chip { padding: 5px 7px; display: inline-flex; align-items: center; gap: 5px; border: 1px solid rgba(148, 163, 184, .13); border-radius: 999px; color: #a8b5c7; font-size: 8px; }
+.lane-chip small { color: #627086; font-size: 7px; text-transform: uppercase; }
+.lane-chip--letta { border-color: rgba(59, 130, 246, .27); background: rgba(59, 130, 246, .07); }
+.lane-chip--hermes { border-color: rgba(139, 92, 246, .27); background: rgba(139, 92, 246, .07); }
+
+.capsule-composer { display: grid; gap: 7px; padding: 10px; border: 1px solid rgba(148, 163, 184, .12); border-radius: 11px; background: rgba(255, 255, 255, .018); }
+.capsule-composer > div { display: grid; grid-template-columns: 1fr 1fr; gap: 5px; }
+.capsule-composer > div button { min-height: 27px; border: 1px solid rgba(148, 163, 184, .15); border-radius: 7px; background: transparent; color: #6f7d92; font-size: 8px; cursor: pointer; }
+.capsule-composer > div button.is-active { border-color: rgba(34, 211, 238, .36); background: rgba(34, 211, 238, .08); color: #a7effa; }
+.capsule-composer input, .capsule-composer textarea { width: 100%; border: 1px solid rgba(148, 163, 184, .14); border-radius: 8px; background: #0b101a; color: #d7e0eb; font: inherit; font-size: 10px; outline: none; }
+.capsule-composer input { height: 31px; padding: 0 9px; }
+.capsule-composer textarea { min-height: 64px; padding: 8px 9px; resize: vertical; line-height: 1.45; }
+.capsule-list { margin-top: 9px; display: grid; gap: 7px; }
+.capsule-card { padding: 10px; border: 1px solid rgba(148, 163, 184, .12); border-radius: 10px; background: rgba(255, 255, 255, .018); }
+.capsule-card--approved { border-color: rgba(34, 197, 94, .24); }
+.capsule-card--revoked { opacity: .58; border-color: rgba(244, 63, 94, .2); }
+.capsule-card header, .capsule-card footer { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.capsule-card header strong, .capsule-card header span { display: block; }
+.capsule-card header strong { color: #d9e2ed; font-size: 10px; }
+.capsule-card header span { margin-top: 3px; color: #718096; font-size: 8px; }
+.capsule-card header em { color: #8291a6; font-size: 8px; font-style: normal; }
+.capsule-card p { margin: 8px 0; color: #96a4b7; font-size: 9px; line-height: 1.55; white-space: pre-wrap; }
+.capsule-card footer { justify-content: flex-end; }
+.federation-empty { margin: 0; color: #657286; font-size: 9px; line-height: 1.5; }
+
+.workflow-run-list { display: grid; gap: 5px; }
+.workflow-run-list > button { min-height: 42px; padding: 7px 8px; display: grid; grid-template-columns: 10px minmax(0, 1fr); align-items: center; gap: 8px; border: 1px solid rgba(148, 163, 184, .1); border-radius: 9px; background: transparent; color: #8d9bb0; text-align: left; cursor: pointer; }
+.workflow-run-list > button.is-active { border-color: rgba(34, 211, 238, .32); background: rgba(34, 211, 238, .06); }
+.workflow-run-list strong, .workflow-run-list small { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.workflow-run-list strong { color: #cbd6e3; font-size: 9px; text-transform: capitalize; }
+.workflow-run-list small { margin-top: 3px; color: #66758a; font-size: 8px; }
+.run-dot { width: 7px; height: 7px; border-radius: 50%; background: #64748b; }
+.run-dot--running { background: #38bdf8; box-shadow: 0 0 0 3px rgba(56, 189, 248, .09); }
+.run-dot--completed { background: #22c55e; }
+.run-dot--paused { background: #f59e0b; }
+.run-dot--failed, .run-dot--cancelled { background: #fb7185; }
+.workflow-detail { margin-top: 10px; padding: 10px; border: 1px solid rgba(148, 163, 184, .12); border-radius: 10px; background: rgba(0, 0, 0, .12); }
+.workflow-detail > header { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.workflow-detail > header strong { color: #d9e4ee; font-size: 10px; font-family: ui-monospace, monospace; }
+.workflow-error { color: #f2a0ad; font-size: 8px; line-height: 1.4; }
+.workflow-step { min-height: 38px; display: grid; grid-template-columns: 10px minmax(0, 1fr); align-items: center; gap: 8px; border-bottom: 1px solid rgba(148, 163, 184, .075); }
+.workflow-step strong, .workflow-step small { display: block; }
+.workflow-step strong { color: #cdd7e4; font-size: 9px; }
+.workflow-step small { margin-top: 3px; color: #657388; font-size: 7px; }
+.workflow-events { margin-top: 10px; max-height: 180px; overflow-y: auto; }
+.workflow-events > strong { color: #748298; font-size: 8px; text-transform: uppercase; }
+.workflow-events > div { min-height: 26px; display: grid; grid-template-columns: 24px minmax(0, 1fr); align-items: center; border-bottom: 1px solid rgba(148, 163, 184, .06); }
+.workflow-events span { color: #56647a; font-size: 7px; }
+.workflow-events em { color: #8998ac; font-size: 8px; font-style: normal; }
+
+@media (max-width: 920px) {
+  .federation-panel { position: fixed; top: 0; bottom: 0; }
+  .chat-header__actions .federation-button { padding-inline: 8px; }
+}
+@media (max-width: 560px) {
+  .federation-panel { width: min(390px, 96vw); }
+  .federation-button { width: 30px; padding: 0; font-size: 0; justify-content: center; }
+  .conversation-create-actions { gap: 0; }
+}
