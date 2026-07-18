@@ -101,4 +101,57 @@ describe('HttpAgentAdapter federation payload', () => {
     })]);
     expect(received['federated_agents']).toHaveLength(2);
   });
+
+  it('uses the OpenAI chat-completions contract and parses SSE deltas', async () => {
+    let received: Record<string, unknown> = {};
+    let receivedPath = '';
+    let authorization = '';
+    const baseUrl = await startServer((request, response) => {
+      receivedPath = request.url ?? '';
+      authorization = request.headers.authorization ?? '';
+      const chunks: Buffer[] = [];
+      request.on('data', (chunk: Buffer) => chunks.push(Buffer.from(chunk)));
+      request.on('end', () => {
+        received = JSON.parse(Buffer.concat(chunks).toString('utf8')) as Record<string, unknown>;
+        response.writeHead(200, { 'Content-Type': 'text/event-stream' });
+        response.end('data: {"choices":[{"delta":{"content":"Hermes 응답"}}]}\n\ndata: [DONE]\n\n');
+      });
+    });
+
+    const adapter = new HttpAgentAdapter('hermes', {
+      baseUrl,
+      chatPath: '/v1/chat/completions',
+      healthPath: '/health',
+      timeoutMs: 2_000,
+      apiKey: 'secret',
+      protocol: 'openai',
+      modelMap: { '[Hermes] Lucy': 'lucy' },
+    });
+    const chunks = [];
+    const hermesCapsule = { ...approvedCapsule, sourceSystemId: 'letta' as const, targetSystemId: 'hermes' as const };
+    for await (const item of adapter.streamReply({
+      conversation,
+      userMessage,
+      history: [userMessage],
+      targetAgentId: '[Hermes] Lucy',
+      routingMode: 'team',
+      participants,
+      memoryCapsules: [hermesCapsule],
+      workflowRunId: 'workflow-run-openai',
+    })) chunks.push(item);
+
+    expect(receivedPath).toBe('/v1/chat/completions');
+    expect(authorization).toBe('Bearer secret');
+    expect(chunks).toEqual([{ type: 'delta', delta: 'Hermes 응답' }]);
+    expect(received).toMatchObject({
+      model: 'lucy',
+      stream: true,
+      messages: [
+        { role: 'system', content: expect.stringContaining('승인된 최소 문맥') },
+        { role: 'user', content: '교차 검토' },
+      ],
+    });
+    expect(received).not.toHaveProperty('agent_id');
+    expect(received).not.toHaveProperty('participants');
+  });
 });
