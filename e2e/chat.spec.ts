@@ -26,7 +26,7 @@ test('desktop Conversation workflow remains aligned and usable', async ({ page }
   await page.locator('button[aria-label="전송"]').click();
 
   await expect(page.getByText('브라우저 회귀검증 아젠다를 새 Conversation으로 유지해줘.')).toBeVisible();
-  await expect(page.getByText(/\[Hermes\] Lucy가 이 Conversation의 책임자로 응답합니다/)).toBeVisible();
+  await expect(page.getByText(/\[Hermes\] Lucy가 이 Conversation의 책임자로/)).toBeVisible();
 
   const search = page.getByPlaceholder('제목·본문·파일 검색');
   await search.fill('회귀검증');
@@ -42,6 +42,45 @@ test('desktop Conversation workflow remains aligned and usable', async ({ page }
   expect(serviceWorkerUrl).toContain('/sw.js');
 
   await page.screenshot({ path: testInfo.outputPath('desktop-1280x900.png'), fullPage: false });
+});
+
+test('Hermes mentions preserve subagent originals and Lucy synthesis', async ({ page }, testInfo) => {
+  test.skip(!testInfo.project.name.startsWith('desktop'));
+  await page.goto('/');
+  await page.locator('.conversations-title button[aria-label="새 대화"]').click();
+
+  await expect(page.getByRole('button', { name: '@Xixi' })).toBeVisible();
+  await page.getByRole('button', { name: '@Xixi' }).click();
+  await page.getByRole('button', { name: '@Lynn' }).click();
+  const composer = page.locator('textarea');
+  await composer.fill(`${await composer.inputValue()}구현안과 독립 검토를 함께 작성해줘.`);
+  await page.locator('button[aria-label="전송"]').click();
+
+  await expect(page.getByText(/Xixi 원문 결과/)).toBeVisible();
+  await expect(page.getByText(/Lynn 독립 검토 원문/)).toBeVisible();
+  await expect(page.getByText(/\[Hermes\] Lucy 종합응답/)).toBeVisible();
+  await expect(page.locator('.source-output')).toHaveCount(2);
+
+  await page.getByRole('button', { name: /팀 3/ }).click();
+  const panel = page.getByRole('complementary', { name: 'Hermes 팀 활동' });
+  await expect(panel).toBeVisible();
+  await expect(panel.getByText('Xixi', { exact: true }).first()).toBeVisible();
+  await expect(panel.getByText('Lynn', { exact: true }).first()).toBeVisible();
+  await expect(panel.getByText('활동 이력')).toBeVisible();
+  await expectNoHorizontalOverflow(page);
+  await page.screenshot({ path: testInfo.outputPath('desktop-hermes-team.png'), fullPage: false });
+});
+
+test('direct subagent entry opens an isolated agent Conversation', async ({ page }, testInfo) => {
+  test.skip(!testInfo.project.name.startsWith('desktop'));
+  await page.goto('/');
+  await page.locator('.system-card--violet .agent-row').filter({ hasText: 'Xixi' }).click();
+  await expect(page.locator('.chat-header')).toContainText('Xixi');
+  await expect(page.locator('.chat-header')).toContainText('Direct Agent');
+  await page.locator('textarea').fill('직접 구현 대화 경계를 확인해줘.');
+  await page.locator('button[aria-label="전송"]').click();
+  await expect(page.getByText(/Xixi 원문 결과/)).toBeVisible();
+  await expect(page.getByText(/\[Hermes\] Lucy 종합응답/)).toHaveCount(0);
 });
 
 test('mobile navigation preserves the System → Conversation hierarchy', async ({ page }, testInfo) => {
@@ -63,4 +102,13 @@ test('mobile navigation preserves the System → Conversation hierarchy', async 
   await expectNoHorizontalOverflow(page);
 
   await page.screenshot({ path: testInfo.outputPath('mobile-390x844.png'), fullPage: false });
+});
+
+test('mobile Hermes team panel stays inside the approved frame', async ({ page }, testInfo) => {
+  test.skip(!testInfo.project.name.startsWith('mobile'));
+  await page.goto('/');
+  await page.getByRole('button', { name: /팀 1/ }).click();
+  await expect(page.getByRole('complementary', { name: 'Hermes 팀 활동' })).toBeVisible();
+  await expectNoHorizontalOverflow(page);
+  await page.screenshot({ path: testInfo.outputPath('mobile-hermes-team-390x844.png'), fullPage: false });
 });
