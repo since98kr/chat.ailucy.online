@@ -39,6 +39,7 @@
 }
 
 .source-output {
+  display: none;
   padding: 2px 6px;
   border: 1px solid rgba(76, 141, 255, .2);
   border-radius: 999px;
@@ -46,6 +47,9 @@
   background: rgba(76, 141, 255, .075);
   font-size: 8px;
 }
+.message--xixi .source-output,
+.message--lynn .source-output,
+.message--gemma .source-output { display: inline-flex; }
 .message--xixi,
 .message--lynn,
 .message--gemma {
