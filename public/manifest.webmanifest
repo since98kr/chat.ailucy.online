@@ -1,0 +1,19 @@
+{
+  "name": "chat.ailucy.online V2",
+  "short_name": "Lucy Chat",
+  "description": "Tei의 Letta와 Hermes를 위한 개인용 AI Conversation 인터페이스",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "background_color": "#08101c",
+  "theme_color": "#0b1220",
+  "orientation": "any",
+  "icons": [
+    {
+      "src": "/icon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
+    }
+  ]
+}

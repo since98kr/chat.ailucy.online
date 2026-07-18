@@ -40,13 +40,23 @@ OpenClaw is not part of V2.
 - Independent Letta and Hermes adapter boundaries.
 - Deterministic mock mode for development.
 - Configurable HTTP mode with health probes.
-- NDJSON, SSE, OpenAI-compatible, and simple JSON stream normalization.
+- NDJSON, SSE, OpenAI-compatible, simple JSON, and plain-text stream normalization.
 - No silent fallback when a configured real backend is unhealthy.
+- Local compatibility tests verify bearer authentication and backend-neutral Conversation payloads.
+
+### Smartphone and PWA
+
+- Installable PWA manifest and app icon.
+- Standalone smartphone metadata and safe-area viewport support.
+- Offline application shell for reopening the interface.
+- `/api` requests and AI responses are never cached by the service worker.
 
 ### Runtime and automation
 
 - Unified Web/API production container.
-- GitHub Actions typecheck, API tests, production builds, Compose validation, container build, and runtime smoke tests.
+- GitHub Actions typecheck, API tests, adapter tests, production builds, Compose validation, container build, and runtime smoke tests.
+- Real Chromium regression at 1280×900 desktop and 390×844 mobile sizes.
+- Automated horizontal-overflow checks and retained desktop/mobile screenshots.
 - Isolated localhost staging Compose service.
 - Repository-scoped self-hosted runner bootstrap.
 - Revision-tagged staging deployments with health validation and automatic rollback.
@@ -66,6 +76,8 @@ Validation:
 npm run typecheck
 npm test
 npm run build
+npx playwright install chromium
+npm run test:e2e
 ```
 
 Container preview:
