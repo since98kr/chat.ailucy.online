@@ -16,9 +16,9 @@ concurrency:
 
 jobs:
   application:
-    name: Typecheck, test, and build
+    name: Typecheck, test, build, and container smoke
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 20
 
     steps:
       - name: Checkout
@@ -68,3 +68,28 @@ jobs:
           path: dist-server
           if-no-files-found: error
           retention-days: 7
+
+      - name: Build production container
+        run: docker build --tag chat-ailucy-v2:ci .
+
+      - name: Container smoke test
+        shell: bash
+        run: |
+          set -euo pipefail
+          docker run --detach --name chat-v2-ci --publish 127.0.0.1:4180:4174 chat-ailucy-v2:ci
+          cleanup() {
+            docker logs chat-v2-ci || true
+            docker rm --force chat-v2-ci >/dev/null 2>&1 || true
+          }
+          trap cleanup EXIT
+
+          for attempt in $(seq 1 30); do
+            if curl --fail --silent http://127.0.0.1:4180/api/health > health.json; then
+              break
+            fi
+            sleep 1
+          done
+
+          node -e "const h=require('./health.json'); if(!h.ok || !h.adapters.letta.ok || !h.adapters.hermes.ok) process.exit(1)"
+          curl --fail --silent http://127.0.0.1:4180/ | grep --quiet 'chat.ailucy.online V2'
+          test "$(docker inspect --format='{{.State.Health.Status}}' chat-v2-ci)" != "unhealthy"
