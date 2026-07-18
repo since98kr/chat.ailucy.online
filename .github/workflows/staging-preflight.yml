@@ -82,6 +82,7 @@ jobs:
           HERMES_AGENT_ID: ${{ vars.HERMES_AGENT_ID }}
           HERMES_API_KEY: ${{ secrets.HERMES_API_KEY }}
           HERMES_TIMEOUT_MS: ${{ vars.HERMES_TIMEOUT_MS }}
+          HERMES_DOCKER_NETWORK: ${{ vars.HERMES_DOCKER_NETWORK }}
         run: bash scripts/ops/staging-preflight.sh "$CHAT_PREFLIGHT_IMAGE" "$CHAT_PREFLIGHT_REVISION"
 
       - name: Publish preflight summary
