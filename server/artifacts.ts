@@ -4,7 +4,9 @@ import { basename, join, resolve } from 'node:path';
 import { randomUUID } from 'node:crypto';
 import type { MultipartFile } from '@fastify/multipart';
 
-const root = resolve(process.env.CHAT_ARTIFACT_ROOT ?? './data/artifacts');
+function rootPath() {
+  return resolve(process.env.CHAT_ARTIFACT_ROOT ?? './data/artifacts');
+}
 
 function safeName(filename: string) {
   const base = basename(filename).replace(/[^\p{L}\p{N}._-]+/gu, '-');
@@ -12,7 +14,7 @@ function safeName(filename: string) {
 }
 
 export async function storeArtifact(conversationId: string, file: MultipartFile) {
-  const directory = join(root, conversationId);
+  const directory = join(rootPath(), conversationId);
   mkdirSync(directory, { recursive: true });
 
   const filename = safeName(file.filename);
@@ -34,5 +36,5 @@ export async function storeArtifact(conversationId: string, file: MultipartFile)
 }
 
 export function artifactRoot() {
-  return root;
+  return rootPath();
 }
