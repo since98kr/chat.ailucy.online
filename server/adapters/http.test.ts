@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it } from 'vitest';
 import { createServer, type RequestListener, type Server } from 'node:http';
 import type { AddressInfo } from 'node:net';
-import type { ConversationRecord, MessageRecord } from '../../shared/contracts.js';
+import type { ConversationParticipantRecord, ConversationRecord, MessageRecord } from '../../shared/contracts.js';
 import { HttpAgentAdapter } from './http.js';
 
 const timestamp = '2026-07-18T00:00:00.000Z';
@@ -31,6 +31,29 @@ const userMessage: MessageRecord = {
   createdAt: timestamp,
   updatedAt: timestamp,
 };
+const participants: ConversationParticipantRecord[] = [{
+  conversationId: conversation.id,
+  agentId: '[Hermes] Lucy',
+  role: 'lead',
+  state: 'active',
+  addedAt: timestamp,
+  updatedAt: timestamp,
+  agent: {
+    id: '[Hermes] Lucy',
+    systemId: 'hermes',
+    displayName: '[Hermes] Lucy',
+    shortName: 'Lucy',
+    role: 'Lead Orchestrator',
+    description: '',
+    capabilities: ['orchestration'],
+    enabled: true,
+    directChatEnabled: true,
+    isLead: true,
+    sortOrder: 10,
+    createdAt: timestamp,
+    updatedAt: timestamp,
+  },
+}];
 
 let server: Server | null = null;
 
@@ -88,6 +111,9 @@ describe('HttpAgentAdapter', () => {
       conversation,
       userMessage,
       history: [userMessage],
+      targetAgentId: 'Xixi',
+      routingMode: 'team',
+      participants,
     })) items.push(item);
 
     expect(items).toEqual([
@@ -99,8 +125,13 @@ describe('HttpAgentAdapter', () => {
     expect(receivedBody).toMatchObject({
       stream: true,
       system_id: 'hermes',
-      agent_id: '[Hermes] Lucy',
+      agent_id: 'Xixi',
+      configured_agent_id: '[Hermes] Lucy',
       conversation_id: conversation.id,
+      metadata: {
+        routing_mode: 'team',
+        target_agent_id: 'Xixi',
+      },
     });
     const receivedMessages = receivedBody['messages'] as Array<Record<string, unknown>>;
     expect(receivedMessages[0]).toMatchObject({
@@ -108,6 +139,8 @@ describe('HttpAgentAdapter', () => {
       content: '연결 테스트',
       author_id: 'tei',
     });
+    const receivedParticipants = receivedBody['participants'] as Array<Record<string, unknown>>;
+    expect(receivedParticipants[0]).toMatchObject({ agent_id: '[Hermes] Lucy', role: 'lead' });
   });
 
   it('normalizes NDJSON and plain text lines without mixing backend memory', async () => {
@@ -126,11 +159,25 @@ describe('HttpAgentAdapter', () => {
       timeoutMs: 2_000,
     });
     const lettaConversation = { ...conversation, systemId: 'letta' as const, agentId: '[Letta] Lucy' };
+    const lettaParticipant = {
+      ...participants[0],
+      conversationId: lettaConversation.id,
+      agentId: '[Letta] Lucy',
+      agent: {
+        ...participants[0].agent,
+        id: '[Letta] Lucy',
+        systemId: 'letta' as const,
+        displayName: '[Letta] Lucy',
+      },
+    };
     const items = [];
     for await (const item of adapter.streamReply({
       conversation: lettaConversation,
       userMessage: { ...userMessage, conversationId: lettaConversation.id },
       history: [{ ...userMessage, conversationId: lettaConversation.id }],
+      targetAgentId: '[Letta] Lucy',
+      routingMode: 'direct',
+      participants: [lettaParticipant],
     })) items.push(item);
 
     expect(items).toEqual([
