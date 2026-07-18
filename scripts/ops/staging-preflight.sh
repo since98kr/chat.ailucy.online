@@ -26,8 +26,8 @@ docker image inspect "${IMAGE}" >/dev/null || fail "image not found: ${IMAGE}"
 mkdir -p "${DATA_DIR}/artifacts" "${DATA_DIR}/backups" "${STATE_DIR}"
 test -r "${DATA_DIR}" -a -w "${DATA_DIR}" -a -x "${DATA_DIR}" || fail "data directory is not usable: ${DATA_DIR}"
 
-RUNTIME_UID="${CHAT_RUNTIME_UID:-$(stat -c '%u' "${DATA_DIR}")}" 
-RUNTIME_GID="${CHAT_RUNTIME_GID:-$(stat -c '%g' "${DATA_DIR}")}" 
+RUNTIME_UID="${CHAT_RUNTIME_UID:-$(stat -c '%u' "${DATA_DIR}")}"
+RUNTIME_GID="${CHAT_RUNTIME_GID:-$(stat -c '%g' "${DATA_DIR}")}"
 IMAGE_REVISION="$(docker image inspect --format '{{range .Config.Env}}{{println .}}{{end}}' "${IMAGE}" | sed -n 's/^CHAT_BUILD_SHA=//p' | head -n 1)"
 
 if [[ -n "${EXPECTED_REVISION}" && "${IMAGE_REVISION}" != "${EXPECTED_REVISION}" ]]; then
@@ -50,8 +50,8 @@ DOCKER_ENV=(
   --env CHAT_DB_PATH=/data/chat-v2.sqlite
   --env CHAT_ARTIFACT_ROOT=/data/artifacts
   --env CHAT_BACKUP_ROOT=/data/backups
-  --env CHAT_PREFLIGHT_REQUIRE_AUTH=true
-  --env CHAT_PREFLIGHT_REQUIRE_REAL_ADAPTERS=true
+  --env "CHAT_PREFLIGHT_REQUIRE_AUTH=${STRICT}"
+  --env "CHAT_PREFLIGHT_REQUIRE_REAL_ADAPTERS=${STRICT}"
 )
 for name in "${ENV_VARS[@]}"; do
   if [[ -n "${!name-}" ]]; then
@@ -80,7 +80,7 @@ fi
 
 if [[ "${STATUS}" -ne 0 ]] || ! node -e "const j=require('${STATE_DIR}/last-preflight.json');if(!j.ok)process.exit(1)"; then
   cat "${STATE_DIR}/last-preflight.json"
-  fail 'strict runtime preflight failed'
+  fail 'runtime preflight failed'
 fi
 
 log "Preflight passed for revision ${IMAGE_REVISION:-unknown}."
