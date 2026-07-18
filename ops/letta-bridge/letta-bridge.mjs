@@ -148,6 +148,12 @@ class LettaSession {
       this.readyResolve = resolve;
       this.readyReject = reject;
     });
+    const readyTimeout = setTimeout(() => {
+      this.fail(new Error('Letta process initialization timed out'));
+      this.child?.kill('SIGTERM');
+    }, Math.min(this.config.requestTimeoutMs, 60_000));
+    readyTimeout.unref?.();
+    this.readyPromise.finally(() => clearTimeout(readyTimeout));
 
     this.child = spawn(this.config.command, args, {
       cwd: this.config.cwd,
@@ -397,6 +403,9 @@ export function createBridgeServer(config) {
 
     const controller = new AbortController();
     request.once('aborted', () => controller.abort());
+    response.once('close', () => {
+      if (!response.writableEnded) controller.abort();
+    });
 
     try {
       const payload = await readJson(request, config.maxBodyBytes);
