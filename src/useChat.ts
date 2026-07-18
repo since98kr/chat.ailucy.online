@@ -3,6 +3,7 @@ import type {
   ArtifactRecord,
   ConversationDetail,
   ConversationRecord,
+  ConversationStatus,
   MessageRecord,
   StreamEvent,
   SystemId,
@@ -12,6 +13,7 @@ import {
   createConversation as createConversationApi,
   getConversation,
   listConversations,
+  permanentlyDeleteConversation,
   streamMessage,
   updateConversation as updateConversationApi,
   uploadArtifact,
@@ -32,6 +34,7 @@ function upsertMessage(messages: MessageRecord[], next: MessageRecord) {
 
 export function useChat() {
   const [selectedSystem, setSelectedSystem] = useState<SystemId>('hermes');
+  const [selectedStatus, setSelectedStatus] = useState<ConversationStatus>('active');
   const [activeAgent, setActiveAgent] = useState(defaultAgent.hermes);
   const [conversations, setConversations] = useState<ConversationRecord[]>([]);
   const [activeConversation, setActiveConversation] = useState<ConversationDetail | null>(null);
@@ -54,21 +57,28 @@ export function useChat() {
     return detail;
   }, []);
 
-  const refreshList = useCallback(async (systemId: SystemId, preferredId?: string | null) => {
-    const list = await listConversations(systemId);
-    setConversations(list);
+  const refreshList = useCallback(
+    async (
+      systemId: SystemId,
+      status: ConversationStatus,
+      preferredId?: string | null,
+    ) => {
+      const list = await listConversations(systemId, status);
+      setConversations(list);
 
-    const selectedId =
-      (preferredId && list.some((conversation) => conversation.id === preferredId) && preferredId) ||
-      list[0]?.id;
+      const selectedId =
+        (preferredId && list.some((conversation) => conversation.id === preferredId) && preferredId) ||
+        list[0]?.id;
 
-    if (!selectedId) {
-      setActiveConversation(null);
-      return;
-    }
+      if (!selectedId) {
+        setActiveConversation(null);
+        return;
+      }
 
-    await loadConversation(selectedId);
-  }, [loadConversation]);
+      await loadConversation(selectedId);
+    },
+    [loadConversation],
+  );
 
   useEffect(() => {
     let cancelled = false;
@@ -76,7 +86,7 @@ export function useChat() {
     setError(null);
     abortRef.current?.abort();
 
-    listConversations(selectedSystem)
+    listConversations(selectedSystem, selectedStatus)
       .then(async (list) => {
         if (cancelled) return;
         setConversations(list);
@@ -102,29 +112,39 @@ export function useChat() {
     return () => {
       cancelled = true;
     };
-  }, [selectedSystem]);
+  }, [selectedStatus, selectedSystem]);
 
   const switchSystem = useCallback((systemId: SystemId, agentId = defaultAgent[systemId]) => {
     abortRef.current?.abort();
+    setSelectedStatus('active');
     setSelectedSystem(systemId);
     setActiveAgent(agentId);
   }, []);
 
-  const selectConversation = useCallback(async (id: string) => {
+  const switchStatus = useCallback((status: ConversationStatus) => {
     abortRef.current?.abort();
-    setLoading(true);
-    setError(null);
-    try {
-      await loadConversation(id);
-    } catch (reason) {
-      setError(reason instanceof Error ? reason.message : '대화를 불러오지 못했습니다.');
-    } finally {
-      setLoading(false);
-    }
-  }, [loadConversation]);
+    setSelectedStatus(status);
+  }, []);
+
+  const selectConversation = useCallback(
+    async (id: string) => {
+      abortRef.current?.abort();
+      setLoading(true);
+      setError(null);
+      try {
+        await loadConversation(id);
+      } catch (reason) {
+        setError(reason instanceof Error ? reason.message : '대화를 불러오지 못했습니다.');
+      } finally {
+        setLoading(false);
+      }
+    },
+    [loadConversation],
+  );
 
   const createConversation = useCallback(async () => {
     setError(null);
+    setSelectedStatus('active');
     const detail = await createConversationApi({
       systemId: selectedSystem,
       agentId: activeAgent || defaultAgent[selectedSystem],
@@ -134,18 +154,31 @@ export function useChat() {
     return detail;
   }, [activeAgent, selectedSystem]);
 
-  const patchConversation = useCallback(async (input: UpdateConversationInput) => {
-    if (!activeIdRef.current) return null;
-    const detail = await updateConversationApi(activeIdRef.current, input);
-    setActiveConversation(detail);
-    setConversations((current) =>
-      current
-        .map((conversation) => (conversation.id === detail.id ? detail : conversation))
-        .filter((conversation) => conversation.status === 'active')
-        .sort((a, b) => Number(b.pinned) - Number(a.pinned) || b.updatedAt.localeCompare(a.updatedAt)),
-    );
-    return detail;
-  }, []);
+  const patchConversation = useCallback(
+    async (input: UpdateConversationInput) => {
+      if (!activeIdRef.current) return null;
+      const detail = await updateConversationApi(activeIdRef.current, input);
+      if (detail.status !== selectedStatus) {
+        await refreshList(selectedSystem, selectedStatus, null);
+        return detail;
+      }
+
+      setActiveConversation(detail);
+      setConversations((current) =>
+        current
+          .map((conversation) => (conversation.id === detail.id ? detail : conversation))
+          .sort((a, b) => Number(b.pinned) - Number(a.pinned) || b.updatedAt.localeCompare(a.updatedAt)),
+      );
+      return detail;
+    },
+    [refreshList, selectedStatus, selectedSystem],
+  );
+
+  const deletePermanently = useCallback(async () => {
+    if (!activeIdRef.current || selectedStatus !== 'trashed') return;
+    await permanentlyDeleteConversation(activeIdRef.current);
+    await refreshList(selectedSystem, selectedStatus, null);
+  }, [refreshList, selectedStatus, selectedSystem]);
 
   const saveDraft = useCallback((draft: string) => {
     setActiveConversation((current) => (current ? { ...current, draft } : current));
@@ -220,62 +253,65 @@ export function useChat() {
     }
   }, []);
 
-  const sendMessage = useCallback(async (content: string) => {
-    const trimmed = content.trim();
-    if (!trimmed || isStreaming) return;
+  const sendMessage = useCallback(
+    async (content: string) => {
+      const trimmed = content.trim();
+      if (!trimmed || isStreaming || selectedStatus !== 'active') return;
 
-    let conversation = activeConversation;
-    if (!conversation) conversation = await createConversation();
+      let conversation = activeConversation;
+      if (!conversation) conversation = await createConversation();
 
-    const clientMessageId = crypto.randomUUID();
-    const timestamp = new Date().toISOString();
-    const optimistic: MessageRecord = {
-      id: clientMessageId,
-      conversationId: conversation.id,
-      role: 'user',
-      authorId: 'tei',
-      content: trimmed,
-      state: 'complete',
-      parentMessageId: conversation.messages.at(-1)?.id ?? null,
-      createdAt: timestamp,
-      updatedAt: timestamp,
-    };
+      const clientMessageId = crypto.randomUUID();
+      const timestamp = new Date().toISOString();
+      const optimistic: MessageRecord = {
+        id: clientMessageId,
+        conversationId: conversation.id,
+        role: 'user',
+        authorId: 'tei',
+        content: trimmed,
+        state: 'complete',
+        parentMessageId: conversation.messages.at(-1)?.id ?? null,
+        createdAt: timestamp,
+        updatedAt: timestamp,
+      };
 
-    setActiveConversation((current) =>
-      current ? { ...current, draft: '', messages: upsertMessage(current.messages, optimistic) } : current,
-    );
-    setIsStreaming(true);
-    setRunStatus('메시지 전송 중');
-    setError(null);
-    const controller = new AbortController();
-    abortRef.current = controller;
-
-    try {
-      await streamMessage(
-        conversation.id,
-        {
-          content: trimmed,
-          clientMessageId,
-          parentMessageId: optimistic.parentMessageId,
-        },
-        handleStreamEvent,
-        controller.signal,
+      setActiveConversation((current) =>
+        current ? { ...current, draft: '', messages: upsertMessage(current.messages, optimistic) } : current,
       );
-    } catch (reason) {
-      if (!controller.signal.aborted) {
-        setError(reason instanceof Error ? reason.message : '응답 스트림이 중단됐습니다.');
-      }
-    } finally {
-      setIsStreaming(false);
-      setRunStatus(null);
-      abortRef.current = null;
+      setIsStreaming(true);
+      setRunStatus('메시지 전송 중');
+      setError(null);
+      const controller = new AbortController();
+      abortRef.current = controller;
+
       try {
-        await refreshList(selectedSystem, conversation.id);
-      } catch {
-        // The optimistic transcript remains available even when refresh fails.
+        await streamMessage(
+          conversation.id,
+          {
+            content: trimmed,
+            clientMessageId,
+            parentMessageId: optimistic.parentMessageId,
+          },
+          handleStreamEvent,
+          controller.signal,
+        );
+      } catch (reason) {
+        if (!controller.signal.aborted) {
+          setError(reason instanceof Error ? reason.message : '응답 스트림이 중단됐습니다.');
+        }
+      } finally {
+        setIsStreaming(false);
+        setRunStatus(null);
+        abortRef.current = null;
+        try {
+          await refreshList(selectedSystem, 'active', conversation.id);
+        } catch {
+          // Keep the optimistic transcript visible when a refresh fails.
+        }
       }
-    }
-  }, [activeConversation, createConversation, handleStreamEvent, isStreaming, refreshList, selectedSystem]);
+    },
+    [activeConversation, createConversation, handleStreamEvent, isStreaming, refreshList, selectedStatus, selectedSystem],
+  );
 
   const stopStreaming = useCallback(() => {
     abortRef.current?.abort();
@@ -298,6 +334,7 @@ export function useChat() {
 
   return {
     selectedSystem,
+    selectedStatus,
     activeAgent,
     conversations,
     activeConversation,
@@ -306,9 +343,11 @@ export function useChat() {
     runStatus,
     isStreaming,
     switchSystem,
+    switchStatus,
     selectConversation,
     createConversation,
     patchConversation,
+    deletePermanently,
     saveDraft,
     sendMessage,
     stopStreaming,
