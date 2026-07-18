@@ -1,0 +1,32 @@
+services:
+  chat-v2:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: chat-ailucy-v2:preview
+    container_name: chat-ailucy-v2-preview
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:4174:4174"
+    environment:
+      NODE_ENV: production
+      CHAT_API_PORT: 4174
+      CHAT_DB_PATH: /data/chat-v2.sqlite
+      CHAT_ARTIFACT_ROOT: /data/artifacts
+      CHAT_WEB_ROOT: /app/dist
+      CHAT_ALLOWED_ORIGIN: http://127.0.0.1:4174
+    volumes:
+      - chat-v2-preview-data:/data
+    healthcheck:
+      test:
+        - CMD
+        - node
+        - -e
+        - "fetch('http://127.0.0.1:4174/api/health').then(r=>{if(!r.ok)process.exit(1)}).catch(()=>process.exit(1))"
+      interval: 15s
+      timeout: 5s
+      retries: 4
+      start_period: 10s
+
+volumes:
+  chat-v2-preview-data:
