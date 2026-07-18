@@ -6,7 +6,7 @@
   "scripts": {
     "dev": "concurrently -k -n web,api -c blue,magenta \"npm:dev:web\" \"npm:dev:api\"",
     "dev:web": "vite --host 0.0.0.0",
-    "dev:api": "tsx watch server/index.ts",
+    "dev:api": "tsx watch server/runtime.ts",
     "build": "npm run typecheck && npm run build:web && npm run build:api",
     "build:web": "vite build",
     "build:api": "tsup server/runtime.ts --format esm --platform node --target node22 --out-dir dist-server --sourcemap",
