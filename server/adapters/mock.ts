@@ -1,5 +1,5 @@
 import type { AdapterRequest, AdapterStreamItem, ChatBackendAdapter } from './types.js';
-import type { SystemId } from '../../shared/contracts.js';
+import type { AdapterHealthRecord, SystemId } from '../../shared/contracts.js';
 
 const sleep = (milliseconds: number) => new Promise((resolve) => setTimeout(resolve, milliseconds));
 
@@ -15,8 +15,8 @@ function buildReply(systemId: SystemId, request: AdapterRequest) {
 export class MockAdapter implements ChatBackendAdapter {
   constructor(readonly systemId: SystemId) {}
 
-  async health() {
-    return { ok: true, detail: `${this.systemId} mock adapter ready` };
+  async health(): Promise<AdapterHealthRecord> {
+    return { ok: true, mode: 'mock', detail: `${this.systemId} mock adapter ready` };
   }
 
   async *streamReply(request: AdapterRequest): AsyncGenerator<AdapterStreamItem> {
