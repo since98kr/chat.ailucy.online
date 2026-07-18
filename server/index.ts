@@ -67,9 +67,10 @@ export function buildApp(options?: { databasePath?: string; artifactRoot?: strin
     }
 
     app.log.error(error);
+    const errorMessage = error instanceof Error ? error.message : 'Unknown internal error';
     return reply.status(500).send({
       error: 'INTERNAL_ERROR',
-      message: process.env.NODE_ENV === 'production' ? 'Internal server error' : error.message,
+      message: process.env.NODE_ENV === 'production' ? 'Internal server error' : errorMessage,
     });
   });
 
