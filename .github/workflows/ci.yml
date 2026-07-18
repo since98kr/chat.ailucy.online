@@ -117,6 +117,18 @@ jobs:
             --build-arg CHAT_VERSION=0.5.0 \
             --tag chat-ailucy-v2:ci .
 
+      - name: Exercise host staging-preflight wrapper
+        shell: bash
+        env:
+          CHAT_STAGING_ROOT: ${{ runner.temp }}/chat-v2-staging
+          CHAT_STAGING_DATA_DIR: ${{ runner.temp }}/chat-v2-staging/data
+          CHAT_STAGING_PORT: '4199'
+          CHAT_PREFLIGHT_STRICT: 'false'
+          CHAT_PREFLIGHT_MIN_FREE_BYTES: '1'
+        run: |
+          set -o pipefail
+          bash scripts/ops/staging-preflight.sh chat-ailucy-v2:ci ci-sha 2>&1 | tee staging-preflight.log
+
       - name: Container security, identity, and recovery smoke test
         shell: bash
         env:
@@ -132,6 +144,8 @@ jobs:
           name: chat-v2-container-smoke
           path: |
             container-smoke.log
+            staging-preflight.log
+            ${{ runner.temp }}/chat-v2-staging/state/last-preflight.json
             preflight.json
             health.json
             ops-status.json
