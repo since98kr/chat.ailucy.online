@@ -233,8 +233,9 @@ export function buildApp(options?: { databasePath?: string; artifactRoot?: strin
   app.post('/api/conversations/:id/messages/stream', async (request, reply) => {
     const { id } = z.object({ id: z.string().min(1) }).parse(request.params);
     const input = sendMessageSchema.parse(request.body);
-    const existing = db.getConversation(id);
-    if (!existing) return reply.status(404).send({ error: 'CONVERSATION_NOT_FOUND' });
+    const found = db.getConversation(id);
+    if (!found) return reply.status(404).send({ error: 'CONVERSATION_NOT_FOUND' });
+    const conversation = found;
 
     const userMessage = db.addMessage({
       id: input.clientMessageId,
@@ -252,7 +253,7 @@ export function buildApp(options?: { databasePath?: string; artifactRoot?: strin
       for await (const event of runCollaborativeReply({
         database: db,
         collaboration,
-        conversation: existing,
+        conversation,
         userMessage,
         attachedArtifacts,
         sendInput: input,
