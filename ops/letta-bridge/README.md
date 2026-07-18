@@ -35,6 +35,16 @@ sudo bash ops/letta-bridge/install-agentlucy-tunnel.sh
 
 The tunnel binds to Docker's bridge gateway rather than a public interface. Chat V2 reaches it as `http://host.docker.internal:18283`.
 
+## Configure GitHub staging
+
+After the bridge and passwordless SSH are ready, run this once on `agentlucy`:
+
+```bash
+bash ops/letta-bridge/configure-github-staging.sh
+```
+
+The script creates or updates the `staging` Environment, writes all non-secret Chat/Letta/Hermes variables, and copies the Letta bridge token into the `LETTA_API_KEY` Environment secret without printing it.
+
 ## GitHub staging values
 
 ```text
@@ -45,12 +55,4 @@ LETTA_AGENT_ID=agent-local-0dc7f93b-7b2e-41f3-8193-a9520950557c
 LETTA_PROTOCOL=native
 LETTA_TIMEOUT_MS=300000
 LETTA_MODEL_MAP_JSON={}
-```
-
-Copy the existing bridge token directly into the GitHub Environment secret without printing it:
-
-```bash
-ssh -p 3004 since98kr@ax.hni-gl.ai \
-  "sed -n 's/^LETTA_BRIDGE_TOKEN=//p' ~/.config/letta-bridge.env" \
-  | gh secret set LETTA_API_KEY --repo since98kr/chat.ailucy.online --env staging
 ```
