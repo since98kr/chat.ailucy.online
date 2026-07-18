@@ -11,8 +11,17 @@ services:
       CHAT_API_PORT: 4174
       CHAT_DB_PATH: /data/chat-v2.sqlite
       CHAT_ARTIFACT_ROOT: /data/artifacts
+      CHAT_BACKUP_ROOT: /data/backups
+      CHAT_BACKUP_RETENTION: ${CHAT_BACKUP_RETENTION:-10}
       CHAT_WEB_ROOT: /app/dist
+      CHAT_PUBLIC_ORIGIN: ${CHAT_PUBLIC_ORIGIN:-}
       CHAT_ALLOWED_ORIGIN: ${CHAT_ALLOWED_ORIGIN:-}
+      CHAT_AUTH_MODE: ${CHAT_AUTH_MODE:-disabled}
+      CHAT_ALLOWED_EMAILS: ${CHAT_ALLOWED_EMAILS:-}
+      CHAT_ACCESS_TOKEN: ${CHAT_ACCESS_TOKEN:-}
+      CHAT_RATE_LIMIT_GENERAL: ${CHAT_RATE_LIMIT_GENERAL:-300}
+      CHAT_RATE_LIMIT_CHAT: ${CHAT_RATE_LIMIT_CHAT:-30}
+      CHAT_RATE_LIMIT_UPLOAD: ${CHAT_RATE_LIMIT_UPLOAD:-60}
       LETTA_BASE_URL: ${LETTA_BASE_URL:-}
       LETTA_CHAT_PATH: ${LETTA_CHAT_PATH:-/v1/chat/stream}
       LETTA_HEALTH_PATH: ${LETTA_HEALTH_PATH:-/health}
@@ -37,3 +46,5 @@ services:
       retries: 4
     security_opt:
       - no-new-privileges:true
+    cap_drop:
+      - ALL
