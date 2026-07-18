@@ -5,8 +5,8 @@ import { registerProductionWeb } from './web.js';
 
 async function start() {
   const app = buildApp();
-  registerRuntimeSecurity(app);
-  registerOperationsRoutes(app);
+  const security = registerRuntimeSecurity(app);
+  registerOperationsRoutes(app, security);
   registerProductionWeb(app);
 
   const port = Number(process.env.CHAT_API_PORT ?? 4174);
