@@ -3,12 +3,20 @@ import cors from '@fastify/cors';
 import multipart from '@fastify/multipart';
 import { Readable } from 'node:stream';
 import { createReadStream } from 'node:fs';
-import { randomUUID } from 'node:crypto';
 import { z } from 'zod';
 import { ChatDatabase } from './database.js';
-import { adapterHealth, getAdapter } from './adapters/index.js';
+import { adapterHealth } from './adapters/index.js';
 import { storeArtifact } from './artifacts.js';
-import type { ConversationDetail, StreamEvent, SystemId } from '../shared/contracts.js';
+import { CollaborationService } from './collaboration.js';
+import { registerCollaborationRoutes } from './collaboration-routes.js';
+import { runCollaborativeReply } from './collaboration-runner.js';
+import type {
+  ConversationDetail,
+  ConversationParticipantRecord,
+  StreamEvent,
+  SystemId,
+  TeamActivityRecord,
+} from '../shared/contracts.js';
 
 const conversationStatusSchema = z.enum(['active', 'archived', 'trashed']);
 const systemIdSchema = z.enum(['letta', 'hermes']);
@@ -39,23 +47,34 @@ const sendMessageSchema = z.object({
   clientMessageId: z.string().uuid().optional(),
   parentMessageId: z.string().uuid().nullable().optional(),
   artifactIds: z.array(z.string().uuid()).max(20).default([]),
+  targetAgentIds: z.array(z.string().min(1).max(120)).max(20).default([]),
 });
 
 function eventLine(event: StreamEvent) {
   return `${JSON.stringify(event)}\n`;
 }
 
-function markdownExport(conversation: ConversationDetail) {
+function markdownExport(
+  conversation: ConversationDetail,
+  participants: ConversationParticipantRecord[],
+  activities: TeamActivityRecord[],
+) {
   const lines = [
     `# ${conversation.title}`,
     '',
     `- System: ${conversation.systemId}`,
-    `- Agent: ${conversation.agentId}`,
+    `- Primary agent: ${conversation.agentId}`,
     `- Created: ${conversation.createdAt}`,
     `- Updated: ${conversation.updatedAt}`,
   ];
   if (conversation.branchedFromConversationId) {
     lines.push(`- Branched from: ${conversation.branchedFromConversationId}`);
+  }
+  if (participants.length) {
+    lines.push('', '## Participants', '');
+    for (const participant of participants) {
+      lines.push(`- ${participant.agent.displayName} — ${participant.role} / ${participant.state} / ${participant.agent.role}`);
+    }
   }
   lines.push('', '---', '');
   for (const message of conversation.messages) {
@@ -70,17 +89,25 @@ function markdownExport(conversation: ConversationDetail) {
   if (unattached.length) {
     lines.push('## Unattached files', '', ...unattached.map((artifact) => `- ${artifact.filename} (${artifact.mimeType})`), '');
   }
+  if (activities.length) {
+    lines.push('## Team activity', '');
+    for (const activity of [...activities].reverse()) {
+      lines.push(`- ${activity.createdAt} · ${activity.agent.displayName} · ${activity.type} · ${activity.summary}`);
+    }
+    lines.push('');
+  }
   return lines.join('\n');
 }
 
 export function buildApp(options?: { databasePath?: string; artifactRoot?: string }) {
   if (options?.artifactRoot) process.env.CHAT_ARTIFACT_ROOT = options.artifactRoot;
   const db = new ChatDatabase(options?.databasePath);
+  const collaboration = new CollaborationService(db);
   const app = Fastify({ logger: process.env.NODE_ENV !== 'test' });
 
   app.register(cors, {
     origin: process.env.CHAT_ALLOWED_ORIGIN?.split(',').map((value) => value.trim()) ?? true,
-    methods: ['GET', 'POST', 'PATCH', 'DELETE', 'OPTIONS'],
+    methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
   });
   app.register(multipart, {
     limits: {
@@ -107,10 +134,15 @@ export function buildApp(options?: { databasePath?: string; artifactRoot?: strin
     ok: true,
     service: 'chat-ailucy-v2',
     adapters: await adapterHealth(),
+    agents: {
+      letta: collaboration.listAgents('letta').filter((agent) => agent.enabled).length,
+      hermes: collaboration.listAgents('hermes').filter((agent) => agent.enabled).length,
+    },
     timestamp: new Date().toISOString(),
   }));
 
   app.get('/api/adapters/probe', async () => ({ adapters: await adapterHealth() }));
+  registerCollaborationRoutes(app, db, collaboration);
 
   app.get('/api/conversations', async (request) => {
     const query = z.object({
@@ -145,9 +177,13 @@ export function buildApp(options?: { databasePath?: string; artifactRoot?: strin
 
   app.post('/api/conversations', async (request, reply) => {
     const input = createConversationSchema.parse(request.body);
-    return reply.status(201).send({
-      conversation: db.createConversation(input.systemId, input.agentId, input.title),
-    });
+    const agent = collaboration.getAgent(input.agentId);
+    if (!agent || agent.systemId !== input.systemId || !agent.enabled || !agent.directChatEnabled) {
+      return reply.status(409).send({ error: 'AGENT_UNAVAILABLE' });
+    }
+    const conversation = db.createConversation(input.systemId, input.agentId, input.title);
+    collaboration.initializeConversation(conversation.id, input.systemId, input.agentId);
+    return reply.status(201).send({ conversation: db.getConversation(conversation.id) });
   });
 
   app.post('/api/conversations/:id/branch', async (request, reply) => {
@@ -155,7 +191,8 @@ export function buildApp(options?: { databasePath?: string; artifactRoot?: strin
     const input = branchConversationSchema.parse(request.body ?? {});
     const conversation = db.branchConversation(id, input);
     if (!conversation) return reply.status(404).send({ error: 'CONVERSATION_OR_MESSAGE_NOT_FOUND' });
-    return reply.status(201).send({ conversation });
+    collaboration.cloneParticipants(id, conversation.id);
+    return reply.status(201).send({ conversation: db.getConversation(conversation.id) });
   });
 
   app.get('/api/conversations/:id/export/markdown', async (request, reply) => {
@@ -167,7 +204,11 @@ export function buildApp(options?: { databasePath?: string; artifactRoot?: strin
       'Content-Disposition',
       `attachment; filename*=UTF-8''${encodeURIComponent(`${conversation.title}.md`)}`,
     );
-    return reply.send(markdownExport(conversation));
+    return reply.send(markdownExport(
+      conversation,
+      collaboration.listParticipants(id),
+      collaboration.listActivities(id, 500),
+    ));
   });
 
   app.patch('/api/conversations/:id', async (request, reply) => {
@@ -204,56 +245,20 @@ export function buildApp(options?: { databasePath?: string; artifactRoot?: strin
       parentMessageId: input.parentMessageId,
     });
     const attachedArtifacts = db.attachArtifacts(id, input.artifactIds, userMessage.id);
-    const runId = randomUUID();
-    const assistantMessage = db.addMessage({
-      conversationId: id,
-      role: 'assistant',
-      authorId: existing.agentId,
-      content: '',
-      state: 'streaming',
-      parentMessageId: userMessage.id,
-    });
-    const adapter = getAdapter(existing.systemId as SystemId);
     const controller = new AbortController();
     reply.raw.once('close', () => controller.abort());
 
     async function* generate() {
-      yield eventLine({ type: 'message.accepted', message: userMessage });
-      if (attachedArtifacts.length) {
-        yield eventLine({ type: 'artifacts.attached', messageId: userMessage.id, artifacts: attachedArtifacts });
-      }
-      yield eventLine({ type: 'run.started', runId });
-      let content = '';
-      try {
-        const latest = db.getConversation(id)!;
-        for await (const item of adapter.streamReply({
-          conversation: latest,
-          userMessage,
-          history: latest.messages,
-          signal: controller.signal,
-        })) {
-          if (item.type === 'status') {
-            yield eventLine({ type: 'run.status', runId, status: item.status });
-          } else {
-            content += item.delta;
-            db.updateMessage(assistantMessage.id, { content, state: 'streaming' });
-            yield eventLine({
-              type: 'content.delta',
-              runId,
-              messageId: assistantMessage.id,
-              delta: item.delta,
-            });
-          }
-        }
-        const finalMessage = db.updateMessage(assistantMessage.id, {
-          content,
-          state: controller.signal.aborted ? 'cancelled' : 'complete',
-        })!;
-        yield eventLine({ type: 'run.completed', runId, message: finalMessage });
-      } catch (error) {
-        const message = error instanceof Error ? error.message : 'Unknown adapter error';
-        db.updateMessage(assistantMessage.id, { content, state: 'failed' });
-        yield eventLine({ type: 'run.failed', runId, error: message });
+      for await (const event of runCollaborativeReply({
+        database: db,
+        collaboration,
+        conversation: existing,
+        userMessage,
+        attachedArtifacts,
+        sendInput: input,
+        signal: controller.signal,
+      })) {
+        yield eventLine(event);
       }
     }
 
