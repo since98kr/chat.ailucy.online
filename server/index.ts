@@ -10,11 +10,14 @@ import { storeArtifact } from './artifacts.js';
 import { CollaborationService } from './collaboration.js';
 import { registerCollaborationRoutes } from './collaboration-routes.js';
 import { runCollaborativeReply } from './collaboration-runner.js';
+import { FederationService } from './federation.js';
+import { registerFederationRoutes } from './federation-routes.js';
+import { runFederatedWorkflow } from './federated-runner.js';
 import type {
   ConversationDetail,
   ConversationParticipantRecord,
+  FederationSnapshotRecord,
   StreamEvent,
-  SystemId,
   TeamActivityRecord,
 } from '../shared/contracts.js';
 
@@ -25,6 +28,7 @@ const createConversationSchema = z.object({
   systemId: systemIdSchema,
   agentId: z.string().min(1).max(120),
   title: z.string().trim().min(1).max(160).optional(),
+  federated: z.boolean().default(false),
 });
 
 const updateConversationSchema = z
@@ -48,6 +52,8 @@ const sendMessageSchema = z.object({
   parentMessageId: z.string().uuid().nullable().optional(),
   artifactIds: z.array(z.string().uuid()).max(20).default([]),
   targetAgentIds: z.array(z.string().min(1).max(120)).max(20).default([]),
+  workflowMode: z.enum(['chat', 'federated']).default('chat'),
+  idempotencyKey: z.string().trim().min(8).max(200).optional(),
 });
 
 function eventLine(event: StreamEvent) {
@@ -58,22 +64,39 @@ function markdownExport(
   conversation: ConversationDetail,
   participants: ConversationParticipantRecord[],
   activities: TeamActivityRecord[],
+  federation: FederationSnapshotRecord,
 ) {
   const lines = [
     `# ${conversation.title}`,
     '',
     `- System: ${conversation.systemId}`,
     `- Primary agent: ${conversation.agentId}`,
+    `- Mode: ${federation.config?.mode ?? 'single'}`,
     `- Created: ${conversation.createdAt}`,
     `- Updated: ${conversation.updatedAt}`,
   ];
   if (conversation.branchedFromConversationId) {
     lines.push(`- Branched from: ${conversation.branchedFromConversationId}`);
   }
+  if (federation.config?.mode === 'federated') {
+    lines.push(`- Coordinator: ${federation.config.coordinatorAgentId}`);
+    lines.push(`- Memory policy: ${federation.config.memoryPolicy}`);
+    lines.push(`- Allowed systems: ${federation.config.allowedSystemIds.join(', ')}`);
+  }
   if (participants.length) {
     lines.push('', '## Participants', '');
     for (const participant of participants) {
       lines.push(`- ${participant.agent.displayName} — ${participant.role} / ${participant.state} / ${participant.agent.role}`);
+    }
+  }
+  if (federation.capsules.length) {
+    lines.push('', '## Memory Capsules', '');
+    for (const capsule of federation.capsules) {
+      lines.push(`### ${capsule.title}`, '');
+      lines.push(`- ${capsule.sourceSystemId} → ${capsule.targetSystemId}`);
+      lines.push(`- Status: ${capsule.status}`);
+      lines.push(`- Approved: ${capsule.approvedAt ?? 'not approved'}`, '');
+      lines.push(capsule.content, '');
     }
   }
   lines.push('', '---', '');
@@ -96,6 +119,21 @@ function markdownExport(
     }
     lines.push('');
   }
+  if (federation.runs.length) {
+    lines.push('## Workflow runs', '');
+    for (const run of federation.runs) {
+      lines.push(`### ${run.id}`, '');
+      lines.push(`- Status: ${run.status}`);
+      lines.push(`- Idempotency key: ${run.idempotencyKey}`);
+      lines.push(`- Coordinator: ${run.coordinatorAgentId}`);
+      lines.push(`- Requested agents: ${run.requestedAgentIds.join(', ')}`);
+      lines.push(`- Error: ${run.error ?? 'none'}`, '');
+      for (const step of run.steps) {
+        lines.push(`  - ${step.agentId} · ${step.systemId} · group ${step.parallelGroup} · ${step.status} · attempt ${step.attempt}`);
+      }
+      lines.push('');
+    }
+  }
   return lines.join('\n');
 }
 
@@ -103,6 +141,7 @@ export function buildApp(options?: { databasePath?: string; artifactRoot?: strin
   if (options?.artifactRoot) process.env.CHAT_ARTIFACT_ROOT = options.artifactRoot;
   const db = new ChatDatabase(options?.databasePath);
   const collaboration = new CollaborationService(db);
+  const federation = new FederationService(db);
   const app = Fastify({ logger: process.env.NODE_ENV !== 'test' });
 
   app.register(cors, {
@@ -138,11 +177,16 @@ export function buildApp(options?: { databasePath?: string; artifactRoot?: strin
       letta: collaboration.listAgents('letta').filter((agent) => agent.enabled).length,
       hermes: collaboration.listAgents('hermes').filter((agent) => agent.enabled).length,
     },
+    workflow: {
+      federatedConversations: db.db.prepare(`SELECT COUNT(*) AS count FROM conversation_federation WHERE mode = 'federated'`).get(),
+      resumableRuns: db.db.prepare(`SELECT COUNT(*) AS count FROM workflow_runs WHERE status IN ('paused', 'failed')`).get(),
+    },
     timestamp: new Date().toISOString(),
   }));
 
   app.get('/api/adapters/probe', async () => ({ adapters: await adapterHealth() }));
   registerCollaborationRoutes(app, db, collaboration);
+  registerFederationRoutes(app, db, collaboration, federation);
 
   app.get('/api/conversations', async (request) => {
     const query = z.object({
@@ -181,9 +225,16 @@ export function buildApp(options?: { databasePath?: string; artifactRoot?: strin
     if (!agent || agent.systemId !== input.systemId || !agent.enabled || !agent.directChatEnabled) {
       return reply.status(409).send({ error: 'AGENT_UNAVAILABLE' });
     }
+    if (input.federated && (input.systemId !== 'hermes' || input.agentId !== '[Hermes] Lucy')) {
+      return reply.status(409).send({ error: 'FEDERATED_CONVERSATION_REQUIRES_HERMES_LUCY' });
+    }
     const conversation = db.createConversation(input.systemId, input.agentId, input.title);
     collaboration.initializeConversation(conversation.id, input.systemId, input.agentId);
-    return reply.status(201).send({ conversation: db.getConversation(conversation.id) });
+    if (input.federated) federation.enableConversation(conversation.id, input.agentId);
+    return reply.status(201).send({
+      conversation: db.getConversation(conversation.id),
+      federation: federation.snapshot(conversation.id),
+    });
   });
 
   app.post('/api/conversations/:id/branch', async (request, reply) => {
@@ -192,6 +243,7 @@ export function buildApp(options?: { databasePath?: string; artifactRoot?: strin
     const conversation = db.branchConversation(id, input);
     if (!conversation) return reply.status(404).send({ error: 'CONVERSATION_OR_MESSAGE_NOT_FOUND' });
     collaboration.cloneParticipants(id, conversation.id);
+    federation.cloneConversation(id, conversation.id);
     return reply.status(201).send({ conversation: db.getConversation(conversation.id) });
   });
 
@@ -208,6 +260,7 @@ export function buildApp(options?: { databasePath?: string; artifactRoot?: strin
       conversation,
       collaboration.listParticipants(id),
       collaboration.listActivities(id, 500),
+      federation.snapshot(id),
     ));
   });
 
@@ -236,8 +289,16 @@ export function buildApp(options?: { databasePath?: string; artifactRoot?: strin
     const found = db.getConversation(id);
     if (!found) return reply.status(404).send({ error: 'CONVERSATION_NOT_FOUND' });
     const conversation = found;
+    const config = federation.getConfig(id);
+    const federated = config?.mode === 'federated' || input.workflowMode === 'federated';
+    if (federated && config?.mode !== 'federated') {
+      return reply.status(409).send({ error: 'FEDERATION_NOT_ENABLED' });
+    }
 
-    const userMessage = db.addMessage({
+    const idempotencyKey = input.idempotencyKey ?? input.clientMessageId ?? crypto.randomUUID();
+    const existingRun = federated ? federation.findRunByIdempotency(id, idempotencyKey) : null;
+    const existingMessage = existingRun ? db.getMessage(existingRun.sourceMessageId) : null;
+    const userMessage = existingMessage ?? db.addMessage({
       id: input.clientMessageId,
       conversationId: id,
       role: 'user',
@@ -245,22 +306,36 @@ export function buildApp(options?: { databasePath?: string; artifactRoot?: strin
       content: input.content,
       parentMessageId: input.parentMessageId,
     });
-    const attachedArtifacts = db.attachArtifacts(id, input.artifactIds, userMessage.id);
+    const attachedArtifacts = existingRun
+      ? conversation.artifacts.filter((artifact) => artifact.messageId === userMessage.id)
+      : db.attachArtifacts(id, input.artifactIds, userMessage.id);
     const controller = new AbortController();
     reply.raw.once('close', () => controller.abort());
 
     async function* generate() {
-      for await (const event of runCollaborativeReply({
-        database: db,
-        collaboration,
-        conversation,
-        userMessage,
-        attachedArtifacts,
-        sendInput: input,
-        signal: controller.signal,
-      })) {
-        yield eventLine(event);
-      }
+      const generator = federated
+        ? runFederatedWorkflow({
+            database: db,
+            collaboration,
+            federation,
+            conversation,
+            userMessage,
+            attachedArtifacts,
+            idempotencyKey,
+            requestedAgentIds: input.targetAgentIds,
+            signal: controller.signal,
+            existingRun,
+          })
+        : runCollaborativeReply({
+            database: db,
+            collaboration,
+            conversation,
+            userMessage,
+            attachedArtifacts,
+            sendInput: input,
+            signal: controller.signal,
+          });
+      for await (const event of generator) yield eventLine(event);
     }
 
     reply
