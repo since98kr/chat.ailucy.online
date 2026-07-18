@@ -15,8 +15,8 @@ test('desktop Conversation workflow remains aligned and usable', async ({ page }
 
   await page.goto('/');
   await expect(page.getByText('ailucy.online', { exact: true })).toBeVisible();
-  await expect(page.getByText('Chat V2 개발', { exact: true })).toBeVisible();
-  await expect(page.getByText('[Hermes] Lucy', { exact: false }).first()).toBeVisible();
+  await expect(page.locator('.conversation-row').filter({ hasText: 'Chat V2 개발' }).first()).toBeVisible();
+  await expect(page.locator('.chat-header')).toContainText('[Hermes] Lucy');
   await expectNoHorizontalOverflow(page);
 
   await page.locator('.conversations-title button[aria-label="새 대화"]').click();
