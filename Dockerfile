@@ -16,7 +16,15 @@ RUN npm run test \
 
 FROM node:22-bookworm-slim AS runtime
 
+ARG CHAT_BUILD_SHA=development
+ARG CHAT_BUILD_TIME=unknown
+ARG CHAT_VERSION=0.5.0
+
 ENV NODE_ENV=production \
+    CHAT_ENVIRONMENT=container \
+    CHAT_VERSION=${CHAT_VERSION} \
+    CHAT_BUILD_SHA=${CHAT_BUILD_SHA} \
+    CHAT_BUILD_TIME=${CHAT_BUILD_TIME} \
     CHAT_API_PORT=4174 \
     CHAT_DB_PATH=/data/chat-v2.sqlite \
     CHAT_ARTIFACT_ROOT=/data/artifacts \

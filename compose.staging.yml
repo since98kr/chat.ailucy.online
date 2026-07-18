@@ -9,6 +9,7 @@ services:
       - "127.0.0.1:${CHAT_STAGING_PORT:-14174}:4174"
     environment:
       NODE_ENV: production
+      CHAT_ENVIRONMENT: staging
       CHAT_API_PORT: 4174
       CHAT_DB_PATH: /data/chat-v2.sqlite
       CHAT_ARTIFACT_ROOT: /data/artifacts
@@ -28,11 +29,13 @@ services:
       LETTA_HEALTH_PATH: ${LETTA_HEALTH_PATH:-/health}
       LETTA_AGENT_ID: ${LETTA_AGENT_ID:-}
       LETTA_API_KEY: ${LETTA_API_KEY:-}
+      LETTA_TIMEOUT_MS: ${LETTA_TIMEOUT_MS:-10000}
       HERMES_BASE_URL: ${HERMES_BASE_URL:-}
       HERMES_CHAT_PATH: ${HERMES_CHAT_PATH:-/v1/chat/stream}
       HERMES_HEALTH_PATH: ${HERMES_HEALTH_PATH:-/health}
       HERMES_AGENT_ID: ${HERMES_AGENT_ID:-}
       HERMES_API_KEY: ${HERMES_API_KEY:-}
+      HERMES_TIMEOUT_MS: ${HERMES_TIMEOUT_MS:-10000}
     volumes:
       - ${CHAT_STAGING_DATA_DIR:-/opt/chat-v2/staging/data}:/data
     healthcheck:

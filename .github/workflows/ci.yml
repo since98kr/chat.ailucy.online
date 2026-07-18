@@ -18,7 +18,7 @@ jobs:
   application:
     name: Typecheck, test, browser regression, build, and container smoke
     runs-on: ubuntu-latest
-    timeout-minutes: 45
+    timeout-minutes: 50
 
     steps:
       - name: Checkout
@@ -32,11 +32,12 @@ jobs:
       - name: Install dependencies
         run: npm install --no-audit --no-fund
 
-      - name: Validate deployment and recovery scripts
+      - name: Validate deployment, preflight, and recovery scripts
         shell: bash
         run: |
           set -euo pipefail
           bash -n scripts/deploy/staging.sh
+          bash -n scripts/ops/staging-preflight.sh
           bash -n scripts/runner/install-chat-staging-runner.sh
           bash -n scripts/backup/restore-staging.sh
           bash -n scripts/ci/container-smoke.sh
@@ -57,7 +58,7 @@ jobs:
           if-no-files-found: warn
           retention-days: 7
 
-      - name: API, adapter, security, and backup tests
+      - name: API, adapter, security, preflight, and backup tests
         shell: bash
         run: |
           set -o pipefail
@@ -108,11 +109,30 @@ jobs:
           if-no-files-found: error
           retention-days: 7
 
-      - name: Build production container
-        run: docker build --tag chat-ailucy-v2:ci .
+      - name: Build versioned production container
+        run: |
+          docker build \
+            --build-arg CHAT_BUILD_SHA=ci-sha \
+            --build-arg CHAT_BUILD_TIME=2026-07-18T00:00:00Z \
+            --build-arg CHAT_VERSION=0.5.0 \
+            --tag chat-ailucy-v2:ci .
 
-      - name: Container security and recovery smoke test
+      - name: Exercise host staging-preflight wrapper
         shell: bash
+        env:
+          CHAT_STAGING_ROOT: ${{ runner.temp }}/chat-v2-staging
+          CHAT_STAGING_DATA_DIR: ${{ runner.temp }}/chat-v2-staging/data
+          CHAT_STAGING_PORT: '4199'
+          CHAT_PREFLIGHT_STRICT: 'false'
+          CHAT_PREFLIGHT_MIN_FREE_BYTES: '1'
+        run: |
+          set -o pipefail
+          bash scripts/ops/staging-preflight.sh chat-ailucy-v2:ci ci-sha 2>&1 | tee staging-preflight.log
+
+      - name: Container security, identity, and recovery smoke test
+        shell: bash
+        env:
+          CHAT_EXPECTED_SHA: ci-sha
         run: |
           set -o pipefail
           bash scripts/ci/container-smoke.sh 2>&1 | tee container-smoke.log
@@ -124,11 +144,17 @@ jobs:
           name: chat-v2-container-smoke
           path: |
             container-smoke.log
+            staging-preflight.log
+            ${{ runner.temp }}/chat-v2-staging/state/last-preflight.json
+            preflight.json
             health.json
+            ops-status.json
             response-headers.txt
             backup.json
             backup-verify.json
             unauthorized.json
             authorized.json
+            ops-unauthorized.json
+            ops-authorized.json
           if-no-files-found: warn
           retention-days: 7

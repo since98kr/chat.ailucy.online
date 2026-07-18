@@ -2,10 +2,12 @@
 set -Eeuo pipefail
 
 IMAGE="${CHAT_CI_IMAGE:-chat-ailucy-v2:ci}"
+EXPECTED_SHA="${CHAT_EXPECTED_SHA:-ci-sha}"
 PRIMARY_PORT="${CHAT_CI_PRIMARY_PORT:-4180}"
 AUTH_PORT="${CHAT_CI_AUTH_PORT:-4181}"
 PRIMARY_CONTAINER="chat-v2-ci"
 AUTH_CONTAINER="chat-v2-auth"
+PREFLIGHT_VOLUME="chat-v2-preflight-ci"
 
 log() { printf '[container-smoke] %s\n' "$*"; }
 
@@ -13,10 +15,19 @@ cleanup() {
   docker logs "${PRIMARY_CONTAINER}" || true
   docker logs "${AUTH_CONTAINER}" || true
   docker rm --force "${PRIMARY_CONTAINER}" "${AUTH_CONTAINER}" >/dev/null 2>&1 || true
+  docker volume rm "${PREFLIGHT_VOLUME}" >/dev/null 2>&1 || true
 }
 trap cleanup EXIT
 
 docker rm --force "${PRIMARY_CONTAINER}" "${AUTH_CONTAINER}" >/dev/null 2>&1 || true
+docker volume rm "${PREFLIGHT_VOLUME}" >/dev/null 2>&1 || true
+
+log 'Running non-strict exact-image preflight.'
+docker run --rm \
+  --volume "${PREFLIGHT_VOLUME}:/data" \
+  --env CHAT_PREFLIGHT_MIN_FREE_BYTES=1 \
+  "${IMAGE}" node dist-server/preflight.js | tee preflight.json
+node -e "const j=require('./preflight.json');if(!j.ok||j.build.sha!=='${EXPECTED_SHA}')process.exit(1)"
 
 log 'Starting primary runtime.'
 docker run --detach --name "${PRIMARY_CONTAINER}" --publish "127.0.0.1:${PRIMARY_PORT}:4174" "${IMAGE}"
@@ -25,6 +36,9 @@ for attempt in $(seq 1 30); do
   sleep 1
 done
 node -e "const h=require('./health.json');if(!h.ok||h.adapters.letta.mode!=='mock'||h.adapters.hermes.mode!=='mock')process.exit(1)"
+
+curl --fail --silent "http://127.0.0.1:${PRIMARY_PORT}/api/ops/status" > ops-status.json
+node -e "const j=require('./ops-status.json');if(!j.ok||j.build.sha!=='${EXPECTED_SHA}'||j.auth.mode!=='disabled')process.exit(1)"
 
 log 'Checking web assets and security headers.'
 curl --fail --silent --dump-header response-headers.txt "http://127.0.0.1:${PRIMARY_PORT}/" --output index.html
@@ -56,6 +70,10 @@ done
 UNAUTHORIZED_CODE="$(curl --silent --output unauthorized.json --write-out '%{http_code}' "http://127.0.0.1:${AUTH_PORT}/api/conversations")"
 log "Unauthorized response: ${UNAUTHORIZED_CODE} $(cat unauthorized.json)"
 test "${UNAUTHORIZED_CODE}" = '401'
+OPS_UNAUTHORIZED_CODE="$(curl --silent --output ops-unauthorized.json --write-out '%{http_code}' "http://127.0.0.1:${AUTH_PORT}/api/ops/status")"
+test "${OPS_UNAUTHORIZED_CODE}" = '401'
 curl --fail --silent --header 'Authorization: Bearer ci-secret' "http://127.0.0.1:${AUTH_PORT}/api/conversations" > authorized.json
 node -e "const j=require('./authorized.json');if(!Array.isArray(j.conversations))process.exit(1)"
-log 'Container security and recovery smoke passed.'
+curl --fail --silent --header 'Authorization: Bearer ci-secret' "http://127.0.0.1:${AUTH_PORT}/api/ops/status" > ops-authorized.json
+node -e "const j=require('./ops-authorized.json');if(!j.ok||j.build.sha!=='${EXPECTED_SHA}'||j.auth.mode!=='token')process.exit(1)"
+log 'Container security, identity, and recovery smoke passed.'
