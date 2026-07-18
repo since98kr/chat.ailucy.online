@@ -150,6 +150,22 @@ export function useChat() {
     return detail;
   }, [activeAgent, applyDetail, selectedSystem]);
 
+  const createFederatedConversation = useCallback(async () => {
+    abortRef.current?.abort();
+    setError(null);
+    setSelectedSystem('hermes');
+    setSelectedStatus('active');
+    setActiveAgent('[Hermes] Lucy');
+    const detail = await createConversationApi({
+      systemId: 'hermes',
+      agentId: '[Hermes] Lucy',
+      title: '새 교차 시스템 대화',
+      federated: true,
+    });
+    setConversations((current) => [detail, ...current]);
+    return applyDetail(detail);
+  }, [applyDetail]);
+
   const openAgentConversation = useCallback(async (systemId: SystemId, agentId: string) => {
     abortRef.current?.abort();
     setLoading(true);
@@ -237,8 +253,27 @@ export function useChat() {
   }, [selectedStatus, selectedSystem]);
 
   const handleStreamEvent = useCallback((event: StreamEvent) => {
-    if (event.type === 'routing.resolved' || event.type === 'participants.updated' || event.type === 'team.activity') {
+    if (
+      event.type === 'routing.resolved' ||
+      event.type === 'participants.updated' ||
+      event.type === 'team.activity' ||
+      event.type === 'workflow.run' ||
+      event.type === 'workflow.step' ||
+      event.type === 'workflow.event' ||
+      event.type === 'memory.capsule' ||
+      event.type === 'workflow.replayed'
+    ) {
       emitCollaborationEvent(event);
+      if (event.type === 'workflow.run') {
+        const statusLabel = event.run.status === 'running' ? '교차 시스템 워크플로 실행 중'
+          : event.run.status === 'paused' ? '워크플로가 중단되어 재개할 수 있습니다.'
+            : event.run.status === 'completed' ? '교차 시스템 워크플로 완료' : null;
+        setRunStatus(statusLabel);
+      } else if (event.type === 'workflow.step' && event.step.status === 'running') {
+        setRunStatus(`${event.step.agentId} · ${event.step.systemId} 실행 중`);
+      } else if (event.type === 'workflow.replayed') {
+        setRunStatus(`기존 워크플로 재사용 · 이벤트 ${event.eventCount}개`);
+      }
       return;
     }
     if (event.type === 'message.accepted' || event.type === 'message.created') {
@@ -291,7 +326,6 @@ export function useChat() {
       setActiveConversation((current) =>
         current ? { ...current, messages: upsertMessage(current.messages, event.message) } : current,
       );
-      setRunStatus(null);
       return;
     }
     if (event.type === 'artifact.created') {
@@ -306,11 +340,17 @@ export function useChat() {
     }
   }, []);
 
-  const sendMessage = useCallback(async (content: string, targetAgentIds: string[] = []) => {
+  const sendMessage = useCallback(async (
+    content: string,
+    targetAgentIds: string[] = [],
+    workflowMode: 'chat' | 'federated' = 'chat',
+  ) => {
     const trimmed = content.trim();
     if (!trimmed || isStreaming || selectedStatus !== 'active') return;
     let conversation = activeConversation;
-    if (!conversation) conversation = await createConversation();
+    if (!conversation) conversation = workflowMode === 'federated'
+      ? await createFederatedConversation()
+      : await createConversation();
     const clientMessageId = crypto.randomUUID();
     const createdAt = new Date().toISOString();
     const optimistic: MessageRecord = {
@@ -328,7 +368,7 @@ export function useChat() {
       current ? { ...current, draft: '', messages: upsertMessage(current.messages, optimistic) } : current,
     );
     setIsStreaming(true);
-    setRunStatus('메시지 전송 중');
+    setRunStatus(workflowMode === 'federated' ? '교차 시스템 실행 계획을 만드는 중' : '메시지 전송 중');
     setError(null);
     const controller = new AbortController();
     abortRef.current = controller;
@@ -341,6 +381,8 @@ export function useChat() {
           parentMessageId: optimistic.parentMessageId,
           artifactIds: pendingArtifactIds,
           targetAgentIds,
+          workflowMode,
+          idempotencyKey: workflowMode === 'federated' ? `federated:${clientMessageId}` : undefined,
         },
         handleStreamEvent,
         controller.signal,
@@ -359,7 +401,7 @@ export function useChat() {
         // Keep the optimistic transcript visible when a refresh fails.
       }
     }
-  }, [activeConversation, createConversation, handleStreamEvent, isStreaming, pendingArtifactIds, refreshList, selectedStatus, selectedSystem]);
+  }, [activeConversation, createConversation, createFederatedConversation, handleStreamEvent, isStreaming, pendingArtifactIds, refreshList, selectedStatus, selectedSystem]);
 
   const stopStreaming = useCallback(() => {
     abortRef.current?.abort();
@@ -416,6 +458,7 @@ export function useChat() {
     switchStatus,
     selectConversation,
     createConversation,
+    createFederatedConversation,
     openAgentConversation,
     branchConversation,
     patchConversation,
@@ -425,6 +468,7 @@ export function useChat() {
     sendMessage,
     stopStreaming,
     uploadFiles,
+    ingestStreamEvent: handleStreamEvent,
     clearSearch: () => setSearchResults([]),
     clearError: () => setError(null),
   };

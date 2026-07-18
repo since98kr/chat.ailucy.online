@@ -91,7 +91,8 @@ jobs:
         with:
           name: chat-v2-browser-regression
           path: |
-            test-results
+            test-results-browser
+            test-results-auth
             playwright-report
             playwright-auth-report
           if-no-files-found: warn
@@ -118,7 +119,7 @@ jobs:
           docker build \
             --build-arg CHAT_BUILD_SHA=ci-sha \
             --build-arg CHAT_BUILD_TIME=2026-07-18T00:00:00Z \
-            --build-arg CHAT_VERSION=0.7.0 \
+            --build-arg CHAT_VERSION=0.8.0 \
             --tag chat-ailucy-v2:ci .
 
       - name: Exercise host staging-preflight wrapper

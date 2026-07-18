@@ -1,7 +1,9 @@
 import type {
   AdapterHealthRecord,
+  AgentRecord,
   ConversationParticipantRecord,
   ConversationRecord,
+  MemoryCapsuleRecord,
   MessageRecord,
   RoutingMode,
   SystemId,
@@ -18,6 +20,9 @@ export interface AdapterRequest {
   targetAgentId: string;
   routingMode: RoutingMode;
   participants: ConversationParticipantRecord[];
+  federatedAgents?: AgentRecord[];
+  memoryCapsules?: MemoryCapsuleRecord[];
+  workflowRunId?: string;
   signal?: AbortSignal;
 }
 

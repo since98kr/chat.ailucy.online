@@ -8,13 +8,20 @@ import type {
   ConversationSearchResult,
   ConversationStatus,
   CreateConversationInput,
+  CreateMemoryCapsuleInput,
+  FederationConfigRecord,
+  FederationSnapshotRecord,
+  MemoryCapsuleRecord,
   RoutingPlanRecord,
   SendMessageInput,
   StreamEvent,
   SystemId,
   TeamActivityRecord,
   UpdateConversationInput,
+  UpdateMemoryCapsuleInput,
   UpdateParticipantsInput,
+  WorkflowEventRecord,
+  WorkflowRunRecord,
 } from '../shared/contracts';
 
 const API_BASE = import.meta.env.VITE_API_BASE ?? '';
@@ -41,6 +48,31 @@ async function requestJson<T>(path: string, init?: RequestInit): Promise<T> {
   }
   if (response.status === 204) return undefined as T;
   return response.json() as Promise<T>;
+}
+
+async function consumeNdjson(response: Response, onEvent: (event: StreamEvent) => void) {
+  if (!response.ok || !response.body) {
+    signalAuthenticationRequired(response.status);
+    const payload = await response.json().catch(() => null);
+    throw new Error(payload?.message ?? payload?.error ?? `${response.status} ${response.statusText}`);
+  }
+  const reader = response.body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = '';
+  while (true) {
+    const { value, done } = await reader.read();
+    buffer += decoder.decode(value, { stream: !done });
+    let newline = buffer.indexOf('\n');
+    while (newline >= 0) {
+      const line = buffer.slice(0, newline).trim();
+      buffer = buffer.slice(newline + 1);
+      if (line) onEvent(JSON.parse(line) as StreamEvent);
+      newline = buffer.indexOf('\n');
+    }
+    if (done) break;
+  }
+  const trailing = buffer.trim();
+  if (trailing) onEvent(JSON.parse(trailing) as StreamEvent);
 }
 
 export async function listAgents(systemId?: SystemId) {
@@ -132,6 +164,74 @@ export async function permanentlyDeleteConversation(id: string) {
   await requestJson<void>(`/api/conversations/${id}`, { method: 'DELETE' });
 }
 
+export async function getFederationSnapshot(conversationId: string) {
+  const response = await requestJson<{ federation: FederationSnapshotRecord }>(
+    `/api/conversations/${conversationId}/federation`,
+  );
+  return response.federation;
+}
+
+export async function enableFederation(conversationId: string, coordinatorAgentId = '[Hermes] Lucy') {
+  const response = await requestJson<{ config: FederationConfigRecord; federation: FederationSnapshotRecord }>(
+    `/api/conversations/${conversationId}/federation`,
+    { method: 'POST', body: JSON.stringify({ coordinatorAgentId }) },
+  );
+  return response.federation;
+}
+
+export async function disableFederation(conversationId: string) {
+  const response = await requestJson<{ config: FederationConfigRecord | null }>(
+    `/api/conversations/${conversationId}/federation`,
+    { method: 'DELETE' },
+  );
+  return response.config;
+}
+
+export async function createMemoryCapsule(conversationId: string, input: CreateMemoryCapsuleInput) {
+  const response = await requestJson<{ capsule: MemoryCapsuleRecord }>(
+    `/api/conversations/${conversationId}/memory-capsules`,
+    { method: 'POST', body: JSON.stringify(input) },
+  );
+  return response.capsule;
+}
+
+export async function updateMemoryCapsule(capsuleId: string, input: UpdateMemoryCapsuleInput) {
+  const response = await requestJson<{ capsule: MemoryCapsuleRecord }>(
+    `/api/memory-capsules/${capsuleId}`,
+    { method: 'PATCH', body: JSON.stringify(input) },
+  );
+  return response.capsule;
+}
+
+export async function listWorkflowRuns(conversationId: string, limit = 30) {
+  const response = await requestJson<{ runs: WorkflowRunRecord[] }>(
+    `/api/conversations/${conversationId}/workflows?limit=${limit}`,
+  );
+  return response.runs;
+}
+
+export async function listWorkflowEvents(runId: string, after = 0) {
+  const response = await requestJson<{ events: WorkflowEventRecord[] }>(
+    `/api/workflows/${runId}/events?after=${after}`,
+  );
+  return response.events;
+}
+
+export async function resumeWorkflow(
+  runId: string,
+  onEvent: (event: StreamEvent) => void,
+  signal?: AbortSignal,
+) {
+  const response = await fetch(`${API_BASE}/api/workflows/${runId}/resume/stream`, {
+    method: 'POST',
+    credentials: 'same-origin',
+    headers: { 'Content-Type': 'application/json' },
+    body: '{}',
+    signal,
+  });
+  return consumeNdjson(response, onEvent);
+}
+
 export async function streamMessage(
   conversationId: string,
   input: SendMessageInput,
@@ -145,28 +245,7 @@ export async function streamMessage(
     body: JSON.stringify(input),
     signal,
   });
-  if (!response.ok || !response.body) {
-    signalAuthenticationRequired(response.status);
-    const payload = await response.json().catch(() => null);
-    throw new Error(payload?.message ?? payload?.error ?? `${response.status} ${response.statusText}`);
-  }
-  const reader = response.body.getReader();
-  const decoder = new TextDecoder();
-  let buffer = '';
-  while (true) {
-    const { value, done } = await reader.read();
-    buffer += decoder.decode(value, { stream: !done });
-    let newline = buffer.indexOf('\n');
-    while (newline >= 0) {
-      const line = buffer.slice(0, newline).trim();
-      buffer = buffer.slice(newline + 1);
-      if (line) onEvent(JSON.parse(line) as StreamEvent);
-      newline = buffer.indexOf('\n');
-    }
-    if (done) break;
-  }
-  const trailing = buffer.trim();
-  if (trailing) onEvent(JSON.parse(trailing) as StreamEvent);
+  return consumeNdjson(response, onEvent);
 }
 
 export function uploadArtifact(
