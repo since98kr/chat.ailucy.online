@@ -60,20 +60,35 @@ log 'Starting token-authenticated runtime.'
 docker run --detach --name "${AUTH_CONTAINER}" \
   --publish "127.0.0.1:${AUTH_PORT}:4174" \
   --env CHAT_AUTH_MODE=token \
-  --env CHAT_ACCESS_TOKEN=ci-secret \
+  --env CHAT_ACCESS_TOKEN=ci-only-value \
   "${IMAGE}"
 for attempt in $(seq 1 30); do
   if curl --fail --silent "http://127.0.0.1:${AUTH_PORT}/api/health" >/dev/null; then break; fi
   sleep 1
 done
 
+curl --fail --silent "http://127.0.0.1:${AUTH_PORT}/api/auth/config" > auth-config.json
+node -e "const j=require('./auth-config.json');if(j.mode!=='token')process.exit(1)"
 UNAUTHORIZED_CODE="$(curl --silent --output unauthorized.json --write-out '%{http_code}' "http://127.0.0.1:${AUTH_PORT}/api/conversations")"
 log "Unauthorized response: ${UNAUTHORIZED_CODE} $(cat unauthorized.json)"
 test "${UNAUTHORIZED_CODE}" = '401'
 OPS_UNAUTHORIZED_CODE="$(curl --silent --output ops-unauthorized.json --write-out '%{http_code}' "http://127.0.0.1:${AUTH_PORT}/api/ops/status")"
 test "${OPS_UNAUTHORIZED_CODE}" = '401'
-curl --fail --silent --header 'Authorization: Bearer ci-secret' "http://127.0.0.1:${AUTH_PORT}/api/conversations" > authorized.json
+
+log 'Exchanging the access value for an HttpOnly browser session.'
+curl --fail --silent --cookie-jar browser-cookies.txt \
+  --header 'Content-Type: application/json' \
+  --data '{"token":"ci-only-value"}' \
+  "http://127.0.0.1:${AUTH_PORT}/api/auth/login" > auth-login.json
+node -e "const j=require('./auth-login.json');if(!j.authenticated||j.mode!=='token')process.exit(1)"
+grep --quiet 'chat_v2_session' browser-cookies.txt
+curl --fail --silent --cookie browser-cookies.txt "http://127.0.0.1:${AUTH_PORT}/api/auth/session" > auth-session.json
+node -e "const j=require('./auth-session.json');if(!j.authenticated||j.identity!=='private-session')process.exit(1)"
+curl --fail --silent --cookie browser-cookies.txt "http://127.0.0.1:${AUTH_PORT}/api/conversations" > authorized-cookie.json
+node -e "const j=require('./authorized-cookie.json');if(!Array.isArray(j.conversations))process.exit(1)"
+
+curl --fail --silent --header 'Authorization: Bearer ci-only-value' "http://127.0.0.1:${AUTH_PORT}/api/conversations" > authorized.json
 node -e "const j=require('./authorized.json');if(!Array.isArray(j.conversations))process.exit(1)"
-curl --fail --silent --header 'Authorization: Bearer ci-secret' "http://127.0.0.1:${AUTH_PORT}/api/ops/status" > ops-authorized.json
+curl --fail --silent --cookie browser-cookies.txt "http://127.0.0.1:${AUTH_PORT}/api/ops/status" > ops-authorized.json
 node -e "const j=require('./ops-authorized.json');if(!j.ok||j.build.sha!=='${EXPECTED_SHA}'||j.auth.mode!=='token')process.exit(1)"
-log 'Container security, identity, and recovery smoke passed.'
+log 'Container security, browser session, identity, and recovery smoke passed.'

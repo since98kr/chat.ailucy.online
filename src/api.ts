@@ -14,15 +14,23 @@ import type {
 
 const API_BASE = import.meta.env.VITE_API_BASE ?? '';
 
+function signalAuthenticationRequired(status: number) {
+  if (status === 401 || status === 403) {
+    window.dispatchEvent(new CustomEvent('chat-auth-required', { detail: { status } }));
+  }
+}
+
 async function requestJson<T>(path: string, init?: RequestInit): Promise<T> {
   const response = await fetch(`${API_BASE}${path}`, {
     ...init,
+    credentials: 'same-origin',
     headers: {
       'Content-Type': 'application/json',
       ...init?.headers,
     },
   });
   if (!response.ok) {
+    signalAuthenticationRequired(response.status);
     const payload = await response.json().catch(() => null);
     throw new Error(payload?.error ?? `${response.status} ${response.statusText}`);
   }
@@ -89,11 +97,13 @@ export async function streamMessage(
 ) {
   const response = await fetch(`${API_BASE}/api/conversations/${conversationId}/messages/stream`, {
     method: 'POST',
+    credentials: 'same-origin',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(input),
     signal,
   });
   if (!response.ok || !response.body) {
+    signalAuthenticationRequired(response.status);
     const payload = await response.json().catch(() => null);
     throw new Error(payload?.error ?? `${response.status} ${response.statusText}`);
   }
@@ -126,6 +136,7 @@ export function uploadArtifact(
     const form = new FormData();
     form.append('file', file, file.name);
     request.open('POST', `${API_BASE}/api/conversations/${conversationId}/artifacts`);
+    request.withCredentials = true;
     request.responseType = 'json';
     request.upload.addEventListener('progress', (event) => {
       if (event.lengthComputable) onProgress?.(Math.round((event.loaded / event.total) * 100));
@@ -136,6 +147,7 @@ export function uploadArtifact(
         onProgress?.(100);
         resolve(payload.artifact);
       } else {
+        signalAuthenticationRequired(request.status);
         reject(new Error(request.response?.error ?? `${request.status} ${request.statusText}`));
       }
     });

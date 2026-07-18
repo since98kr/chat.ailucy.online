@@ -54,7 +54,10 @@ OpenClaw is not part of V2.
 ### Security and recovery
 
 - Cloudflare Access identity mode for the private browser service.
-- Optional bearer-token API mode for controlled non-browser access.
+- Private token login that exchanges the access value for an HttpOnly, SameSite browser session.
+- The raw access value is not retained in browser JavaScript storage after login.
+- The browser session covers chat, streaming, uploads, inline images, downloads, and Markdown export.
+- Bearer-token compatibility remains available for controlled automation.
 - Cross-origin mutation protection, route-class rate limits, and browser security headers.
 - Online SQLite backup plus artifact checksum manifest.
 - Pre-deployment backup verification before staging replacement.
@@ -64,9 +67,10 @@ OpenClaw is not part of V2.
 
 - Unified Web/API production container.
 - Embedded Git SHA, build time, package version, and environment identity.
-- Authenticated `/api/ops/status` with sanitized adapter and runtime status.
+- Authenticated System Status panel backed by sanitized `/api/ops/status` data.
 - GitHub-hosted CI for typecheck, API/adapter/security/preflight/backup tests, browser regression, builds, and exact-container smoke tests.
 - Real Chromium regression at 1280×900 desktop and 390×844 mobile sizes.
+- Separate authenticated Chromium regression for login, status, export, and logout.
 - Isolated localhost staging Compose service.
 - Repository-scoped self-hosted runner bootstrap with verified Docker access.
 - Non-mutating staging readiness workflow.
@@ -90,6 +94,7 @@ npm run build
 npm run preflight
 npx playwright install chromium
 npm run test:e2e
+npm run test:e2e:auth
 ```
 
 Container preview:
@@ -98,7 +103,7 @@ Container preview:
 docker build \
   --build-arg CHAT_BUILD_SHA=local \
   --build-arg CHAT_BUILD_TIME="$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
-  --build-arg CHAT_VERSION=0.5.0 \
+  --build-arg CHAT_VERSION=0.6.0 \
   -t chat-ailucy-v2:local .
 docker run --rm -p 127.0.0.1:4174:4174 -v chat-v2-data:/data chat-ailucy-v2:local
 ```
@@ -114,6 +119,7 @@ node dist-server/backup.js verify /data/backups/<backup-id>
 
 - [`docs/PRODUCT_SPEC_V2.md`](docs/PRODUCT_SPEC_V2.md)
 - [`docs/BACKEND_ADAPTERS.md`](docs/BACKEND_ADAPTERS.md)
+- [`docs/BROWSER_AUTH_AND_STATUS.md`](docs/BROWSER_AUTH_AND_STATUS.md)
 - [`docs/GITHUB_ACTIONS_AND_DEPLOYMENT.md`](docs/GITHUB_ACTIONS_AND_DEPLOYMENT.md)
 - [`docs/HOME_SERVER_STAGING_SETUP.md`](docs/HOME_SERVER_STAGING_SETUP.md)
 - [`docs/SECURITY_AND_RECOVERY.md`](docs/SECURITY_AND_RECOVERY.md)
