@@ -33,7 +33,19 @@ jobs:
         run: npm install --no-audit --no-fund
 
       - name: Typecheck
-        run: npm run typecheck
+        shell: bash
+        run: |
+          set -o pipefail
+          npm run typecheck 2>&1 | tee typecheck.log
+
+      - name: Upload typecheck diagnostics
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: chat-v2-typecheck-log
+          path: typecheck.log
+          if-no-files-found: warn
+          retention-days: 7
 
       - name: Build
         run: npm run build
