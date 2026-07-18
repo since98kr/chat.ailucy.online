@@ -56,7 +56,19 @@ jobs:
           retention-days: 7
 
       - name: API and adapter integration tests
-        run: npm test
+        shell: bash
+        run: |
+          set -o pipefail
+          npm test 2>&1 | tee test.log
+
+      - name: Upload integration test diagnostics
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: chat-v2-test-log
+          path: test.log
+          if-no-files-found: warn
+          retention-days: 7
 
       - name: Production build
         run: npm run build
@@ -118,6 +130,6 @@ jobs:
           node -e "const h=require('./health.json'); if(!h.ok || h.adapters.letta.mode!=='mock' || h.adapters.hermes.mode!=='mock') process.exit(1)"
           curl --fail --silent http://127.0.0.1:4180/ | grep --quiet 'chat.ailucy.online V2'
           curl --fail --silent http://127.0.0.1:4180/manifest.webmanifest | grep --quiet 'Lucy Chat'
-          curl --fail --silent http://127.0.0.1:4180/sw.js | grep --quiet 'CHAT_NAME\|CACHE_NAME'
+          curl --fail --silent http://127.0.0.1:4180/sw.js | grep --quiet 'CACHE_NAME'
           curl --fail --silent 'http://127.0.0.1:4180/api/search?q=Chat&systemId=hermes' | grep --quiet 'Chat V2 개발'
           test "$(docker inspect --format='{{.State.Health.Status}}' chat-v2-ci)" != "unhealthy"
