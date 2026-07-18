@@ -122,3 +122,7 @@ export async function uploadArtifact(conversationId: string, file: File) {
 export function artifactDownloadUrl(id: string) {
   return `${API_BASE}/api/artifacts/${id}/download`;
 }
+
+export function artifactContentUrl(id: string) {
+  return `${API_BASE}/api/artifacts/${id}/content`;
+}
