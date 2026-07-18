@@ -62,7 +62,7 @@ test('direct subagent entry opens an isolated agent Conversation', async ({ page
 test('federated Conversation approves a capsule and records a parallel workflow', async ({ page }, testInfo) => {
   test.skip(!testInfo.project.name.startsWith('desktop'));
   await page.goto('/');
-  await page.getByRole('button', { name: '새 교차 시스템 대화' }).click();
+  await page.locator('.conversations-title button[aria-label="새 교차 시스템 대화"]').click();
   const panel = page.getByRole('complementary', { name: '교차 시스템 워크플로' });
   await expect(panel).toBeVisible();
   await expect(panel.getByText('교차 시스템 활성')).toBeVisible();
@@ -81,7 +81,7 @@ test('federated Conversation approves a capsule and records a parallel workflow'
   await expect(page.getByText(/Xixi 원문 결과/)).toBeVisible();
   await expect(page.getByText(/승인된 장기기억/)).toBeVisible();
   await expect(page.getByText(/\[Hermes\] Lucy 종합응답/)).toBeVisible();
-  await page.getByRole('button', { name: '교차' }).click();
+  await page.locator('.federation-button').click();
   await expect(panel.locator('.workflow-run-list')).toContainText('completed');
   await expect(panel.locator('.workflow-step')).toHaveCount(3);
   await expect(panel.locator('.workflow-events')).toContainText('run.completed');
@@ -117,7 +117,7 @@ test('mobile federated panel remains inside the approved frame', async ({ page }
   test.skip(!testInfo.project.name.startsWith('mobile'));
   await page.goto('/');
   await page.locator('.mobile-menu').click();
-  await page.getByRole('button', { name: '새 교차 시스템 대화' }).click();
+  await page.locator('.conversations-title button[aria-label="새 교차 시스템 대화"]').click();
   await expect(page.getByRole('complementary', { name: '교차 시스템 워크플로' })).toBeVisible();
   await expectNoHorizontalOverflow(page);
   await page.screenshot({ path: testInfo.outputPath('mobile-federated-390x844.png'), fullPage: false });
