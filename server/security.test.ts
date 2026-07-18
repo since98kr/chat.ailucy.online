@@ -37,6 +37,54 @@ const defaults = {
 };
 
 describe('runtime security', () => {
+  it('publishes only the authentication mode before authentication', async () => {
+    const app = createApp({ ...defaults, authMode: 'token', accessToken: 'correct-secret' });
+    const response = await app.inject({ method: 'GET', url: '/api/auth/config' });
+    expect(response.statusCode).toBe(200);
+    expect(response.json()).toEqual({ mode: 'token' });
+    expect(response.body).not.toContain('correct-secret');
+  });
+
+  it('exchanges a valid token for an HttpOnly browser session cookie', async () => {
+    const app = createApp({ ...defaults, authMode: 'token', accessToken: 'correct-secret' });
+
+    const invalid = await app.inject({
+      method: 'POST',
+      url: '/api/auth/login',
+      payload: { token: 'wrong-secret' },
+    });
+    expect(invalid.statusCode).toBe(401);
+
+    const login = await app.inject({
+      method: 'POST',
+      url: '/api/auth/login',
+      payload: { token: 'correct-secret' },
+    });
+    expect(login.statusCode).toBe(200);
+    const cookie = String(login.headers['set-cookie']);
+    expect(cookie).toContain('chat_v2_session=correct-secret');
+    expect(cookie).toContain('HttpOnly');
+    expect(cookie).toContain('SameSite=Strict');
+
+    const session = await app.inject({
+      method: 'GET',
+      url: '/api/auth/session',
+      headers: { cookie: cookie.split(';')[0] },
+    });
+    expect(session.statusCode).toBe(200);
+    expect(session.json()).toMatchObject({ authenticated: true, mode: 'token' });
+
+    const conversations = await app.inject({
+      method: 'GET',
+      url: '/api/conversations',
+      headers: { cookie: cookie.split(';')[0] },
+    });
+    expect(conversations.statusCode).toBe(200);
+
+    const logout = await app.inject({ method: 'POST', url: '/api/auth/logout' });
+    expect(String(logout.headers['set-cookie'])).toContain('Max-Age=0');
+  });
+
   it('keeps health public but requires a valid bearer token for private API routes', async () => {
     const app = createApp({ ...defaults, authMode: 'token', accessToken: 'correct-secret' });
 
@@ -72,10 +120,11 @@ describe('runtime security', () => {
 
     const allowed = await app.inject({
       method: 'GET',
-      url: '/api/conversations',
+      url: '/api/auth/session',
       headers: { 'cf-access-authenticated-user-email': 'Tei@Example.com' },
     });
     expect(allowed.statusCode).toBe(200);
+    expect(allowed.json()).toMatchObject({ identity: 'tei@example.com', mode: 'cloudflare' });
   });
 
   it('rejects cross-origin mutations and rate limits repeated private requests', async () => {
