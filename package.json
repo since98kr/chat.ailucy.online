@@ -1,7 +1,7 @@
 {
   "name": "chat-ailucy-online-v2",
   "private": true,
-  "version": "0.2.0",
+  "version": "0.3.0",
   "type": "module",
   "scripts": {
     "dev": "concurrently -k -n web,api -c blue,magenta \"npm:dev:web\" \"npm:dev:api\"",
@@ -12,6 +12,7 @@
     "build:api": "tsup server/runtime.ts --format esm --platform node --target node22 --out-dir dist-server --sourcemap",
     "typecheck": "tsc --noEmit --pretty false",
     "test": "vitest run",
+    "test:e2e": "playwright test",
     "preview": "vite preview --host 0.0.0.0",
     "start": "node dist-server/runtime.js",
     "start:api": "node dist-server/runtime.js"
@@ -28,6 +29,7 @@
     "zod": "latest"
   },
   "devDependencies": {
+    "@playwright/test": "latest",
     "@types/better-sqlite3": "latest",
     "@types/node": "latest",
     "@types/react": "latest",
