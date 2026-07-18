@@ -113,10 +113,8 @@ describe('Chat Core API', () => {
       url: `/api/search?q=${encodeURIComponent('초정밀')}&systemId=hermes`,
     });
     expect(search.statusCode).toBe(200);
-    expect(search.json().results[0]).toMatchObject({
-      conversation: { id },
-      matchedIn: 'message',
-    });
+    expect(search.json().results[0].conversation.id).toBe(id);
+    expect(search.json().results[0].snippet).toContain('초정밀');
 
     const detail = await app.inject({ method: 'GET', url: `/api/conversations/${id}` });
     const lastMessage = detail.json().conversation.messages.at(-1) as { id: string };
