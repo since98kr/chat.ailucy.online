@@ -1,0 +1,13 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" role="img" aria-label="Lucy Chat">
+  <defs>
+    <linearGradient id="g" x1="80" y1="70" x2="430" y2="450" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#4c8dff"/>
+      <stop offset="1" stop-color="#8b5cf6"/>
+    </linearGradient>
+  </defs>
+  <rect width="512" height="512" rx="128" fill="#0b1220"/>
+  <path d="M126 118h260c39 0 70 31 70 70v136c0 39-31 70-70 70H247l-92 67c-13 10-32 0-30-16l7-51h-6c-39 0-70-31-70-70V188c0-39 31-70 70-70Z" fill="url(#g)"/>
+  <path d="M211 196h90c32 0 58 26 58 58s-26 58-58 58h-90c-32 0-58-26-58-58s26-58 58-58Z" fill="#f8fafc" fill-opacity=".96"/>
+  <circle cx="221" cy="254" r="15" fill="#4c5bdc"/>
+  <circle cx="291" cy="254" r="15" fill="#4c5bdc"/>
+</svg>
