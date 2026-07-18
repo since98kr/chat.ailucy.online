@@ -75,10 +75,11 @@ export async function* runCollaborativeReply(input: CollaborationRunInput): Asyn
     let content = '';
     try {
       const latest = database.getConversation(conversation.id)!;
+      const history = latest.messages.filter((message) => message.id !== assistantMessage.id);
       for await (const item of adapter.streamReply({
         conversation: latest,
         userMessage,
-        history: latest.messages,
+        history,
         targetAgentId: agentId,
         routingMode: routing.mode,
         participants,
