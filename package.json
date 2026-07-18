@@ -1,24 +1,41 @@
 {
   "name": "chat-ailucy-online-v2",
   "private": true,
-  "version": "0.1.0",
+  "version": "0.2.0",
   "type": "module",
   "scripts": {
-    "dev": "vite --host 0.0.0.0",
-    "build": "tsc --noEmit --pretty false && vite build",
+    "dev": "concurrently -k -n web,api -c blue,magenta \"npm:dev:web\" \"npm:dev:api\"",
+    "dev:web": "vite --host 0.0.0.0",
+    "dev:api": "tsx watch server/index.ts",
+    "build": "npm run typecheck && npm run build:web && npm run build:api",
+    "build:web": "vite build",
+    "build:api": "tsup server/index.ts --format esm --platform node --target node22 --out-dir dist-server --sourcemap",
     "typecheck": "tsc --noEmit --pretty false",
-    "preview": "vite preview --host 0.0.0.0"
+    "test": "vitest run",
+    "preview": "vite preview --host 0.0.0.0",
+    "start:api": "node dist-server/index.js"
   },
   "dependencies": {
+    "@fastify/cors": "latest",
+    "@fastify/multipart": "latest",
+    "better-sqlite3": "latest",
+    "fastify": "latest",
     "lucide-react": "latest",
     "react": "latest",
-    "react-dom": "latest"
+    "react-dom": "latest",
+    "zod": "latest"
   },
   "devDependencies": {
+    "@types/better-sqlite3": "latest",
+    "@types/node": "latest",
     "@types/react": "latest",
     "@types/react-dom": "latest",
     "@vitejs/plugin-react": "latest",
+    "concurrently": "latest",
+    "tsx": "latest",
+    "tsup": "latest",
     "typescript": "latest",
-    "vite": "latest"
+    "vite": "latest",
+    "vitest": "latest"
   }
 }
