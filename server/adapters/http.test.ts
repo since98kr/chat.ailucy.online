@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it } from 'vitest';
-import { createServer, type Server } from 'node:http';
+import { createServer, type RequestListener, type Server } from 'node:http';
 import type { AddressInfo } from 'node:net';
 import type { ConversationRecord, MessageRecord } from '../../shared/contracts.js';
 import { HttpAgentAdapter } from './http.js';
@@ -40,7 +40,7 @@ afterEach(async () => {
   server = null;
 });
 
-async function startServer(handler: Parameters<typeof createServer>[0]) {
+async function startServer(handler: RequestListener) {
   server = createServer(handler);
   await new Promise<void>((resolve) => server?.listen(0, '127.0.0.1', resolve));
   const address = server.address() as AddressInfo;
@@ -49,7 +49,7 @@ async function startServer(handler: Parameters<typeof createServer>[0]) {
 
 describe('HttpAgentAdapter', () => {
   it('probes health and normalizes SSE/OpenAI-compatible streaming chunks', async () => {
-    let receivedBody: Record<string, unknown> | null = null;
+    let receivedBody: Record<string, unknown> = {};
     let authorization = '';
     const baseUrl = await startServer((request, response) => {
       if (request.url === '/health') {
@@ -60,7 +60,7 @@ describe('HttpAgentAdapter', () => {
 
       authorization = String(request.headers.authorization ?? '');
       const chunks: Buffer[] = [];
-      request.on('data', (chunk) => chunks.push(Buffer.from(chunk)));
+      request.on('data', (chunk: Buffer) => chunks.push(Buffer.from(chunk)));
       request.on('end', () => {
         receivedBody = JSON.parse(Buffer.concat(chunks).toString('utf8')) as Record<string, unknown>;
         response.writeHead(200, { 'Content-Type': 'text/event-stream' });
@@ -102,7 +102,8 @@ describe('HttpAgentAdapter', () => {
       agent_id: '[Hermes] Lucy',
       conversation_id: conversation.id,
     });
-    expect((receivedBody?.messages as Array<Record<string, unknown>>)[0]).toMatchObject({
+    const receivedMessages = receivedBody['messages'] as Array<Record<string, unknown>>;
+    expect(receivedMessages[0]).toMatchObject({
       role: 'user',
       content: '연결 테스트',
       author_id: 'tei',
