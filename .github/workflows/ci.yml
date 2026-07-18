@@ -18,7 +18,7 @@ jobs:
   application:
     name: Typecheck, test, browser regression, build, and container smoke
     runs-on: ubuntu-latest
-    timeout-minutes: 40
+    timeout-minutes: 45
 
     steps:
       - name: Checkout
@@ -32,12 +32,14 @@ jobs:
       - name: Install dependencies
         run: npm install --no-audit --no-fund
 
-      - name: Validate deployment scripts
+      - name: Validate deployment and recovery scripts
         shell: bash
         run: |
           set -euo pipefail
           bash -n scripts/deploy/staging.sh
           bash -n scripts/runner/install-chat-staging-runner.sh
+          bash -n scripts/backup/restore-staging.sh
+          bash -n scripts/ci/container-smoke.sh
           CHAT_IMAGE=chat-ailucy-v2:validation docker compose -f compose.staging.yml config >/dev/null
 
       - name: Typecheck
@@ -55,7 +57,7 @@ jobs:
           if-no-files-found: warn
           retention-days: 7
 
-      - name: API and adapter integration tests
+      - name: API, adapter, security, and backup tests
         shell: bash
         run: |
           set -o pipefail
@@ -109,27 +111,24 @@ jobs:
       - name: Build production container
         run: docker build --tag chat-ailucy-v2:ci .
 
-      - name: Container smoke test
+      - name: Container security and recovery smoke test
         shell: bash
         run: |
-          set -euo pipefail
-          docker run --detach --name chat-v2-ci --publish 127.0.0.1:4180:4174 chat-ailucy-v2:ci
-          cleanup() {
-            docker logs chat-v2-ci || true
-            docker rm --force chat-v2-ci >/dev/null 2>&1 || true
-          }
-          trap cleanup EXIT
+          set -o pipefail
+          bash scripts/ci/container-smoke.sh 2>&1 | tee container-smoke.log
 
-          for attempt in $(seq 1 30); do
-            if curl --fail --silent http://127.0.0.1:4180/api/health > health.json; then
-              break
-            fi
-            sleep 1
-          done
-
-          node -e "const h=require('./health.json'); if(!h.ok || h.adapters.letta.mode!=='mock' || h.adapters.hermes.mode!=='mock') process.exit(1)"
-          curl --fail --silent http://127.0.0.1:4180/ | grep --quiet 'chat.ailucy.online V2'
-          curl --fail --silent http://127.0.0.1:4180/manifest.webmanifest | grep --quiet 'Lucy Chat'
-          curl --fail --silent http://127.0.0.1:4180/sw.js | grep --quiet 'CACHE_NAME'
-          curl --fail --silent 'http://127.0.0.1:4180/api/search?q=Chat&systemId=hermes' | grep --quiet 'Chat V2 개발'
-          test "$(docker inspect --format='{{.State.Health.Status}}' chat-v2-ci)" != "unhealthy"
+      - name: Upload container smoke diagnostics
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: chat-v2-container-smoke
+          path: |
+            container-smoke.log
+            health.json
+            response-headers.txt
+            backup.json
+            backup-verify.json
+            unauthorized.json
+            authorized.json
+          if-no-files-found: warn
+          retention-days: 7

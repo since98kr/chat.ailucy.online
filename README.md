@@ -51,15 +51,24 @@ OpenClaw is not part of V2.
 - Offline application shell for reopening the interface.
 - `/api` requests and AI responses are never cached by the service worker.
 
+### Security and recovery
+
+- Cloudflare Access identity mode for the private production service.
+- Optional bearer-token API mode for controlled non-browser access.
+- Cross-origin mutation protection, route-class rate limits, and browser security headers.
+- Online SQLite backup plus artifact checksum manifest.
+- Pre-deployment backup verification before staging replacement.
+- Retained backup policy and confirmation-gated restore with rescue rollback.
+
 ### Runtime and automation
 
 - Unified Web/API production container.
-- GitHub Actions typecheck, API tests, adapter tests, production builds, Compose validation, container build, and runtime smoke tests.
+- GitHub Actions typecheck, API, adapter, security, backup, production build, Compose, and runtime tests.
 - Real Chromium regression at 1280×900 desktop and 390×844 mobile sizes.
 - Automated horizontal-overflow checks and retained desktop/mobile screenshots.
 - Isolated localhost staging Compose service.
-- Repository-scoped self-hosted runner bootstrap.
-- Revision-tagged staging deployments with health validation and automatic rollback.
+- Repository-scoped self-hosted runner bootstrap with verified Docker access.
+- Revision-tagged staging deployments with backup, health validation, and automatic image rollback.
 
 Production deployment and Cloudflare routing are not enabled.
 
@@ -87,9 +96,17 @@ docker build -t chat-ailucy-v2:local .
 docker run --rm -p 127.0.0.1:4174:4174 -v chat-v2-data:/data chat-ailucy-v2:local
 ```
 
+Backup inside a built container:
+
+```bash
+node dist-server/backup.js create
+node dist-server/backup.js verify /data/backups/<backup-id>
+```
+
 ## Documentation
 
 - [`docs/PRODUCT_SPEC_V2.md`](docs/PRODUCT_SPEC_V2.md)
 - [`docs/BACKEND_ADAPTERS.md`](docs/BACKEND_ADAPTERS.md)
 - [`docs/GITHUB_ACTIONS_AND_DEPLOYMENT.md`](docs/GITHUB_ACTIONS_AND_DEPLOYMENT.md)
+- [`docs/SECURITY_AND_RECOVERY.md`](docs/SECURITY_AND_RECOVERY.md)
 - [`config/adapters.env.example`](config/adapters.env.example)

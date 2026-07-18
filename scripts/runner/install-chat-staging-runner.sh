@@ -17,12 +17,24 @@ if [[ "${EUID}" -ne 0 ]]; then
   exit 1
 fi
 
+command -v docker >/dev/null
+docker compose version >/dev/null
+getent group docker >/dev/null
+
 if ! id "${RUNNER_USER}" >/dev/null 2>&1; then
   useradd --system --create-home --shell /usr/sbin/nologin "${RUNNER_USER}"
 fi
+usermod -aG docker "${RUNNER_USER}"
 
 install -d -o "${RUNNER_USER}" -g "${RUNNER_USER}" -m 0750 "${RUNNER_HOME}"
-install -d -o "${RUNNER_USER}" -g "${RUNNER_USER}" -m 0750 /opt/chat-v2/staging/data /opt/chat-v2/staging/state
+install -d -o "${RUNNER_USER}" -g "${RUNNER_USER}" -m 0750 \
+  /opt/chat-v2/staging \
+  /opt/chat-v2/staging/data \
+  /opt/chat-v2/staging/data/artifacts \
+  /opt/chat-v2/staging/data/backups \
+  /opt/chat-v2/staging/state
+
+runuser -u "${RUNNER_USER}" -- docker version >/dev/null
 
 tmp_dir="$(mktemp -d)"
 trap 'rm -rf "${tmp_dir}"' EXIT
@@ -48,12 +60,18 @@ cd "${RUNNER_HOME}"
 ./svc.sh start
 ./svc.sh status
 
-cat <<'EOF'
+cat <<EOF
 Runner installation complete.
+
+Runtime identity:
+- Runner user: ${RUNNER_USER}
+- Data UID:GID: $(stat -c '%u:%g' /opt/chat-v2/staging/data)
+- Docker access: verified
 
 Security notes:
 - Keep the repository workflow reviewable; a self-hosted runner can execute repository code.
 - Do not add this runner to other repositories.
-- Store backend API keys in the GitHub `staging` Environment or a root-readable staging env file.
+- Store backend API keys and CHAT_ACCESS_TOKEN in the GitHub staging Environment.
 - The deployment workflow binds the application to localhost only.
+- Configure Cloudflare Access before exposing the staging endpoint through a tunnel.
 EOF

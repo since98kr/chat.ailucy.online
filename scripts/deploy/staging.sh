@@ -7,6 +7,7 @@ DATA_DIR="${CHAT_STAGING_DATA_DIR:-${DEPLOY_ROOT}/data}"
 STATE_DIR="${DEPLOY_ROOT}/state"
 STATE_FILE="${STATE_DIR}/current-image"
 PORT="${CHAT_STAGING_PORT:-14174}"
+BACKUP_RETENTION="${CHAT_BACKUP_RETENTION:-10}"
 REVISION="${1:-${GITHUB_SHA:-$(git -C "${REPO_ROOT}" rev-parse HEAD)}}"
 IMAGE="chat-ailucy-v2:${REVISION}"
 PREVIOUS_IMAGE=""
@@ -36,9 +37,10 @@ rollback() {
 trap rollback ERR
 
 command -v docker >/dev/null
-
 docker compose version >/dev/null
-mkdir -p "${DATA_DIR}" "${STATE_DIR}"
+mkdir -p "${DATA_DIR}" "${STATE_DIR}" "${DATA_DIR}/artifacts" "${DATA_DIR}/backups"
+export CHAT_RUNTIME_UID="${CHAT_RUNTIME_UID:-$(stat -c '%u' "${DATA_DIR}")}"
+export CHAT_RUNTIME_GID="${CHAT_RUNTIME_GID:-$(stat -c '%g' "${DATA_DIR}")}"
 
 if [[ -f "${STATE_FILE}" ]]; then
   PREVIOUS_IMAGE="$(<"${STATE_FILE}")"
@@ -47,11 +49,33 @@ fi
 log "Building ${IMAGE}."
 docker build --pull --tag "${IMAGE}" "${REPO_ROOT}"
 
+if [[ -f "${DATA_DIR}/chat-v2.sqlite" ]]; then
+  log "Creating and verifying a pre-deployment backup."
+  docker run --rm \
+    --user "${CHAT_RUNTIME_UID}:${CHAT_RUNTIME_GID}" \
+    --volume "${DATA_DIR}:/data" \
+    --env CHAT_DB_PATH=/data/chat-v2.sqlite \
+    --env CHAT_ARTIFACT_ROOT=/data/artifacts \
+    --env CHAT_BACKUP_ROOT=/data/backups \
+    --env CHAT_BACKUP_RETENTION="${BACKUP_RETENTION}" \
+    "${IMAGE}" node dist-server/backup.js create >"${STATE_DIR}/last-backup.json"
+  BACKUP_ID="$(node -e "const j=require('${STATE_DIR}/last-backup.json');if(!j.id)process.exit(1);process.stdout.write(j.id)")"
+  docker run --rm \
+    --user "${CHAT_RUNTIME_UID}:${CHAT_RUNTIME_GID}" \
+    --volume "${DATA_DIR}:/data:ro" \
+    "${IMAGE}" node dist-server/backup.js verify "/data/backups/${BACKUP_ID}" >"${STATE_DIR}/last-backup-verify.json"
+  node -e "const j=require('${STATE_DIR}/last-backup-verify.json');if(!j.ok)process.exit(1)"
+  log "Backup verified: ${BACKUP_ID}."
+else
+  printf '%s\n' '{"skipped":true,"reason":"database-not-created"}' >"${STATE_DIR}/last-backup.json"
+  log "No existing database; pre-deployment backup skipped."
+fi
+
 export CHAT_IMAGE="${IMAGE}"
 export CHAT_STAGING_DATA_DIR="${DATA_DIR}"
 export CHAT_STAGING_PORT="${PORT}"
 
-log "Starting isolated staging service on 127.0.0.1:${PORT}."
+log "Starting isolated staging service on 127.0.0.1:${PORT} as ${CHAT_RUNTIME_UID}:${CHAT_RUNTIME_GID}."
 docker compose -p chat-v2-staging -f "${REPO_ROOT}/compose.staging.yml" up -d --remove-orphans
 
 log "Waiting for application health."
