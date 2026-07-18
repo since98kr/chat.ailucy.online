@@ -1,7 +1,7 @@
 {
   "name": "chat-ailucy-online-v2",
   "private": true,
-  "version": "0.5.0",
+  "version": "0.6.0",
   "type": "module",
   "scripts": {
     "dev": "concurrently -k -n web,api -c blue,magenta \"npm:dev:web\" \"npm:dev:api\"",
@@ -13,6 +13,7 @@
     "typecheck": "tsc --noEmit --pretty false",
     "test": "vitest run",
     "test:e2e": "playwright test",
+    "test:e2e:auth": "playwright test --config playwright.auth.config.ts",
     "backup": "node dist-server/backup.js create",
     "backup:verify": "node dist-server/backup.js verify",
     "preflight": "node dist-server/preflight.js",
