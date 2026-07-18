@@ -1,7 +1,9 @@
 import type {
   AdapterHealthRecord,
+  ConversationParticipantRecord,
   ConversationRecord,
   MessageRecord,
+  RoutingMode,
   SystemId,
 } from '../../shared/contracts.js';
 
@@ -13,6 +15,9 @@ export interface AdapterRequest {
   conversation: ConversationRecord;
   userMessage: MessageRecord;
   history: MessageRecord[];
+  targetAgentId: string;
+  routingMode: RoutingMode;
+  participants: ConversationParticipantRecord[];
   signal?: AbortSignal;
 }
 
