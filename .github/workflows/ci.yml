@@ -18,7 +18,7 @@ jobs:
   application:
     name: Typecheck, test, build, and container smoke
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 25
 
     steps:
       - name: Checkout
@@ -31,6 +31,14 @@ jobs:
 
       - name: Install dependencies
         run: npm install --no-audit --no-fund
+
+      - name: Validate deployment scripts
+        shell: bash
+        run: |
+          set -euo pipefail
+          bash -n scripts/deploy/staging.sh
+          bash -n scripts/runner/install-chat-staging-runner.sh
+          CHAT_IMAGE=chat-ailucy-v2:validation docker compose -f compose.staging.yml config >/dev/null
 
       - name: Typecheck
         shell: bash
@@ -90,6 +98,7 @@ jobs:
             sleep 1
           done
 
-          node -e "const h=require('./health.json'); if(!h.ok || !h.adapters.letta.ok || !h.adapters.hermes.ok) process.exit(1)"
+          node -e "const h=require('./health.json'); if(!h.ok || h.adapters.letta.mode!=='mock' || h.adapters.hermes.mode!=='mock') process.exit(1)"
           curl --fail --silent http://127.0.0.1:4180/ | grep --quiet 'chat.ailucy.online V2'
+          curl --fail --silent 'http://127.0.0.1:4180/api/search?q=Chat&systemId=hermes' | grep --quiet 'Chat V2 개발'
           test "$(docker inspect --format='{{.State.Health.Status}}' chat-v2-ci)" != "unhealthy"

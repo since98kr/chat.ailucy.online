@@ -1,4 +1,9 @@
-import type { ConversationRecord, MessageRecord, SystemId } from '../../shared/contracts.js';
+import type {
+  AdapterHealthRecord,
+  ConversationRecord,
+  MessageRecord,
+  SystemId,
+} from '../../shared/contracts.js';
 
 export type AdapterStreamItem =
   | { type: 'status'; status: string }
@@ -13,6 +18,6 @@ export interface AdapterRequest {
 
 export interface ChatBackendAdapter {
   readonly systemId: SystemId;
-  health(): Promise<{ ok: boolean; detail: string }>;
+  health(): Promise<AdapterHealthRecord>;
   streamReply(request: AdapterRequest): AsyncGenerator<AdapterStreamItem>;
 }

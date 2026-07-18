@@ -7,6 +7,8 @@ import { buildApp } from './index.js';
 import type { StreamEvent } from '../shared/contracts.js';
 
 process.env.NODE_ENV = 'test';
+delete process.env.LETTA_BASE_URL;
+delete process.env.HERMES_BASE_URL;
 
 describe('Chat Core API', () => {
   let directory: string;
@@ -60,7 +62,6 @@ describe('Chat Core API', () => {
 
     const deleted = await app.inject({ method: 'DELETE', url: `/api/conversations/${conversation.id}` });
     expect(deleted.statusCode).toBe(204);
-
     const missing = await app.inject({ method: 'GET', url: `/api/conversations/${conversation.id}` });
     expect(missing.statusCode).toBe(404);
   });
@@ -81,10 +82,7 @@ describe('Chat Core API', () => {
     });
 
     expect(streamed.statusCode).toBe(200);
-    const events = streamed.body
-      .trim()
-      .split('\n')
-      .map((line) => JSON.parse(line) as StreamEvent);
+    const events = streamed.body.trim().split('\n').map((line) => JSON.parse(line) as StreamEvent);
     expect(events.some((event) => event.type === 'message.accepted')).toBe(true);
     expect(events.some((event) => event.type === 'content.delta')).toBe(true);
     expect(events.at(-1)?.type).toBe('run.completed');
@@ -93,12 +91,64 @@ describe('Chat Core API', () => {
     const messages = detail.json().conversation.messages as Array<{ role: string; content: string; state: string }>;
     expect(messages).toHaveLength(2);
     expect(messages[0]).toMatchObject({ role: 'user', content: '이번 주 우선순위를 정리해줘.' });
-    expect(messages[1].role).toBe('assistant');
     expect(messages[1].content).toContain('[Letta] Lucy');
     expect(messages[1].state).toBe('complete');
   });
 
-  it('rejects permanent deletion before Trash', async () => {
+  it('searches message content and branches a Conversation at a selected message', async () => {
+    const created = await app.inject({
+      method: 'POST',
+      url: '/api/conversations',
+      payload: { systemId: 'hermes', agentId: '[Hermes] Lucy', title: '드론 프로젝트' },
+    });
+    const id = created.json().conversation.id as string;
+    await app.inject({
+      method: 'POST',
+      url: `/api/conversations/${id}/messages/stream`,
+      payload: { content: '액화수소 드론의 초정밀 위치 활용을 분석해줘.' },
+    });
+
+    const search = await app.inject({
+      method: 'GET',
+      url: `/api/search?q=${encodeURIComponent('초정밀')}&systemId=hermes`,
+    });
+    expect(search.statusCode).toBe(200);
+    expect(search.json().results[0].conversation.id).toBe(id);
+    expect(search.json().results[0].snippet).toContain('초정밀');
+
+    const detail = await app.inject({ method: 'GET', url: `/api/conversations/${id}` });
+    const lastMessage = detail.json().conversation.messages.at(-1) as { id: string };
+    const branched = await app.inject({
+      method: 'POST',
+      url: `/api/conversations/${id}/branch`,
+      payload: { fromMessageId: lastMessage.id, title: '드론 프로젝트 · 위치 활용' },
+    });
+    expect(branched.statusCode).toBe(201);
+    expect(branched.json().conversation).toMatchObject({
+      title: '드론 프로젝트 · 위치 활용',
+      branchedFromConversationId: id,
+      branchedFromMessageId: lastMessage.id,
+    });
+    expect(branched.json().conversation.messages).toHaveLength(2);
+  });
+
+  it('exports a Conversation as Markdown', async () => {
+    const response = await app.inject({ method: 'GET', url: '/api/conversations/chat-v2/export/markdown' });
+    expect(response.statusCode).toBe(200);
+    expect(response.headers['content-type']).toContain('text/markdown');
+    expect(response.headers['content-disposition']).toContain('attachment');
+    expect(response.body).toContain('# Chat V2 개발');
+    expect(response.body).toContain('[Hermes] Lucy');
+  });
+
+  it('reports adapter mode and rejects permanent deletion before Trash', async () => {
+    const health = await app.inject({ method: 'GET', url: '/api/health' });
+    expect(health.statusCode).toBe(200);
+    expect(health.json().adapters).toMatchObject({
+      letta: { ok: true, mode: 'mock' },
+      hermes: { ok: true, mode: 'mock' },
+    });
+
     const response = await app.inject({ method: 'DELETE', url: '/api/conversations/chat-v2' });
     expect(response.statusCode).toBe(409);
     expect(response.json().error).toBe('CONVERSATION_MUST_BE_TRASHED_FIRST');

@@ -15,6 +15,8 @@ export interface ConversationRecord {
   updatedAt: string;
   lastReadMessageId: string | null;
   draft: string;
+  branchedFromConversationId: string | null;
+  branchedFromMessageId: string | null;
 }
 
 export interface MessageRecord {
@@ -45,8 +47,23 @@ export interface ConversationDetail extends ConversationRecord {
   artifacts: ArtifactRecord[];
 }
 
+export interface ConversationSearchResult {
+  conversation: ConversationRecord;
+  snippet: string;
+  matchedIn: 'title' | 'message' | 'artifact';
+  messageId: string | null;
+}
+
+export interface AdapterHealthRecord {
+  ok: boolean;
+  mode: 'mock' | 'http';
+  detail: string;
+  latencyMs?: number;
+}
+
 export type StreamEvent =
   | { type: 'message.accepted'; message: MessageRecord }
+  | { type: 'artifacts.attached'; messageId: string; artifacts: ArtifactRecord[] }
   | { type: 'run.started'; runId: string }
   | { type: 'run.status'; runId: string; status: string }
   | { type: 'content.delta'; runId: string; messageId: string; delta: string }
@@ -68,8 +85,23 @@ export interface UpdateConversationInput {
   lastReadMessageId?: string | null;
 }
 
+export interface BranchConversationInput {
+  fromMessageId?: string | null;
+  title?: string;
+}
+
 export interface SendMessageInput {
   content: string;
   clientMessageId?: string;
   parentMessageId?: string | null;
+  artifactIds?: string[];
+}
+
+export interface UploadProgressRecord {
+  localId: string;
+  filename: string;
+  progress: number;
+  state: 'uploading' | 'complete' | 'failed';
+  artifactId?: string;
+  error?: string;
 }

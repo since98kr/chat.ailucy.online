@@ -1,0 +1,136 @@
+.conversation-menu__popup a {
+  width: 100%;
+  min-height: 34px;
+  padding: 0 10px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  border: 0;
+  border-radius: 8px;
+  color: #c8d1df;
+  background: transparent;
+  font-size: 11px;
+  text-decoration: none;
+  cursor: pointer;
+}
+
+.conversation-menu__popup a:hover {
+  color: #fff;
+  background: rgba(148, 163, 184, .1);
+}
+
+.message__meta {
+  position: relative;
+}
+
+.message-branch {
+  width: 26px;
+  height: 26px;
+  margin-left: auto;
+  display: grid;
+  place-items: center;
+  border: 0;
+  border-radius: 8px;
+  color: #67758a;
+  background: transparent;
+  opacity: 0;
+  cursor: pointer;
+  transition: opacity .15s ease, color .15s ease, background .15s ease;
+}
+
+.message:hover .message-branch,
+.message-branch:focus-visible {
+  opacity: 1;
+}
+
+.message-branch:hover {
+  color: #c8b8ff;
+  background: rgba(139, 92, 246, .12);
+}
+
+.pending-attachments {
+  width: min(820px, 100%);
+  margin: 0 auto 8px;
+  display: flex;
+  gap: 7px;
+  overflow-x: auto;
+  padding-bottom: 2px;
+  scrollbar-width: thin;
+}
+
+.upload-chip {
+  position: relative;
+  min-width: 178px;
+  max-width: 260px;
+  height: 38px;
+  padding: 0 9px;
+  display: grid;
+  grid-template-columns: 18px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 7px;
+  overflow: hidden;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: rgba(255, 255, 255, .025);
+  color: #aab5c6;
+}
+
+.upload-chip span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 10px;
+}
+
+.upload-chip em {
+  color: #7f8ca0;
+  font-size: 9px;
+  font-style: normal;
+  white-space: nowrap;
+}
+
+.upload-chip i {
+  position: absolute;
+  left: 0;
+  bottom: 0;
+  height: 2px;
+  max-width: 100%;
+  background: linear-gradient(90deg, #4c8dff, #8b5cf6);
+  transition: width .12s linear;
+}
+
+.upload-chip--complete {
+  border-color: rgba(61, 220, 151, .22);
+}
+
+.upload-chip--complete em {
+  color: #72d9aa;
+}
+
+.upload-chip--failed {
+  border-color: rgba(251, 113, 133, .32);
+}
+
+.upload-chip--failed em {
+  color: #fb8da0;
+}
+
+.send-button:disabled {
+  cursor: not-allowed;
+  filter: grayscale(.6);
+  opacity: .5;
+}
+
+.chat-header__text span {
+  max-width: 620px;
+}
+
+@media (max-width: 920px) {
+  .pending-attachments {
+    width: 100%;
+  }
+
+  .message-branch {
+    opacity: .8;
+  }
+}

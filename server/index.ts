@@ -8,8 +8,7 @@ import { z } from 'zod';
 import { ChatDatabase } from './database.js';
 import { adapterHealth, getAdapter } from './adapters/index.js';
 import { storeArtifact } from './artifacts.js';
-import { getArtifact } from './artifact-repository.js';
-import type { StreamEvent, SystemId } from '../shared/contracts.js';
+import type { ConversationDetail, StreamEvent, SystemId } from '../shared/contracts.js';
 
 const conversationStatusSchema = z.enum(['active', 'archived', 'trashed']);
 const systemIdSchema = z.enum(['letta', 'hermes']);
@@ -30,14 +29,48 @@ const updateConversationSchema = z
   })
   .refine((input) => Object.keys(input).length > 0, 'At least one field is required');
 
+const branchConversationSchema = z.object({
+  fromMessageId: z.string().uuid().nullable().optional(),
+  title: z.string().trim().min(1).max(160).optional(),
+});
+
 const sendMessageSchema = z.object({
   content: z.string().trim().min(1).max(200_000),
   clientMessageId: z.string().uuid().optional(),
   parentMessageId: z.string().uuid().nullable().optional(),
+  artifactIds: z.array(z.string().uuid()).max(20).default([]),
 });
 
 function eventLine(event: StreamEvent) {
   return `${JSON.stringify(event)}\n`;
+}
+
+function markdownExport(conversation: ConversationDetail) {
+  const lines = [
+    `# ${conversation.title}`,
+    '',
+    `- System: ${conversation.systemId}`,
+    `- Agent: ${conversation.agentId}`,
+    `- Created: ${conversation.createdAt}`,
+    `- Updated: ${conversation.updatedAt}`,
+  ];
+  if (conversation.branchedFromConversationId) {
+    lines.push(`- Branched from: ${conversation.branchedFromConversationId}`);
+  }
+  lines.push('', '---', '');
+  for (const message of conversation.messages) {
+    const author = message.role === 'user' ? 'Tei' : message.authorId;
+    lines.push(`## ${author}`, '', message.content || '_empty_', '');
+    const artifacts = conversation.artifacts.filter((artifact) => artifact.messageId === message.id);
+    if (artifacts.length) {
+      lines.push('Attachments:', ...artifacts.map((artifact) => `- ${artifact.filename} (${artifact.mimeType})`), '');
+    }
+  }
+  const unattached = conversation.artifacts.filter((artifact) => !artifact.messageId);
+  if (unattached.length) {
+    lines.push('## Unattached files', '', ...unattached.map((artifact) => `- ${artifact.filename} (${artifact.mimeType})`), '');
+  }
+  return lines.join('\n');
 }
 
 export function buildApp(options?: { databasePath?: string; artifactRoot?: string }) {
@@ -58,12 +91,8 @@ export function buildApp(options?: { databasePath?: string; artifactRoot?: strin
 
   app.setErrorHandler((error, _request, reply) => {
     if (error instanceof z.ZodError) {
-      return reply.status(400).send({
-        error: 'VALIDATION_ERROR',
-        details: error.flatten(),
-      });
+      return reply.status(400).send({ error: 'VALIDATION_ERROR', details: error.flatten() });
     }
-
     app.log.error(error);
     const errorMessage = error instanceof Error ? error.message : 'Unknown internal error';
     return reply.status(500).send({
@@ -72,9 +101,7 @@ export function buildApp(options?: { databasePath?: string; artifactRoot?: strin
     });
   });
 
-  app.addHook('onClose', async () => {
-    db.close();
-  });
+  app.addHook('onClose', async () => db.close());
 
   app.get('/api/health', async () => ({
     ok: true,
@@ -83,15 +110,30 @@ export function buildApp(options?: { databasePath?: string; artifactRoot?: strin
     timestamp: new Date().toISOString(),
   }));
 
-  app.get('/api/conversations', async (request) => {
-    const query = z
-      .object({
-        systemId: systemIdSchema.optional(),
-        status: conversationStatusSchema.default('active'),
-      })
-      .parse(request.query);
+  app.get('/api/adapters/probe', async () => ({ adapters: await adapterHealth() }));
 
+  app.get('/api/conversations', async (request) => {
+    const query = z.object({
+      systemId: systemIdSchema.optional(),
+      status: conversationStatusSchema.default('active'),
+    }).parse(request.query);
     return { conversations: db.listConversations(query.systemId, query.status) };
+  });
+
+  app.get('/api/search', async (request) => {
+    const query = z.object({
+      q: z.string().trim().min(1).max(500),
+      systemId: systemIdSchema.optional(),
+      status: conversationStatusSchema.default('active'),
+      limit: z.coerce.number().int().min(1).max(100).default(40),
+    }).parse(request.query);
+    return {
+      results: db.searchConversations(query.q, {
+        systemId: query.systemId,
+        status: query.status,
+        limit: query.limit,
+      }),
+    };
   });
 
   app.get('/api/conversations/:id', async (request, reply) => {
@@ -103,8 +145,29 @@ export function buildApp(options?: { databasePath?: string; artifactRoot?: strin
 
   app.post('/api/conversations', async (request, reply) => {
     const input = createConversationSchema.parse(request.body);
-    const conversation = db.createConversation(input.systemId, input.agentId, input.title);
+    return reply.status(201).send({
+      conversation: db.createConversation(input.systemId, input.agentId, input.title),
+    });
+  });
+
+  app.post('/api/conversations/:id/branch', async (request, reply) => {
+    const { id } = z.object({ id: z.string().min(1) }).parse(request.params);
+    const input = branchConversationSchema.parse(request.body ?? {});
+    const conversation = db.branchConversation(id, input);
+    if (!conversation) return reply.status(404).send({ error: 'CONVERSATION_OR_MESSAGE_NOT_FOUND' });
     return reply.status(201).send({ conversation });
+  });
+
+  app.get('/api/conversations/:id/export/markdown', async (request, reply) => {
+    const { id } = z.object({ id: z.string().min(1) }).parse(request.params);
+    const conversation = db.getConversation(id);
+    if (!conversation) return reply.status(404).send({ error: 'CONVERSATION_NOT_FOUND' });
+    reply.header('Content-Type', 'text/markdown; charset=utf-8');
+    reply.header(
+      'Content-Disposition',
+      `attachment; filename*=UTF-8''${encodeURIComponent(`${conversation.title}.md`)}`,
+    );
+    return reply.send(markdownExport(conversation));
   });
 
   app.patch('/api/conversations/:id', async (request, reply) => {
@@ -140,6 +203,7 @@ export function buildApp(options?: { databasePath?: string; artifactRoot?: strin
       content: input.content,
       parentMessageId: input.parentMessageId,
     });
+    const attachedArtifacts = db.attachArtifacts(id, input.artifactIds, userMessage.id);
     const runId = randomUUID();
     const assistantMessage = db.addMessage({
       conversationId: id,
@@ -155,8 +219,10 @@ export function buildApp(options?: { databasePath?: string; artifactRoot?: strin
 
     async function* generate() {
       yield eventLine({ type: 'message.accepted', message: userMessage });
+      if (attachedArtifacts.length) {
+        yield eventLine({ type: 'artifacts.attached', messageId: userMessage.id, artifacts: attachedArtifacts });
+      }
       yield eventLine({ type: 'run.started', runId });
-
       let content = '';
       try {
         const latest = db.getConversation(id)!;
@@ -179,7 +245,6 @@ export function buildApp(options?: { databasePath?: string; artifactRoot?: strin
             });
           }
         }
-
         const finalMessage = db.updateMessage(assistantMessage.id, {
           content,
           state: controller.signal.aborted ? 'cancelled' : 'complete',
@@ -202,22 +267,16 @@ export function buildApp(options?: { databasePath?: string; artifactRoot?: strin
   app.post('/api/conversations/:id/artifacts', async (request, reply) => {
     const { id } = z.object({ id: z.string().min(1) }).parse(request.params);
     if (!db.getConversation(id)) return reply.status(404).send({ error: 'CONVERSATION_NOT_FOUND' });
-
     const file = await request.file();
     if (!file) return reply.status(400).send({ error: 'FILE_REQUIRED' });
-
     const stored = await storeArtifact(id, file);
-    const artifact = db.addArtifact({
-      conversationId: id,
-      messageId: null,
-      ...stored,
-    });
+    const artifact = db.addArtifact({ conversationId: id, messageId: null, ...stored });
     return reply.status(201).send({ artifact });
   });
 
   app.get('/api/artifacts/:id/content', async (request, reply) => {
     const { id } = z.object({ id: z.string().uuid() }).parse(request.params);
-    const artifact = getArtifact(db, id);
+    const artifact = db.getArtifact(id);
     if (!artifact) return reply.status(404).send({ error: 'ARTIFACT_NOT_FOUND' });
     reply.header('Content-Type', artifact.mimeType);
     reply.header('Content-Disposition', `inline; filename*=UTF-8''${encodeURIComponent(artifact.filename)}`);
@@ -227,7 +286,7 @@ export function buildApp(options?: { databasePath?: string; artifactRoot?: strin
 
   app.get('/api/artifacts/:id/download', async (request, reply) => {
     const { id } = z.object({ id: z.string().uuid() }).parse(request.params);
-    const artifact = getArtifact(db, id);
+    const artifact = db.getArtifact(id);
     if (!artifact) return reply.status(404).send({ error: 'ARTIFACT_NOT_FOUND' });
     reply.header('Content-Type', artifact.mimeType);
     reply.header('Content-Disposition', `attachment; filename*=UTF-8''${encodeURIComponent(artifact.filename)}`);
