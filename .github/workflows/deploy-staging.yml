@@ -1,0 +1,71 @@
+name: Deploy staging
+
+on:
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: Git ref or commit to deploy
+        required: true
+        default: main
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: chat-v2-staging-deploy
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    name: Deploy isolated staging
+    runs-on: [self-hosted, linux, x64, chat-staging]
+    environment: staging
+    timeout-minutes: 45
+
+    steps:
+      - name: Checkout approved revision
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.ref }}
+          clean: true
+
+      - name: Verify source revision
+        run: |
+          git status --short
+          git rev-parse HEAD
+
+      - name: Deploy with health check and rollback
+        env:
+          CHAT_STAGING_ROOT: /opt/chat-v2/staging
+          CHAT_STAGING_DATA_DIR: /opt/chat-v2/staging/data
+          CHAT_STAGING_PORT: '14174'
+          CHAT_ALLOWED_ORIGIN: ${{ vars.CHAT_ALLOWED_ORIGIN }}
+          LETTA_BASE_URL: ${{ vars.LETTA_BASE_URL }}
+          LETTA_CHAT_PATH: ${{ vars.LETTA_CHAT_PATH }}
+          LETTA_HEALTH_PATH: ${{ vars.LETTA_HEALTH_PATH }}
+          LETTA_AGENT_ID: ${{ vars.LETTA_AGENT_ID }}
+          LETTA_API_KEY: ${{ secrets.LETTA_API_KEY }}
+          HERMES_BASE_URL: ${{ vars.HERMES_BASE_URL }}
+          HERMES_CHAT_PATH: ${{ vars.HERMES_CHAT_PATH }}
+          HERMES_HEALTH_PATH: ${{ vars.HERMES_HEALTH_PATH }}
+          HERMES_AGENT_ID: ${{ vars.HERMES_AGENT_ID }}
+          HERMES_API_KEY: ${{ secrets.HERMES_API_KEY }}
+        run: bash scripts/deploy/staging.sh "$(git rev-parse HEAD)"
+
+      - name: Publish deployment summary
+        if: always()
+        run: |
+          {
+            echo '## Chat V2 staging'
+            echo
+            echo "- Revision: \`$(git rev-parse HEAD)\`"
+            echo '- Local endpoint: `http://127.0.0.1:14174`'
+            if [[ -f /opt/chat-v2/staging/state/last-health.json ]]; then
+              echo '- Last health response:'
+              echo '```json'
+              cat /opt/chat-v2/staging/state/last-health.json
+              echo
+              echo '```'
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"
