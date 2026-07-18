@@ -216,6 +216,16 @@ export function buildApp(options?: { databasePath?: string; artifactRoot?: strin
     return reply.status(201).send({ artifact });
   });
 
+  app.get('/api/artifacts/:id/content', async (request, reply) => {
+    const { id } = z.object({ id: z.string().uuid() }).parse(request.params);
+    const artifact = getArtifact(db, id);
+    if (!artifact) return reply.status(404).send({ error: 'ARTIFACT_NOT_FOUND' });
+    reply.header('Content-Type', artifact.mimeType);
+    reply.header('Content-Disposition', `inline; filename*=UTF-8''${encodeURIComponent(artifact.filename)}`);
+    reply.header('Cache-Control', 'private, max-age=3600');
+    return reply.send(createReadStream(artifact.storagePath));
+  });
+
   app.get('/api/artifacts/:id/download', async (request, reply) => {
     const { id } = z.object({ id: z.string().uuid() }).parse(request.params);
     const artifact = getArtifact(db, id);
