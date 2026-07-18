@@ -15,10 +15,10 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  web:
-    name: Typecheck and build
+  application:
+    name: Typecheck, test, and build
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 15
 
     steps:
       - name: Checkout
@@ -47,7 +47,10 @@ jobs:
           if-no-files-found: warn
           retention-days: 7
 
-      - name: Build
+      - name: API integration tests
+        run: npm test
+
+      - name: Production build
         run: npm run build
 
       - name: Upload web build
@@ -55,5 +58,13 @@ jobs:
         with:
           name: chat-v2-web-dist
           path: dist
+          if-no-files-found: error
+          retention-days: 7
+
+      - name: Upload API build
+        uses: actions/upload-artifact@v4
+        with:
+          name: chat-v2-api-dist
+          path: dist-server
           if-no-files-found: error
           retention-days: 7
