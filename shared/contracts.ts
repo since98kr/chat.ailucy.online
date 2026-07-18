@@ -2,6 +2,57 @@ export type SystemId = 'letta' | 'hermes';
 export type ConversationStatus = 'active' | 'archived' | 'trashed';
 export type MessageRole = 'user' | 'assistant' | 'system';
 export type MessageState = 'complete' | 'streaming' | 'failed' | 'cancelled';
+export type ParticipantRole = 'lead' | 'participant' | 'observer';
+export type ParticipantState = 'active' | 'idle' | 'working' | 'reviewing' | 'blocked' | 'offline';
+export type TeamActivityType = 'joined' | 'left' | 'assigned' | 'status' | 'output' | 'completed' | 'failed';
+export type RoutingMode = 'direct' | 'lead' | 'team';
+
+export interface AgentRecord {
+  id: string;
+  systemId: SystemId;
+  displayName: string;
+  shortName: string;
+  role: string;
+  description: string;
+  capabilities: string[];
+  enabled: boolean;
+  directChatEnabled: boolean;
+  isLead: boolean;
+  sortOrder: number;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface ConversationParticipantRecord {
+  conversationId: string;
+  agentId: string;
+  role: ParticipantRole;
+  state: ParticipantState;
+  addedAt: string;
+  updatedAt: string;
+  agent: AgentRecord;
+}
+
+export interface TeamActivityRecord {
+  id: string;
+  conversationId: string;
+  agentId: string;
+  type: TeamActivityType;
+  status: ParticipantState;
+  summary: string;
+  sourceMessageId: string | null;
+  outputMessageId: string | null;
+  createdAt: string;
+  agent: AgentRecord;
+}
+
+export interface RoutingPlanRecord {
+  mode: RoutingMode;
+  leadAgentId: string;
+  mentionedAgentIds: string[];
+  targetAgentIds: string[];
+  rejectedMentions: string[];
+}
 
 export interface ConversationRecord {
   id: string;
@@ -63,13 +114,17 @@ export interface AdapterHealthRecord {
 
 export type StreamEvent =
   | { type: 'message.accepted'; message: MessageRecord }
+  | { type: 'message.created'; message: MessageRecord }
   | { type: 'artifacts.attached'; messageId: string; artifacts: ArtifactRecord[] }
-  | { type: 'run.started'; runId: string }
-  | { type: 'run.status'; runId: string; status: string }
-  | { type: 'content.delta'; runId: string; messageId: string; delta: string }
+  | { type: 'routing.resolved'; routing: RoutingPlanRecord }
+  | { type: 'team.activity'; activity: TeamActivityRecord }
+  | { type: 'participants.updated'; participants: ConversationParticipantRecord[] }
+  | { type: 'run.started'; runId: string; agentId?: string }
+  | { type: 'run.status'; runId: string; status: string; agentId?: string }
+  | { type: 'content.delta'; runId: string; messageId: string; delta: string; authorId?: string }
   | { type: 'artifact.created'; runId: string; artifact: ArtifactRecord }
-  | { type: 'run.completed'; runId: string; message: MessageRecord }
-  | { type: 'run.failed'; runId: string; error: string };
+  | { type: 'run.completed'; runId: string; message: MessageRecord; agentId?: string }
+  | { type: 'run.failed'; runId: string; error: string; agentId?: string };
 
 export interface CreateConversationInput {
   systemId: SystemId;
@@ -95,6 +150,16 @@ export interface SendMessageInput {
   clientMessageId?: string;
   parentMessageId?: string | null;
   artifactIds?: string[];
+  targetAgentIds?: string[];
+}
+
+export interface UpdateParticipantsInput {
+  agentIds: string[];
+  leadAgentId?: string;
+}
+
+export interface UpdateParticipantStateInput {
+  state: ParticipantState;
 }
 
 export interface UploadProgressRecord {
