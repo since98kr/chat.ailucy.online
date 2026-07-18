@@ -59,6 +59,20 @@ export type FederatedRunInput = {
   resumed?: boolean;
 };
 
+type StepDefinition = {
+  agentId: string;
+  systemId: SystemId;
+  position: number;
+  parallelGroup: number;
+  dependsOnStepIds?: string[];
+};
+
+type StepResult = {
+  ok: boolean;
+  aborted: boolean;
+  step: WorkflowStepRecord;
+};
+
 function mentionTokens(content: string) {
   return [...content.matchAll(/@([A-Za-z0-9가-힣_-]+)/gu)].map((match) => match[1].toLowerCase());
 }
@@ -72,13 +86,19 @@ export function resolveFederatedAgents(
   const agents = collaboration.listAgents().filter((agent) => agent.enabled && agent.directChatEnabled);
   const byId = new Map(agents.map((agent) => [agent.id.toLowerCase(), agent]));
   const byShort = new Map(agents.map((agent) => [agent.shortName.toLowerCase(), agent]));
-  const aliases = new Map<string, AgentRecord>([
-    ['letta', agents.find((agent) => agent.id === '[Letta] Lucy')!],
-    ['lettalucy', agents.find((agent) => agent.id === '[Letta] Lucy')!],
-    ['hermes', agents.find((agent) => agent.id === '[Hermes] Lucy')!],
-    ['hermeslucy', agents.find((agent) => agent.id === '[Hermes] Lucy')!],
-  ].filter((entry): entry is [string, AgentRecord] => Boolean(entry[1])));
-  const coordinator = agents.find((agent) => agent.id === '[Hermes] Lucy')
+  const aliases = new Map<string, AgentRecord>();
+  const letta = agents.find((agent) => agent.id === '[Letta] Lucy');
+  const hermes = agents.find((agent) => agent.id === '[Hermes] Lucy');
+  if (letta) {
+    aliases.set('letta', letta);
+    aliases.set('lettalucy', letta);
+  }
+  if (hermes) {
+    aliases.set('hermes', hermes);
+    aliases.set('hermeslucy', hermes);
+  }
+
+  const coordinator = hermes
     ?? agents.find((agent) => agent.systemId === conversation.systemId && agent.isLead)
     ?? agents[0];
   if (!coordinator) throw new Error('No coordinator agent is available');
@@ -95,40 +115,26 @@ export function resolveFederatedAgents(
     if (agent) requested.add(agent.id);
     else rejected.push(agentId);
   }
-  if (requested.size === 0) requested.add(coordinator.id);
   requested.delete(coordinator.id);
+
   return {
     coordinator,
     requestedAgents: [...requested]
-      .map((id) => agents.find((agent) => agent.id === id)!)
-      .filter(Boolean)
+      .map((id) => agents.find((agent) => agent.id === id))
+      .filter((agent): agent is AgentRecord => Boolean(agent))
       .sort((a, b) => a.sortOrder - b.sortOrder),
     rejected,
     allAgents: agents,
   };
 }
 
-function eventTypeFor(streamEvent: StreamEvent): WorkflowEventType {
-  if (streamEvent.type === 'run.status') return 'step.status';
-  if (streamEvent.type === 'content.delta') return 'step.delta';
-  if (streamEvent.type === 'run.failed') return 'step.failed';
-  if (streamEvent.type === 'run.completed') return 'step.completed';
-  if (streamEvent.type === 'workflow.step') {
-    if (streamEvent.step.status === 'running') return 'step.started';
-    if (streamEvent.step.status === 'failed') return 'step.failed';
-    return 'step.completed';
-  }
-  if (streamEvent.type === 'workflow.replayed') return 'replay.started';
-  return 'step.status';
-}
-
-function recordEvent(
+function persistStreamEvent(
   federation: FederationService,
   runId: string,
+  type: WorkflowEventType,
   streamEvent: StreamEvent,
-  overrideType?: WorkflowEventType,
 ) {
-  return federation.addEvent(runId, overrideType ?? eventTypeFor(streamEvent), {
+  return federation.addEvent(runId, type, {
     streamEvent: streamEvent as unknown as Record<string, unknown>,
   });
 }
@@ -144,16 +150,16 @@ async function executeStep(input: {
   allAgents: AgentRecord[];
   queue: AsyncEventQueue<StreamEvent>;
   signal: AbortSignal;
-}) {
+}): Promise<StepResult> {
   const { database, collaboration, federation, conversation, userMessage, run, allAgents, queue, signal } = input;
   let step = federation.updateStep(input.step.id, {
     status: 'running',
     error: null,
     incrementAttempt: true,
   })!;
-  const stepEvent: StreamEvent = { type: 'workflow.step', step };
-  recordEvent(federation, run.id, stepEvent, 'step.started');
-  queue.push(stepEvent);
+  const started: StreamEvent = { type: 'workflow.step', step };
+  persistStreamEvent(federation, run.id, 'step.started', started);
+  queue.push(started);
   queue.push({ type: 'run.started', runId: run.id, agentId: step.agentId });
 
   const assistantMessage = database.addMessage({
@@ -180,6 +186,7 @@ async function executeStep(input: {
       });
       queue.push({ type: 'workflow.event', event: capsuleEvent });
     }
+
     for await (const item of adapter.streamReply({
       conversation,
       userMessage,
@@ -195,7 +202,7 @@ async function executeStep(input: {
       if (signal.aborted) break;
       if (item.type === 'status') {
         const event: StreamEvent = { type: 'run.status', runId: run.id, status: item.status, agentId: step.agentId };
-        recordEvent(federation, run.id, event, 'step.status');
+        persistStreamEvent(federation, run.id, 'step.status', event);
         queue.push(event);
       } else {
         content += item.delta;
@@ -207,7 +214,7 @@ async function executeStep(input: {
           delta: item.delta,
           authorId: step.agentId,
         };
-        recordEvent(federation, run.id, event, 'step.delta');
+        persistStreamEvent(federation, run.id, 'step.delta', event);
         queue.push(event);
       }
     }
@@ -219,9 +226,9 @@ async function executeStep(input: {
         outputMessageId: assistantMessage.id,
         error: 'Connection closed before completion',
       })!;
-      const cancelledEvent: StreamEvent = { type: 'workflow.step', step };
-      recordEvent(federation, run.id, cancelledEvent, 'step.failed');
-      queue.push(cancelledEvent);
+      const cancelled: StreamEvent = { type: 'workflow.step', step };
+      persistStreamEvent(federation, run.id, 'step.failed', cancelled);
+      queue.push(cancelled);
       return { ok: false, aborted: true, step };
     }
 
@@ -232,7 +239,7 @@ async function executeStep(input: {
       error: null,
     })!;
     const completed: StreamEvent = { type: 'run.completed', runId: run.id, message: finalMessage, agentId: step.agentId };
-    recordEvent(federation, run.id, completed, 'step.completed');
+    persistStreamEvent(federation, run.id, 'step.completed', completed);
     queue.push(completed);
     queue.push({ type: 'workflow.step', step });
     return { ok: true, aborted: false, step };
@@ -245,7 +252,7 @@ async function executeStep(input: {
       error: message,
     })!;
     const failed: StreamEvent = { type: 'run.failed', runId: run.id, error: message, agentId: step.agentId };
-    recordEvent(federation, run.id, failed, 'step.failed');
+    persistStreamEvent(federation, run.id, 'step.failed', failed);
     queue.push(failed);
     queue.push({ type: 'workflow.step', step });
     return { ok: false, aborted: false, step };
@@ -275,23 +282,27 @@ export async function* runFederatedWorkflow(input: FederatedRunInput): AsyncGene
   }
 
   if (run.steps.length === 0) {
-    const independent = resolved.requestedAgents;
-    const definitions = independent.map((agent, index) => ({
+    const definitions: StepDefinition[] = resolved.requestedAgents.map((agent, index) => ({
       agentId: agent.id,
       systemId: agent.systemId,
       position: index,
       parallelGroup: 0,
+      dependsOnStepIds: [],
     }));
     definitions.push({
       agentId: coordinator.id,
       systemId: coordinator.systemId,
       position: definitions.length,
-      parallelGroup: independent.length ? 1 : 0,
-      dependsOnStepIds: independent.map((agent) => agent.id),
+      parallelGroup: resolved.requestedAgents.length ? 1 : 0,
+      dependsOnStepIds: resolved.requestedAgents.map((agent) => agent.id),
     });
     federation.createSteps(run.id, definitions);
     run = federation.getRun(run.id)!;
-    const createdEvent = federation.addEvent(run.id, 'run.created', { runId: run.id, requestedAgentIds: requestedIds });
+    const createdEvent = federation.addEvent(run.id, 'run.created', {
+      runId: run.id,
+      requestedAgentIds: requestedIds,
+      rejectedMentions: resolved.rejected,
+    });
     yield { type: 'workflow.event', event: createdEvent };
   }
 
@@ -304,8 +315,7 @@ export async function* runFederatedWorkflow(input: FederatedRunInput): AsyncGene
 
   run = federation.updateRun(run.id, { status: 'running', error: null })!;
   const lifecycleType: WorkflowEventType = input.resumed ? 'run.resumed' : 'run.started';
-  const lifecycleEvent = federation.addEvent(run.id, lifecycleType, { runId: run.id });
-  yield { type: 'workflow.event', event: lifecycleEvent };
+  yield { type: 'workflow.event', event: federation.addEvent(run.id, lifecycleType, { runId: run.id }) };
   yield { type: 'workflow.run', run };
 
   const queue = new AsyncEventQueue<StreamEvent>();
@@ -329,14 +339,13 @@ export async function* runFederatedWorkflow(input: FederatedRunInput): AsyncGene
 
     if (signal.aborted) {
       run = federation.updateRun(run.id, { status: 'paused', error: 'Client connection closed; resume is available' })!;
-      const pausedEvent = federation.addEvent(run.id, 'run.paused', { runId: run.id });
-      queue.push({ type: 'workflow.event', event: pausedEvent });
+      queue.push({ type: 'workflow.event', event: federation.addEvent(run.id, 'run.paused', { runId: run.id }) });
       queue.push({ type: 'workflow.run', run });
       queue.close();
       return;
     }
 
-    let coordinatorResult: Awaited<ReturnType<typeof executeStep>> | null = null;
+    let coordinatorResult: StepResult | null = null;
     if (coordinatorStep) {
       coordinatorResult = await executeStep({
         database,
@@ -352,22 +361,20 @@ export async function* runFederatedWorkflow(input: FederatedRunInput): AsyncGene
       });
     }
 
-    const failures = [...results, ...(coordinatorResult ? [coordinatorResult] : [])].filter((result) => !result.ok);
+    const outcomes = [...results, ...(coordinatorResult ? [coordinatorResult] : [])];
+    const failures = outcomes.filter((result) => !result.ok);
     if (signal.aborted) {
       run = federation.updateRun(run.id, { status: 'paused', error: 'Client connection closed; resume is available' })!;
-      const pausedEvent = federation.addEvent(run.id, 'run.paused', { runId: run.id });
-      queue.push({ type: 'workflow.event', event: pausedEvent });
+      queue.push({ type: 'workflow.event', event: federation.addEvent(run.id, 'run.paused', { runId: run.id }) });
     } else if (coordinatorResult && !coordinatorResult.ok) {
       run = federation.updateRun(run.id, { status: 'failed', error: coordinatorResult.step.error })!;
-      const failedEvent = federation.addEvent(run.id, 'run.failed', { runId: run.id, error: run.error });
-      queue.push({ type: 'workflow.event', event: failedEvent });
+      queue.push({ type: 'workflow.event', event: federation.addEvent(run.id, 'run.failed', { runId: run.id, error: run.error }) });
     } else {
       run = federation.updateRun(run.id, {
         status: 'completed',
         error: failures.length ? `${failures.length} non-coordinator step(s) failed; completed outputs were preserved` : null,
       })!;
-      const completedEvent = federation.addEvent(run.id, 'run.completed', { runId: run.id, partialFailures: failures.length });
-      queue.push({ type: 'workflow.event', event: completedEvent });
+      queue.push({ type: 'workflow.event', event: federation.addEvent(run.id, 'run.completed', { runId: run.id, partialFailures: failures.length }) });
     }
     queue.push({ type: 'workflow.run', run });
     queue.close();
@@ -376,8 +383,7 @@ export async function* runFederatedWorkflow(input: FederatedRunInput): AsyncGene
   void orchestrate().catch((error) => {
     const message = error instanceof Error ? error.message : 'Federated workflow controller failed';
     run = federation.updateRun(run.id, { status: 'failed', error: message })!;
-    const failedEvent = federation.addEvent(run.id, 'run.failed', { runId: run.id, error: message });
-    queue.push({ type: 'workflow.event', event: failedEvent });
+    queue.push({ type: 'workflow.event', event: federation.addEvent(run.id, 'run.failed', { runId: run.id, error: message }) });
     queue.push({ type: 'workflow.run', run });
     queue.close();
   });
