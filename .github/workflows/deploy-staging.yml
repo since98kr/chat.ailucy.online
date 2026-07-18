@@ -69,6 +69,7 @@ jobs:
           HERMES_AGENT_ID: ${{ vars.HERMES_AGENT_ID }}
           HERMES_API_KEY: ${{ secrets.HERMES_API_KEY }}
           HERMES_TIMEOUT_MS: ${{ vars.HERMES_TIMEOUT_MS }}
+          HERMES_DOCKER_NETWORK: ${{ vars.HERMES_DOCKER_NETWORK }}
         run: bash scripts/deploy/staging.sh "$(git rev-parse HEAD)"
 
       - name: Publish deployment summary

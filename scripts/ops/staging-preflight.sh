@@ -8,6 +8,7 @@ DATA_DIR="${CHAT_STAGING_DATA_DIR:-${DEPLOY_ROOT}/data}"
 STATE_DIR="${DEPLOY_ROOT}/state"
 PORT="${CHAT_STAGING_PORT:-14174}"
 STRICT="${CHAT_PREFLIGHT_STRICT:-true}"
+HERMES_DOCKER_NETWORK="${HERMES_DOCKER_NETWORK:-}"
 
 log() {
   printf '[chat-v2-preflight] %s\n' "$*"
@@ -22,6 +23,11 @@ command -v docker >/dev/null || fail 'docker is not installed'
 docker compose version >/dev/null || fail 'docker compose is unavailable'
 docker info >/dev/null || fail 'the current user cannot access Docker'
 docker image inspect "${IMAGE}" >/dev/null || fail "image not found: ${IMAGE}"
+
+if [[ -n "${HERMES_DOCKER_NETWORK}" ]]; then
+  docker network inspect "${HERMES_DOCKER_NETWORK}" >/dev/null 2>&1 \
+    || fail "Hermes Docker network not found: ${HERMES_DOCKER_NETWORK}"
+fi
 
 mkdir -p "${DATA_DIR}/artifacts" "${DATA_DIR}/backups" "${STATE_DIR}"
 test -r "${DATA_DIR}" -a -w "${DATA_DIR}" -a -x "${DATA_DIR}" || fail "data directory is not usable: ${DATA_DIR}"
@@ -59,6 +65,11 @@ for name in "${ENV_VARS[@]}"; do
   fi
 done
 
+DOCKER_NETWORK_ARGS=()
+if [[ -n "${HERMES_DOCKER_NETWORK}" ]]; then
+  DOCKER_NETWORK_ARGS+=(--network "${HERMES_DOCKER_NETWORK}")
+fi
+
 ARGS=()
 if [[ "${STRICT}" == 'true' ]]; then
   ARGS+=(--strict)
@@ -67,6 +78,7 @@ fi
 log "Running exact-runtime preflight for ${IMAGE} as ${RUNTIME_UID}:${RUNTIME_GID}."
 set +e
 docker run --rm \
+  "${DOCKER_NETWORK_ARGS[@]}" \
   --user "${RUNTIME_UID}:${RUNTIME_GID}" \
   --volume "${DATA_DIR}:/data" \
   "${DOCKER_ENV[@]}" \
