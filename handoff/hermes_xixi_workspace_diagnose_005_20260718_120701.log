@@ -1,0 +1,365 @@
+HERMES XIXI WORKSPACE DIAGNOSTIC 005
+timestamp=2026-07-18T12:07:01+09:00
+host=agentlucy
+user=since98kr
+task_id=t_3444f024
+smoke_repo=/home/since98kr/.hermes/smoke-repos/hermes-worktree-smoke
+worktree=/home/since98kr/.hermes/smoke-repos/hermes-worktree-smoke/.worktrees/t_3444f024
+
+=== WORKTREE STATE ===
+
+### test -d /home/since98kr/.hermes/smoke-repos/hermes-worktree-smoke/.worktrees/t_3444f024
+[exit=0]
+
+### ls -la /home/since98kr/.hermes/smoke-repos/hermes-worktree-smoke/.worktrees/t_3444f024
+합계 20
+drwxrwxr-x 2 since98kr since98kr 4096  7월 18 11:23 .
+drwxrwxr-x 4 since98kr since98kr 4096  7월 18 11:23 ..
+-rw-rw-r-- 1 since98kr since98kr   92  7월 18 11:23 .git
+-rw-rw-r-- 1 since98kr since98kr   54  7월 18 11:23 smoke_target.txt
+-rwxrwxr-x 1 since98kr since98kr  263  7월 18 11:23 test_smoke.sh
+[exit=0]
+
+### cat /home/since98kr/.hermes/smoke-repos/hermes-worktree-smoke/.worktrees/t_3444f024/.git
+gitdir: /home/since98kr/.hermes/smoke-repos/hermes-worktree-smoke/.git/worktrees/t_3444f024
+[exit=0]
+
+### git -C /home/since98kr/.hermes/smoke-repos/hermes-worktree-smoke/.worktrees/t_3444f024 rev-parse --is-inside-work-tree
+true
+[exit=0]
+
+### git -C /home/since98kr/.hermes/smoke-repos/hermes-worktree-smoke/.worktrees/t_3444f024 rev-parse --show-toplevel
+/home/since98kr/.hermes/smoke-repos/hermes-worktree-smoke/.worktrees/t_3444f024
+[exit=0]
+
+### git -C /home/since98kr/.hermes/smoke-repos/hermes-worktree-smoke/.worktrees/t_3444f024 rev-parse --git-dir
+/home/since98kr/.hermes/smoke-repos/hermes-worktree-smoke/.git/worktrees/t_3444f024
+[exit=0]
+
+### git -C /home/since98kr/.hermes/smoke-repos/hermes-worktree-smoke/.worktrees/t_3444f024 rev-parse --git-common-dir
+/home/since98kr/.hermes/smoke-repos/hermes-worktree-smoke/.git
+[exit=0]
+
+### git -C /home/since98kr/.hermes/smoke-repos/hermes-worktree-smoke/.worktrees/t_3444f024 status --short --branch
+## smoke/hermes-worktree-003
+[exit=0]
+
+### cat /home/since98kr/.hermes/smoke-repos/hermes-worktree-smoke/.worktrees/t_3444f024/smoke_target.txt
+WORKTREE_SMOKE_STATUS=PENDING
+UNCHANGED_SENTINEL=KEEP
+[exit=0]
+
+=== SAFE TERMINAL CONFIG SUMMARY ===
+
+--- /home/since98kr/.hermes/config.yaml ---
+terminal.backend='local'
+terminal.container_cpu=1
+terminal.container_disk=51200
+terminal.container_memory=5120
+terminal.container_persistent=True
+terminal.cwd='.'
+terminal.docker_mount_cwd_to_workspace=False
+terminal.home_mode='auto'
+terminal.lifetime_seconds=300
+terminal.timeout=180
+
+--- /home/since98kr/.hermes/profiles/xixi/config.yaml ---
+terminal.backend='docker'
+terminal.container_cpu=1
+terminal.container_memory=1536
+terminal.container_persistent=False
+terminal.cwd='/workspace'
+terminal.docker_image='nikolaik/python-nodejs:python3.11-nodejs20'
+terminal.docker_mount_cwd_to_workspace=False
+terminal.docker_network=False
+terminal.docker_orphan_reaper=True
+terminal.docker_persist_across_processes=False
+terminal.docker_run_as_host_user=True
+terminal.docker_volumes=['/home/since98kr/hermes-workspaces:/workspace']
+terminal.home_mode='profile'
+terminal.lifetime_seconds=300
+terminal.timeout=300
+
+--- /home/since98kr/.hermes/profiles/xixi/config.yml ---
+missing
+
+--- safe environment overrides ---
+TERMINAL_ENV=<unset>
+TERMINAL_CWD=<unset>
+TERMINAL_DOCKER_MOUNT_CWD_TO_WORKSPACE=<unset>
+TERMINAL_DOCKER_PERSIST_ACROSS_PROCESSES=<unset>
+TERMINAL_DOCKER_RUN_AS_HOST_USER=<unset>
+TERMINAL_CONTAINER_PERSISTENT=<unset>
+HERMES_KANBAN_TASK=<unset>
+HERMES_KANBAN_WORKSPACE=<unset>
+HERMES_KANBAN_BRANCH=<unset>
+HERMES_KANBAN_BOARD=<unset>
+HERMES_KANBAN_WORKSPACES_ROOT=<unset>
+TERMINAL_DOCKER_VOLUMES_is_set=False
+TERMINAL_DOCKER_EXTRA_ARGS_is_set=False
+
+=== CONFIG FILE LOCATIONS ===
+
+### bash -lc find\ \'/home/since98kr/.hermes\'\ -maxdepth\ 4\ -type\ f\ \\\(\ -name\ \'config.yaml\'\ -o\ -name\ \'config.yml\'\ \\\)\ -print
+/home/since98kr/.hermes/runtime-restore/20260717T154433Z/stage-home/config.yaml
+/home/since98kr/.hermes/runtime-restore/20260717T154433Z/backup/config.yaml
+/home/since98kr/.hermes/runtime-restore/20260717T155238Z/stage-home/config.yaml
+/home/since98kr/.hermes/runtime-restore/20260717T155238Z/backup/config.yaml
+/home/since98kr/.hermes/runtime-restore/lucy-kanban-20260717T162948Z/stage-home/config.yaml
+/home/since98kr/.hermes/hermes-agent/.github/ISSUE_TEMPLATE/config.yml
+/home/since98kr/.hermes/config.yaml
+/home/since98kr/.hermes/profiles/xixi/config.yaml
+/home/since98kr/.hermes/profiles/gemma/config.yaml
+/home/since98kr/.hermes/profiles/lynn/config.yaml
+[exit=0]
+
+=== HERMES-MANAGED CONTAINERS ===
+
+### docker ps -a --filter label=hermes-agent=1 --format table\ \{\{.ID\}\}\\t\{\{.Names\}\}\\t\{\{.Status\}\}\\t\{\{.Labels\}\}
+CONTAINER ID   NAMES             STATUS                        LABELS
+63645849035e   hermes-15f80862   Exited (143) 42 minutes ago   hermes-agent=1,hermes-profile=xixi,hermes-task-id=default,org.opencontainers.image.authors=Nikolai R Kristiansen <nikolaik@gmail.com>
+958ab3bece86   hermes-7e85c16e   Up 28 hours                   hermes-agent=1,hermes-profile=lynn,hermes-task-id=default,org.opencontainers.image.authors=Nikolai R Kristiansen <nikolaik@gmail.com>
+[exit=0]
+
+--- container=63645849035e ---
+
+### docker inspect --format Name=\{\{.Name\}\}\ Image=\{\{.Config.Image\}\}\ WorkingDir=\{\{.Config.WorkingDir\}\}\ Labels=\{\{json\ .Config.Labels\}\} 63645849035e
+Name=/hermes-15f80862 Image=nikolaik/python-nodejs:python3.11-nodejs20 WorkingDir=/workspace Labels={"hermes-agent":"1","hermes-profile":"xixi","hermes-task-id":"default","org.opencontainers.image.authors":"Nikolai R Kristiansen <nikolaik@gmail.com>"}
+[exit=0]
+
+### docker inspect --format \{\{json\ .Mounts\}\} 63645849035e
+[{"Type":"bind","Source":"/home/since98kr/.hermes/profiles/xixi/skills","Destination":"/root/.hermes/skills","Mode":"ro","RW":false,"Propagation":"rprivate"},{"Type":"bind","Source":"/home/since98kr/hermes-workspaces","Destination":"/workspace","Mode":"","RW":true,"Propagation":"rprivate"}]
+[exit=0]
+
+--- container=958ab3bece86 ---
+
+### docker inspect --format Name=\{\{.Name\}\}\ Image=\{\{.Config.Image\}\}\ WorkingDir=\{\{.Config.WorkingDir\}\}\ Labels=\{\{json\ .Config.Labels\}\} 958ab3bece86
+Name=/hermes-7e85c16e Image=nikolaik/python-nodejs:python3.11-nodejs20 WorkingDir=/workspace Labels={"hermes-agent":"1","hermes-profile":"lynn","hermes-task-id":"default","org.opencontainers.image.authors":"Nikolai R Kristiansen <nikolaik@gmail.com>"}
+[exit=0]
+
+### docker inspect --format \{\{json\ .Mounts\}\} 958ab3bece86
+[{"Type":"bind","Source":"/home/since98kr/hermes-review-packages","Destination":"/reviews","Mode":"ro","RW":false,"Propagation":"rprivate"},{"Type":"bind","Source":"/home/since98kr/hermes-review-scratch","Destination":"/workspace","Mode":"","RW":true,"Propagation":"rprivate"},{"Type":"bind","Source":"/home/since98kr/.hermes/profiles/lynn/skills","Destination":"/root/.hermes/skills","Mode":"ro","RW":false,"Propagation":"rprivate"}]
+[exit=0]
+
+=== READ-ONLY DOCKER MOUNT PROBE A: WORKTREE ONLY ===
+/workspace
+gitdir: /home/since98kr/.hermes/smoke-repos/hermes-worktree-smoke/.git/worktrees/t_3444f024
+fatal: not a git repository: /home/since98kr/.hermes/smoke-repos/hermes-worktree-smoke/.git/worktrees/t_3444f024
+fatal: not a git repository: /home/since98kr/.hermes/smoke-repos/hermes-worktree-smoke/.git/worktrees/t_3444f024
+[probe_a_exit=128]
+
+=== READ-ONLY DOCKER MOUNT PROBE B: WORKTREE + COMMON REPO SAME HOST PATH ===
+/workspace
+gitdir: /home/since98kr/.hermes/smoke-repos/hermes-worktree-smoke/.git/worktrees/t_3444f024
+fatal: detected dubious ownership in repository at '/workspace'
+To add an exception for this directory, call:
+
+	git config --global --add safe.directory /workspace
+fatal: detected dubious ownership in repository at '/workspace'
+To add an exception for this directory, call:
+
+	git config --global --add safe.directory /workspace
+fatal: detected dubious ownership in repository at '/workspace'
+To add an exception for this directory, call:
+
+	git config --global --add safe.directory /workspace
+fatal: detected dubious ownership in repository at '/workspace'
+To add an exception for this directory, call:
+
+	git config --global --add safe.directory /workspace
+[probe_b_exit=128]
+
+=== RELEVANT LOCAL SOURCE REFERENCES ===
+
+### bash -lc grep\ -R\ -n\ --exclude-dir=.git\ --exclude=\'\*.pyc\'\ \'docker_mount_cwd_to_workspace\'\ \'/home/since98kr/.hermes/hermes-agent\'\ \|\ head\ -80
+/home/since98kr/.hermes/hermes-agent/cli-config.yaml.example:222:  docker_mount_cwd_to_workspace: false  # SECURITY: off by default. Opt in to mount the launch cwd into Docker /workspace.
+/home/since98kr/.hermes/hermes-agent/cli-config.yaml.example:253:#   docker_mount_cwd_to_workspace: true   # Explicit opt-in: mount your launch cwd into /workspace
+/home/since98kr/.hermes/hermes-agent/agent/prompt_builder.py:989:                "docker_mount_cwd_to_workspace": config.get("docker_mount_cwd_to_workspace", False),
+/home/since98kr/.hermes/hermes-agent/hermes_cli/config.py:1237:        "docker_mount_cwd_to_workspace": False,
+/home/since98kr/.hermes/hermes-agent/hermes_cli/config.py:6851:    "docker_mount_cwd_to_workspace": "TERMINAL_DOCKER_MOUNT_CWD_TO_WORKSPACE",
+/home/since98kr/.hermes/hermes-agent/cli.py:409:            "docker_mount_cwd_to_workspace": False,  # explicit opt-in only; default off for sandbox isolation
+/home/since98kr/.hermes/hermes-agent/cli.py:633:        "docker_mount_cwd_to_workspace": "TERMINAL_DOCKER_MOUNT_CWD_TO_WORKSPACE",
+/home/since98kr/.hermes/hermes-agent/tests/hermes_cli/test_set_config_value.py:118:        set_config_value("terminal.docker_mount_cwd_to_workspace", "true")
+/home/since98kr/.hermes/hermes-agent/tests/hermes_cli/test_set_config_value.py:121:        assert "docker_mount_cwd_to_workspace: 'true'" in config or "docker_mount_cwd_to_workspace: true" in config
+/home/since98kr/.hermes/hermes-agent/tests/tools/test_container_cwd_sanitize.py:97:            "docker_mount_cwd_to_workspace": False,
+/home/since98kr/.hermes/hermes-agent/tests/tools/test_container_cwd_sanitize.py:185:            "docker_mount_cwd_to_workspace": False,
+/home/since98kr/.hermes/hermes-agent/tests/tools/test_modal_sandbox_fixes.py:85:        assert config["docker_mount_cwd_to_workspace"] is False
+/home/since98kr/.hermes/hermes-agent/tests/tools/test_modal_sandbox_fixes.py:95:        assert config["docker_mount_cwd_to_workspace"] is True
+/home/since98kr/.hermes/hermes-agent/tests/tools/test_modal_sandbox_fixes.py:148:            container_config={"docker_mount_cwd_to_workspace": True},
+/home/since98kr/.hermes/hermes-agent/tests/tools/test_modal_sandbox_fixes.py:322:             "host_cwd": None, "docker_mount_cwd_to_workspace": False}) is False
+/home/since98kr/.hermes/hermes-agent/tests/tools/test_modal_sandbox_fixes.py:332:             "docker_mount_cwd_to_workspace": True}) is True
+/home/since98kr/.hermes/hermes-agent/tests/tools/test_file_tools_container_config.py:22:        "docker_mount_cwd_to_workspace": True,
+/home/since98kr/.hermes/hermes-agent/tests/tools/test_file_tools_container_config.py:52:    def test_docker_mount_cwd_to_workspace_passed(self):
+/home/since98kr/.hermes/hermes-agent/tests/tools/test_file_tools_container_config.py:53:        """docker_mount_cwd_to_workspace is forwarded to container_config."""
+/home/since98kr/.hermes/hermes-agent/tests/tools/test_file_tools_container_config.py:54:        cc = self._run(_make_env_config(docker_mount_cwd_to_workspace=True), "t1").get("container_config", {})
+/home/since98kr/.hermes/hermes-agent/tests/tools/test_file_tools_container_config.py:55:        assert cc.get("docker_mount_cwd_to_workspace") is True
+/home/since98kr/.hermes/hermes-agent/tests/tools/test_file_tools_container_config.py:63:        """docker_mount_cwd_to_workspace defaults to False when absent from config."""
+/home/since98kr/.hermes/hermes-agent/tests/tools/test_file_tools_container_config.py:65:        del cfg["docker_mount_cwd_to_workspace"]
+/home/since98kr/.hermes/hermes-agent/tests/tools/test_file_tools_container_config.py:67:        assert cc.get("docker_mount_cwd_to_workspace") is False
+/home/since98kr/.hermes/hermes-agent/tests/tools/test_terminal_config_env_sync.py:17:``docker_mount_cwd_to_workspace`` (gateway map).
+/home/since98kr/.hermes/hermes-agent/tests/tools/test_terminal_config_env_sync.py:178:        "docker_mount_cwd_to_workspace",
+/home/since98kr/.hermes/hermes-agent/tests/tools/test_terminal_config_env_sync.py:209:def test_docker_mount_cwd_to_workspace_is_bridged_everywhere():
+/home/since98kr/.hermes/hermes-agent/tests/tools/test_terminal_config_env_sync.py:210:    """Same regression class — docker_mount_cwd_to_workspace was missing from
+/home/since98kr/.hermes/hermes-agent/tests/tools/test_terminal_config_env_sync.py:214:    assert "docker_mount_cwd_to_workspace" in _cli_env_map_keys()
+/home/since98kr/.hermes/hermes-agent/tests/tools/test_terminal_config_env_sync.py:215:    assert "docker_mount_cwd_to_workspace" in _gateway_env_map_keys()
+/home/since98kr/.hermes/hermes-agent/tests/tools/test_terminal_config_env_sync.py:216:    assert "docker_mount_cwd_to_workspace" in _save_config_env_sync_keys()
+/home/since98kr/.hermes/hermes-agent/tests/tools/test_terminal_config_env_sync.py:265:    docker_env / docker_mount_cwd_to_workspace — drift between any of the
+/home/since98kr/.hermes/hermes-agent/tests/gateway/test_cwd_placeholder.py:12:            docker_mount_cwd_to_workspace=False,
+/home/since98kr/.hermes/hermes-agent/tests/gateway/test_cwd_placeholder.py:21:            docker_mount_cwd_to_workspace=False,
+/home/since98kr/.hermes/hermes-agent/tests/gateway/test_cwd_placeholder.py:30:            docker_mount_cwd_to_workspace=False,
+/home/since98kr/.hermes/hermes-agent/tests/gateway/test_cwd_placeholder.py:39:            docker_mount_cwd_to_workspace=True,
+/home/since98kr/.hermes/hermes-agent/tests/gateway/test_cwd_placeholder.py:48:            docker_mount_cwd_to_workspace=True,
+/home/since98kr/.hermes/hermes-agent/tests/gateway/test_cwd_placeholder.py:57:            docker_mount_cwd_to_workspace=False,
+/home/since98kr/.hermes/hermes-agent/tests/gateway/test_cwd_placeholder.py:66:            docker_mount_cwd_to_workspace=False,
+/home/since98kr/.hermes/hermes-agent/tests/gateway/test_config_cwd_bridge.py:46:            "docker_mount_cwd_to_workspace": "TERMINAL_DOCKER_MOUNT_CWD_TO_WORKSPACE",
+/home/since98kr/.hermes/hermes-agent/tests/gateway/test_config_cwd_bridge.py:87:            docker_mount_cwd_to_workspace=env.get(
+/home/since98kr/.hermes/hermes-agent/tests/gateway/test_config_cwd_bridge.py:247:                "docker_mount_cwd_to_workspace": False,
+/home/since98kr/.hermes/hermes-agent/tests/gateway/test_config_cwd_bridge.py:259:                "docker_mount_cwd_to_workspace": True,
+/home/since98kr/.hermes/hermes-agent/website/i18n/zh-Hans/docusaurus-plugin-content-docs/current/user-guide/configuration.md:135:  docker_mount_cwd_to_workspace: false  # 将启动目录挂载到 /workspace
+/home/since98kr/.hermes/hermes-agent/website/i18n/zh-Hans/docusaurus-plugin-content-docs/current/user-guide/configuration.md:356:  docker_mount_cwd_to_workspace: true
+/home/since98kr/.hermes/hermes-agent/website/docs/user-guide/configuration.md:209:  docker_mount_cwd_to_workspace: false  # Mount launch dir into /workspace
+/home/since98kr/.hermes/hermes-agent/website/docs/user-guide/configuration.md:295:| `TERMINAL_DOCKER_MOUNT_CWD_TO_WORKSPACE` | `docker_mount_cwd_to_workspace` | `true` / `false` |
+/home/since98kr/.hermes/hermes-agent/website/docs/user-guide/configuration.md:501:  docker_mount_cwd_to_workspace: true
+/home/since98kr/.hermes/hermes-agent/tools/terminal_tool.py:276:    if config.get("host_cwd") and config.get("docker_mount_cwd_to_workspace"):
+/home/since98kr/.hermes/hermes-agent/tools/terminal_tool.py:1335:        "docker_mount_cwd_to_workspace": mount_docker_cwd,
+/home/since98kr/.hermes/hermes-agent/tools/terminal_tool.py:1440:            auto_mount_cwd=cc.get("docker_mount_cwd_to_workspace", False),
+/home/since98kr/.hermes/hermes-agent/tools/terminal_tool.py:2209:                                "docker_mount_cwd_to_workspace": config.get("docker_mount_cwd_to_workspace", False),
+/home/since98kr/.hermes/hermes-agent/tools/file_tools.py:1147:                    "docker_mount_cwd_to_workspace": config.get("docker_mount_cwd_to_workspace", False),
+/home/since98kr/.hermes/hermes-agent/gateway/cwd_placeholder.py:24:    docker_mount_cwd_to_workspace: bool,
+/home/since98kr/.hermes/hermes-agent/gateway/cwd_placeholder.py:44:    if backend == "docker" and docker_mount_cwd_to_workspace:
+/home/since98kr/.hermes/hermes-agent/gateway/run.py:1533:                "docker_mount_cwd_to_workspace": "TERMINAL_DOCKER_MOUNT_CWD_TO_WORKSPACE",
+/home/since98kr/.hermes/hermes-agent/gateway/run.py:1754:        docker_mount_cwd_to_workspace=os.getenv(
+[exit=0]
+
+### bash -lc grep\ -R\ -n\ --exclude-dir=.git\ --exclude=\'\*.pyc\'\ \'HERMES_KANBAN_WORKSPACE\'\ \'/home/since98kr/.hermes/hermes-agent\'\ \|\ head\ -120
+/home/since98kr/.hermes/hermes-agent/agent/secret_scope.py:107:    "HERMES_KANBAN_DB", "HERMES_KANBAN_WORKSPACES_ROOT", "HERMES_KANBAN_BOARD",
+/home/since98kr/.hermes/hermes-agent/agent/prompt_builder.py:193:    "`$HERMES_KANBAN_TASK`; your workspace is `$HERMES_KANBAN_WORKSPACE`. "
+/home/since98kr/.hermes/hermes-agent/agent/prompt_builder.py:205:    "2. **Work inside the workspace.** `cd $HERMES_KANBAN_WORKSPACE` before "
+/home/since98kr/.hermes/hermes-agent/agent/prompt_builder.py:250:    "- **Workspace.** `cd $HERMES_KANBAN_WORKSPACE` first. For a `worktree` kind "
+/home/since98kr/.hermes/hermes-agent/hermes_cli/kanban_db.py:45:* ``HERMES_KANBAN_WORKSPACES_ROOT`` — pin the workspaces root directly.
+/home/since98kr/.hermes/hermes-agent/hermes_cli/kanban_db.py:50:``HERMES_KANBAN_WORKSPACES_ROOT``, and ``HERMES_KANBAN_BOARD`` into
+/home/since98kr/.hermes/hermes-agent/hermes_cli/kanban_db.py:545:    ``HERMES_KANBAN_WORKSPACES_ROOT`` pins the path directly (highest
+/home/since98kr/.hermes/hermes-agent/hermes_cli/kanban_db.py:552:    override = os.environ.get("HERMES_KANBAN_WORKSPACES_ROOT", "").strip()
+/home/since98kr/.hermes/hermes-agent/hermes_cli/kanban_db.py:4402:    override = os.environ.get("HERMES_KANBAN_WORKSPACES_ROOT", "").strip()
+/home/since98kr/.hermes/hermes-agent/hermes_cli/kanban_db.py:4454:    * ``HERMES_KANBAN_WORKSPACES_ROOT`` when set (worker-side override
+/home/since98kr/.hermes/hermes-agent/hermes_cli/kanban_db.py:8108:    env["HERMES_KANBAN_WORKSPACE"] = workspace
+/home/since98kr/.hermes/hermes-agent/hermes_cli/kanban_db.py:8155:    env["HERMES_KANBAN_WORKSPACES_ROOT"] = str(workspaces_root(board=board))
+/home/since98kr/.hermes/hermes-agent/tests/hermes_cli/test_kanban_db.py:2567:    """``HERMES_KANBAN_WORKSPACES_ROOT`` extends the managed-scratch set.
+/home/since98kr/.hermes/hermes-agent/tests/hermes_cli/test_kanban_db.py:2579:    monkeypatch.setenv("HERMES_KANBAN_WORKSPACES_ROOT", str(workspaces_override))
+/home/since98kr/.hermes/hermes-agent/tests/hermes_cli/test_kanban_db.py:3067:        # HERMES_KANBAN_WORKSPACES_ROOT pins the workspaces root directly.
+/home/since98kr/.hermes/hermes-agent/tests/hermes_cli/test_kanban_db.py:3078:        monkeypatch.setenv("HERMES_KANBAN_WORKSPACES_ROOT", str(pinned_ws))
+/home/since98kr/.hermes/hermes-agent/tests/hermes_cli/test_kanban_db.py:3094:        monkeypatch.setenv("HERMES_KANBAN_WORKSPACES_ROOT", "")
+/home/since98kr/.hermes/hermes-agent/tests/hermes_cli/test_kanban_db.py:3103:        # and HERMES_KANBAN_WORKSPACES_ROOT into the worker env so the
+/home/since98kr/.hermes/hermes-agent/tests/hermes_cli/test_kanban_db.py:3142:        assert env["HERMES_KANBAN_WORKSPACES_ROOT"] == str(
+/home/since98kr/.hermes/hermes-agent/tests/hermes_cli/test_kanban_worker_terminal_cwd.py:5:``HERMES_KANBAN_WORKSPACE``, but did NOT set ``TERMINAL_CWD``. Because
+/home/since98kr/.hermes/hermes-agent/tests/hermes_cli/test_kanban_worker_terminal_cwd.py:77:    assert captured["env"]["HERMES_KANBAN_WORKSPACE"] == str(workspace)
+/home/since98kr/.hermes/hermes-agent/tests/hermes_cli/test_kanban_boards.py:51:        "HERMES_KANBAN_WORKSPACES_ROOT",
+/home/since98kr/.hermes/hermes-agent/tests/hermes_cli/test_kanban_boards.py:138:        monkeypatch.setenv("HERMES_KANBAN_WORKSPACES_ROOT", str(forced))
+/home/since98kr/.hermes/hermes-agent/tests/hermes_cli/test_kanban_boards.py:430:        assert env["HERMES_KANBAN_WORKSPACES_ROOT"] == str(expected_ws)
+/home/since98kr/.hermes/hermes-agent/tests/conftest.py:209:    "HERMES_KANBAN_WORKSPACES_ROOT",
+/home/since98kr/.hermes/hermes-agent/tests/conftest.py:212:    "HERMES_KANBAN_WORKSPACE",
+/home/since98kr/.hermes/hermes-agent/tests/stress/test_subprocess_e2e.py:37:            "HERMES_KANBAN_WORKSPACE": workspace,
+/home/since98kr/.hermes/hermes-agent/tests/stress/_fake_worker.py:17:    workspace = os.environ.get("HERMES_KANBAN_WORKSPACE", "")
+/home/since98kr/.hermes/hermes-agent/website/i18n/zh-Hans/docusaurus-plugin-content-docs/current/reference/environment-variables.md:102:| `HERMES_KANBAN_WORKSPACES_ROOT` | 直接固定 kanban 工作区根目录（工作区最高优先级；优先于 `HERMES_KANBAN_HOME`）。调度器将其注入工作进程子进程环境 |
+/home/since98kr/.hermes/hermes-agent/website/i18n/zh-Hans/docusaurus-plugin-content-docs/current/user-guide/features/kanban.md:288:2. 通过终端工具执行 `cd $HERMES_KANBAN_WORKSPACE`，在那里完成工作。
+/home/since98kr/.hermes/hermes-agent/website/i18n/zh-Hans/docusaurus-plugin-content-docs/current/user-guide/features/kanban-worker-lanes.md:40:| `HERMES_KANBAN_WORKSPACES_ROOT` | 看板工作区树的根目录 |
+/home/since98kr/.hermes/hermes-agent/website/i18n/zh-Hans/docusaurus-plugin-content-docs/current/user-guide/features/kanban-worker-lanes.md:41:| `HERMES_KANBAN_WORKSPACE` | *本*任务工作区的绝对路径 |
+/home/since98kr/.hermes/hermes-agent/website/i18n/zh-Hans/docusaurus-plugin-content-docs/current/user-guide/features/kanban-worker-lanes.md:93:将非 Hermes CLI 工具（Codex CLI、Claude Code CLI、OpenCode CLI、本地编码模型运行器等）接入 kanban worker 通道*尚未形成成熟路径*。调度器的 spawn 函数是可插拔的（`spawn_fn` 是 `dispatch_once` 的参数），插件可以为非 Hermes assignee 注册自己的 `spawn_fn`，但周边集成工作——将 CLI 的退出码封装为 `kanban_complete` / `kanban_block` 调用、将 CLI 的工作区/沙箱约定映射到调度器的 `HERMES_KANBAN_WORKSPACE` 环境变量、处理认证和每个 CLI 的策略——仍是每个集成各自的设计工作。
+/home/since98kr/.hermes/hermes-agent/website/i18n/zh-Hans/docusaurus-plugin-content-docs/current/user-guide/features/codex-app-server-runtime.md:98:Kanban 工具通过分发器设置的 `HERMES_KANBAN_TASK` 环境变量进行访问控制——该变量会传播到 Codex 子进程（Codex 继承环境变量），再从那里传播到生成的 `hermes-tools` MCP server 子进程。因此工具能看到正确的任务 id 并正确进行访问控制。对于 Codex app-server worker，当 `HERMES_KANBAN_TASK` 存在时，Hermes 还会传入精细的 app-server 沙箱覆盖配置：保持 `workspace-write` 沙箱，将**看板数据库目录以及分发器固定的所有 Kanban 路径**作为额外可写根目录添加（`HERMES_KANBAN_WORKSPACES_ROOT`、`HERMES_KANBAN_WORKSPACE`、旧版 `HERMES_KANBAN_ROOT`——去重，数据库目录优先），并默认禁用网络。这避免了脆弱的 `:danger-no-sandbox` 变通方案，同时允许 `kanban_complete` / `kanban_block` 更新看板数据库，**并且**允许 worker 在数据库目录之外的工作区挂载点下写入报告/产物（例如独立驱动器上的 `/media/.../kanban-workspaces/...`——[issue #27941](https://github.com/NousResearch/hermes-agent/issues/27941)）。
+/home/since98kr/.hermes/hermes-agent/website/docs/reference/environment-variables.md:110:| `HERMES_KANBAN_WORKSPACES_ROOT` | Pin the kanban workspaces root directly (highest precedence for workspaces; beats `HERMES_KANBAN_HOME`). The dispatcher injects this into worker subprocess env |
+/home/since98kr/.hermes/hermes-agent/website/docs/user-guide/features/kanban.md:366:2. `cd $HERMES_KANBAN_WORKSPACE` (via the terminal tool) and do the work there.
+/home/since98kr/.hermes/hermes-agent/website/docs/user-guide/features/kanban-worker-lanes.md:40:| `HERMES_KANBAN_WORKSPACES_ROOT` | root of the board's workspace tree |
+/home/since98kr/.hermes/hermes-agent/website/docs/user-guide/features/kanban-worker-lanes.md:41:| `HERMES_KANBAN_WORKSPACE` | absolute path to *this* task's workspace |
+/home/since98kr/.hermes/hermes-agent/website/docs/user-guide/features/kanban-worker-lanes.md:93:Wiring a non-Hermes CLI tool (Codex CLI, Claude Code CLI, OpenCode CLI, a local coding-model runner, etc.) as a kanban worker lane is *not yet a paved path*. The dispatcher's spawn function is pluggable (`spawn_fn` is a parameter on `dispatch_once`), and a plugin could register its own `spawn_fn` for a non-Hermes assignee, but the surrounding integration work — wrapping the CLI's exit code into `kanban_complete` / `kanban_block` calls, mapping the CLI's workspace/sandbox conventions onto the dispatcher's `HERMES_KANBAN_WORKSPACE` env, handling auth and per-CLI policy — is still per-integration design work.
+/home/since98kr/.hermes/hermes-agent/website/docs/user-guide/features/codex-app-server-runtime.md:102:The kanban tools are gated by `HERMES_KANBAN_TASK` env var the dispatcher sets — that var is propagated to the codex subprocess (codex inherits env) and from there to the spawned `hermes-tools` MCP server subprocess. So the tools see the right task id and gate correctly. For Codex app-server workers, Hermes also passes narrow app-server sandbox overrides when `HERMES_KANBAN_TASK` is present: keep `workspace-write` sandboxing, add the **board DB directory plus every Kanban path the dispatcher pinned** as extra writable roots (`HERMES_KANBAN_WORKSPACES_ROOT`, `HERMES_KANBAN_WORKSPACE`, legacy `HERMES_KANBAN_ROOT` — deduplicated, DB-dir first), and keep network disabled by default. This avoids the brittle `:danger-no-sandbox` workaround while letting `kanban_complete` / `kanban_block` update the board DB **and** letting workers write reports/artifacts under workspace mounts that live outside the DB directory (e.g. `/media/.../kanban-workspaces/...` on a separate drive — [issue #27941](https://github.com/NousResearch/hermes-agent/issues/27941)).
+[exit=0]
+
+### bash -lc grep\ -R\ -n\ --exclude-dir=.git\ --exclude=\'\*.pyc\'\ \'hermes-task-id\'\ \'/home/since98kr/.hermes/hermes-agent\'\ \|\ head\ -80
+/home/since98kr/.hermes/hermes-agent/tests/tools/test_docker_environment.py:627:    assert "hermes-task-id=kanban-42" in labels, (
+/home/since98kr/.hermes/hermes-agent/tests/tools/test_docker_environment.py:628:        f"hermes-task-id=kanban-42 missing; got: {sorted(labels)}"
+/home/since98kr/.hermes/hermes-agent/tests/tools/test_docker_environment.py:663:    assert "hermes-task-id=task_with_weird_chars" in labels, (
+/home/since98kr/.hermes/hermes-agent/tests/tools/test_docker_environment.py:680:        "hermes-task-id": "abc",
+/home/since98kr/.hermes/hermes-agent/website/docs/user-guide/configuration.md:253:- `hermes-task-id=<sanitized task_id>` — keys the per-task reuse probe
+/home/since98kr/.hermes/hermes-agent/website/docs/user-guide/configuration.md:256:On startup, Hermes runs `docker ps --filter label=hermes-task-id=<id> --filter label=hermes-profile=<profile>` and **attaches to the existing container** when it finds one. If the container is `exited` (e.g. after a Docker daemon restart), it's `docker start`'d and reused — filesystem state and any installed packages survive, but in-container background processes do not.
+/home/since98kr/.hermes/hermes-agent/tools/environments/docker.py:861:        #   * future cross-process reuse (`hermes-task-id`, `hermes-profile`)
+/home/since98kr/.hermes/hermes-agent/tools/environments/docker.py:870:            "--label", f"hermes-task-id={task_label}",
+/home/since98kr/.hermes/hermes-agent/tools/environments/docker.py:881:            "hermes-task-id": task_label,
+/home/since98kr/.hermes/hermes-agent/tools/environments/docker.py:1109:        task_label = self._labels.get("hermes-task-id", "")
+/home/since98kr/.hermes/hermes-agent/tools/environments/docker.py:1288:                    "--filter", f"label=hermes-task-id={task_label}",
+[exit=0]
+
+### bash -lc grep\ -R\ -n\ --exclude-dir=.git\ --exclude=\'\*.pyc\'\ \'HERMES_KANBAN_TASK\'\ \'/home/since98kr/.hermes/hermes-agent/tools\'\ \'/home/since98kr/.hermes/hermes-agent/hermes_cli\'\ 2\>/dev/null\ \|\ head\ -120
+/home/since98kr/.hermes/hermes-agent/tools/send_message_tool.py:1828:    Also passes for kanban workers — the dispatcher sets ``HERMES_KANBAN_TASK``
+/home/since98kr/.hermes/hermes-agent/tools/send_message_tool.py:1838:    if os.environ.get("HERMES_KANBAN_TASK"):
+/home/since98kr/.hermes/hermes-agent/tools/kanban_tools.py:4:running under the dispatcher (env var ``HERMES_KANBAN_TASK`` set) or when
+/home/since98kr/.hermes/hermes-agent/tools/kanban_tools.py:68:    1. ``HERMES_KANBAN_TASK`` is set (dispatcher-spawned worker), OR
+/home/since98kr/.hermes/hermes-agent/tools/kanban_tools.py:77:    if os.environ.get("HERMES_KANBAN_TASK"):
+/home/since98kr/.hermes/hermes-agent/tools/kanban_tools.py:91:    if os.environ.get("HERMES_KANBAN_TASK"):
+/home/since98kr/.hermes/hermes-agent/tools/kanban_tools.py:104:    env_tid = os.environ.get("HERMES_KANBAN_TASK")
+/home/since98kr/.hermes/hermes-agent/tools/kanban_tools.py:110:    if os.environ.get("HERMES_KANBAN_TASK") != task_id:
+/home/since98kr/.hermes/hermes-agent/tools/kanban_tools.py:125:    if os.environ.get("HERMES_KANBAN_TASK") != task_id:
+/home/since98kr/.hermes/hermes-agent/tools/kanban_tools.py:138:    A process spawned by the dispatcher has ``HERMES_KANBAN_TASK`` set
+/home/since98kr/.hermes/hermes-agent/tools/kanban_tools.py:145:    ``HERMES_KANBAN_TASK`` in env) aren't subject to this check — their
+/home/since98kr/.hermes/hermes-agent/tools/kanban_tools.py:154:    env_tid = os.environ.get("HERMES_KANBAN_TASK")
+/home/since98kr/.hermes/hermes-agent/tools/kanban_tools.py:223:#   - No-op outside dispatcher-spawned worker context (no ``HERMES_KANBAN_TASK``).
+/home/since98kr/.hermes/hermes-agent/tools/kanban_tools.py:241:      * ``HERMES_KANBAN_TASK`` — task id (required; absence means no-op)
+/home/since98kr/.hermes/hermes-agent/tools/kanban_tools.py:253:    tid = os.environ.get("HERMES_KANBAN_TASK")
+/home/since98kr/.hermes/hermes-agent/tools/kanban_tools.py:327:    if os.environ.get("HERMES_KANBAN_TASK"):
+/home/since98kr/.hermes/hermes-agent/tools/kanban_tools.py:373:            "task_id is required (or set HERMES_KANBAN_TASK in the env)"
+/home/since98kr/.hermes/hermes-agent/tools/kanban_tools.py:509:            "task_id is required (or set HERMES_KANBAN_TASK in the env)"
+/home/since98kr/.hermes/hermes-agent/tools/kanban_tools.py:680:            "task_id is required (or set HERMES_KANBAN_TASK in the env)"
+/home/since98kr/.hermes/hermes-agent/tools/kanban_tools.py:766:            "task_id is required (or set HERMES_KANBAN_TASK in the env)"
+/home/since98kr/.hermes/hermes-agent/tools/kanban_tools.py:865:    # Otherwise, a dispatcher-spawned worker (HERMES_KANBAN_TASK set)
+/home/since98kr/.hermes/hermes-agent/tools/kanban_tools.py:869:    # (kanban toolset, no HERMES_KANBAN_TASK) and CLI/dashboard callers
+/home/since98kr/.hermes/hermes-agent/tools/kanban_tools.py:908:                _self_tid = os.environ.get("HERMES_KANBAN_TASK")
+/home/since98kr/.hermes/hermes-agent/tools/kanban_tools.py:1114:    "Task id. If omitted, defaults to HERMES_KANBAN_TASK from the env "
+/home/since98kr/.hermes/hermes-agent/hermes_cli/kanban_db.py:8033:    task-scoped kanban lifecycle tools when ``HERMES_KANBAN_TASK`` is set.
+/home/since98kr/.hermes/hermes-agent/hermes_cli/kanban_db.py:8107:    env["HERMES_KANBAN_TASK"] = task.id
+/home/since98kr/.hermes/hermes-agent/hermes_cli/kanban.py:1855:    if os.environ.get("HERMES_KANBAN_TASK") != task_id:
+/home/since98kr/.hermes/hermes-agent/hermes_cli/doctor.py:123:    if os.environ.get("HERMES_KANBAN_TASK"):
+/home/since98kr/.hermes/hermes-agent/hermes_cli/doctor.py:132:    if toolset == "kanban" and not os.environ.get("HERMES_KANBAN_TASK"):
+[exit=0]
+
+=== UPDATE NOTICE VALIDITY ===
+
+### git -C /home/since98kr/.hermes/hermes-agent status --short --branch
+## main...origin/main
+?? .install_method
+[exit=0]
+
+### git -C /home/since98kr/.hermes/hermes-agent rev-parse HEAD
+adf62065a73fa9682917053dd55197f63c4a43e4
+[exit=0]
+
+### git -C /home/since98kr/.hermes/hermes-agent rev-parse @\{upstream\}
+adf62065a73fa9682917053dd55197f63c4a43e4
+[exit=0]
+
+### git -C /home/since98kr/.hermes/hermes-agent log --oneline HEAD..@\{upstream\}
+[exit=0]
+
+### git -C /home/since98kr/.hermes/hermes-agent diff --name-status HEAD..@\{upstream\}
+[exit=0]
+
+=== SAFETY: ORIGINAL AND TASK WORKTREE REMAIN UNCHANGED ===
+
+### git -C /home/since98kr/.hermes/smoke-repos/hermes-worktree-smoke status --short --branch
+## main
+?? .worktrees/
+[exit=0]
+
+### cat /home/since98kr/.hermes/smoke-repos/hermes-worktree-smoke/smoke_target.txt
+WORKTREE_SMOKE_STATUS=PENDING
+UNCHANGED_SENTINEL=KEEP
+[exit=0]
+
+### git -C /home/since98kr/.hermes/smoke-repos/hermes-worktree-smoke/.worktrees/t_3444f024 status --short --branch
+## smoke/hermes-worktree-003
+[exit=0]
+
+### cat /home/since98kr/.hermes/smoke-repos/hermes-worktree-smoke/.worktrees/t_3444f024/smoke_target.txt
+WORKTREE_SMOKE_STATUS=PENDING
+UNCHANGED_SENTINEL=KEEP
+[exit=0]
+
+=== UPLOAD LOG ===
