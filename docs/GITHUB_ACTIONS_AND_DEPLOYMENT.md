@@ -1,38 +1,61 @@
 # GitHub Actions and deployment
 
-## What is implemented
+## Implemented automation
 
 ### V2 CI
 
 Every pull request and push to `main` or `agent/**` runs on a GitHub-hosted runner:
 
 1. Install dependencies.
-2. Strict TypeScript validation.
-3. API integration tests.
-4. Web and API production builds.
-5. Production Docker image build.
-6. Running-container smoke tests for Web UI and API health.
-7. Temporary publication of Web and API build artifacts.
+2. Validate deployment, preflight, runner, backup, and restore scripts.
+3. Strict TypeScript validation.
+4. API, adapter, security, preflight, backup, and operations tests.
+5. Web and API production builds.
+6. Real Chromium regression at desktop and smartphone sizes.
+7. Versioned production-container build.
+8. Exact-image preflight.
+9. Runtime security, build identity, online backup, and recovery smoke tests.
+10. Diagnostic artifact publication.
 
-### Staging deployment
+### Staging preflight
 
-`.github/workflows/deploy-staging.yml` is a manual deployment workflow targeting only a self-hosted runner with all of these labels:
+`.github/workflows/staging-preflight.yml` runs only on the repository-scoped runner with labels:
 
 ```text
 self-hosted, linux, x64, chat-staging
 ```
 
-The workflow does not run on a generic server runner. It checks out an explicit ref and executes `scripts/deploy/staging.sh`.
+It builds the requested Git revision and runs the same container that would be deployed, without replacing the running service. Strict mode verifies:
 
-The staging service:
+- Docker/Compose availability and runner permissions
+- Staging data-directory ownership
+- Local port conflicts
+- Minimum disk capacity
+- SQLite integrity
+- Non-disabled authentication
+- Configured public origin
+- Healthy real HTTP Letta adapter
+- Healthy real HTTP Hermes adapter
+- Embedded image revision
+
+The report is written under `/opt/chat-v2/staging/state` and uploaded to the workflow run.
+
+### Staging deployment
+
+`.github/workflows/deploy-staging.yml` checks out an explicit ref and calls `scripts/deploy/staging.sh`.
+
+The service:
 
 - Binds to `127.0.0.1:14174` only.
 - Uses `/opt/chat-v2/staging/data`, separate from production.
-- Builds a revision-tagged Docker image.
+- Builds a revision-tagged image with embedded Git SHA, build time, and package version.
+- Runs strict preflight before replacement.
+- Creates and verifies an online SQLite/artifact backup when prior data exists.
 - Keeps the previous image as a rollback target.
-- Runs application health checks after replacement.
-- Automatically restores the previous image if health validation fails.
-- Writes the deployed revision and last health response under `/opt/chat-v2/staging/state`.
+- Performs public health and authenticated operations-status checks.
+- Confirms that the running SHA equals the requested revision.
+- Automatically restores the previous image if any gate fails.
+- Uploads preflight, backup, health, operations, and deployment evidence.
 
 ## One-time self-hosted runner bootstrap
 
@@ -43,32 +66,34 @@ Use `scripts/runner/install-chat-staging-runner.sh` on the home server. The scri
 - An explicitly approved `RUNNER_VERSION`
 - The official `RUNNER_SHA256`
 
-It creates a dedicated `chat-runner` service account and a repository-scoped runner under `/opt/actions-runner-chat-staging`.
+It creates the dedicated `chat-runner` account, grants only the Docker access required for this repository runner, aligns staging data ownership, verifies Docker access, and installs the runner as a service under `/opt/actions-runner-chat-staging`.
 
-The registration token and checksum are intentionally not stored in this repository. Runner installation is a one-time home-server action and cannot be completed from the GitHub connector alone because it requires host root access.
+The registration token and checksum are intentionally absent from source control. Host root access is required once; it cannot be performed by the GitHub connector alone.
 
-## Environment configuration
+Complete instructions: [`HOME_SERVER_STAGING_SETUP.md`](HOME_SERVER_STAGING_SETUP.md).
 
-Create a GitHub Environment named `staging`.
+## GitHub `staging` Environment
 
-Variables:
+The complete variable and secret list is maintained in:
 
-- `CHAT_ALLOWED_ORIGIN`
-- `LETTA_BASE_URL`
-- `LETTA_CHAT_PATH`
-- `LETTA_HEALTH_PATH`
-- `LETTA_AGENT_ID`
-- `HERMES_BASE_URL`
-- `HERMES_CHAT_PATH`
-- `HERMES_HEALTH_PATH`
-- `HERMES_AGENT_ID`
+- [`HOME_SERVER_STAGING_SETUP.md`](HOME_SERVER_STAGING_SETUP.md)
+- [`../config/adapters.env.example`](../config/adapters.env.example)
 
-Secrets:
+Strict staging does not permit mock fallback. A configured backend that fails its health probe is reported unhealthy, and deployment stops before replacement.
 
-- `LETTA_API_KEY`
-- `HERMES_API_KEY`
+## Traceability
 
-Empty backend URLs keep the corresponding system in deterministic mock mode. A configured backend that fails its health probe is reported unhealthy; it does not silently fall back to mock mode.
+Every accepted staging release produces evidence for:
+
+- Requested and running Git SHA
+- Package version and build time
+- Authentication mode, without secret values
+- Letta and Hermes health/mode/latency
+- Pre-deployment backup ID and verification
+- Health response
+- Authenticated operations response
+- Prior rollback image
+- Deployment timestamp
 
 ## Safety model
 
@@ -76,34 +101,38 @@ Empty backend URLs keep the corresponding system in deterministic mock mode. A c
 GitHub branch / pull request
           ↓
 GitHub-hosted CI
-  typecheck + tests + build + container smoke
+  tests + browser regression + exact-image smoke
           ↓
 main integration
           ↓
-manual staging workflow
+Staging preflight (no replacement)
           ↓
-home-server chat-staging runner
-  revision image build
-  isolated container replacement
-  health validation
-  automatic rollback on failure
+Manual staging workflow
+          ↓
+Dedicated home-server runner
+  strict preflight
+  verified backup
+  isolated replacement
+  health + authenticated status + SHA validation
+  automatic rollback
 ```
 
-Production remains separate from staging. The current workflow does not modify the production container, production database, Cloudflare route, Letta service, or Hermes service.
+Production remains separate. These workflows do not modify a production container, production database, Cloudflare route, Letta service, or Hermes service.
 
 Production deployment will require:
 
 - A separate runner label and Compose project.
-- Backup of SQLite and artifacts before migration.
-- Production-specific health and external URL checks.
-- An explicit production environment gate.
+- Production-specific data and backup roots.
+- External URL validation through Cloudflare Access.
+- An explicit GitHub `production` Environment gate.
 - Verified rollback against the previous production image.
 
 ## Why this architecture is useful
 
-- Development no longer depends on Tei manually copying deployment commands.
-- Every deployed revision is traceable to a Git commit.
-- A broken container is rejected before staging replacement.
-- A runtime failure after replacement triggers rollback.
+- Development no longer depends on repeatedly copying deployment commands.
+- A staging revision cannot be accepted unless its exact SHA is running.
+- Missing authentication or mock adapters stop strict staging deployment.
+- Data is backed up and verified before replacement.
+- Broken releases roll back automatically.
 - Backend credentials remain outside source control.
-- The Chat application does not need broad SSH credentials or access to unrelated services.
+- The Chat application does not receive broad SSH access to unrelated services.
