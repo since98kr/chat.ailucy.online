@@ -110,12 +110,21 @@ export class HttpAgentAdapter implements ChatBackendAdapter {
         body: JSON.stringify({
           stream: true,
           system_id: this.systemId,
-          agent_id: this.config.agentId ?? request.conversation.agentId,
+          agent_id: request.targetAgentId || this.config.agentId || request.conversation.agentId,
+          configured_agent_id: this.config.agentId,
           conversation_id: request.conversation.id,
           messages: toBackendMessages(request.history),
+          participants: request.participants.map((participant) => ({
+            agent_id: participant.agentId,
+            role: participant.role,
+            state: participant.state,
+            capabilities: participant.agent.capabilities,
+          })),
           metadata: {
             source: 'chat.ailucy.online',
             user_message_id: request.userMessage.id,
+            routing_mode: request.routingMode,
+            target_agent_id: request.targetAgentId,
           },
         }),
       },

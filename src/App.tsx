@@ -27,6 +27,7 @@ import {
   X,
 } from 'lucide-react';
 import type {
+  AgentRecord,
   ArtifactRecord,
   ConversationRecord,
   ConversationStatus,
@@ -38,20 +39,17 @@ import {
   artifactDownloadUrl,
   conversationExportUrl,
 } from './api';
+import TeamPanel from './TeamPanel';
 import { useChat } from './useChat';
-
-const agents = {
-  letta: [{ name: '[Letta] Lucy', role: 'Personal', active: true, enabled: true }],
-  hermes: [
-    { name: '[Hermes] Lucy', role: 'Lead', active: true, enabled: true },
-    { name: 'Xixi', role: 'Implementation', active: true, enabled: false },
-    { name: 'Lynn', role: 'Review', active: false, enabled: false },
-    { name: 'Gemma', role: 'Multimodal', active: true, enabled: false },
-  ],
-} satisfies Record<SystemId, Array<{ name: string; role: string; active: boolean; enabled: boolean }>>;
+import { useCollaboration } from './useCollaboration';
 
 function App() {
   const chat = useChat();
+  const collaboration = useCollaboration(
+    chat.selectedSystem,
+    chat.activeConversation?.id ?? null,
+    chat.activeConversation?.agentId ?? chat.activeAgent,
+  );
   const [mobileDrawerOpen, setMobileDrawerOpen] = useState(false);
   const [teamPanelOpen, setTeamPanelOpen] = useState(false);
   const [search, setSearch] = useState('');
@@ -66,6 +64,8 @@ function App() {
   const pendingArtifacts = chat.activeConversation?.artifacts.filter((artifact) =>
     chat.pendingArtifactIds.includes(artifact.id),
   ) ?? [];
+  const hermesAgents = collaboration.agents.filter((agent) => agent.systemId === 'hermes');
+  const mentionAgents = hermesAgents.filter((agent) => !agent.isLead && agent.enabled);
 
   useEffect(() => {
     chat.searchConversations(search);
@@ -98,8 +98,22 @@ function App() {
     event.preventDefault();
     const content = chat.activeConversation?.draft ?? '';
     if (!content.trim() || hasUploading) return;
+    if (chat.selectedSystem === 'hermes') await collaboration.preview(content);
     chat.saveDraft('');
     await chat.sendMessage(content);
+  };
+
+  const openAgent = async (agent: AgentRecord) => {
+    setSearch('');
+    setMobileDrawerOpen(false);
+    setTeamPanelOpen(false);
+    await chat.openAgentConversation(agent.systemId, agent.id);
+  };
+
+  const addMention = (agent: AgentRecord) => {
+    const current = chat.activeConversation?.draft ?? '';
+    const prefix = current && !current.endsWith(' ') ? ' ' : '';
+    chat.saveDraft(`${current}${prefix}@${agent.shortName} `);
   };
 
   return (
@@ -127,25 +141,19 @@ function App() {
               id="letta"
               label="Letta"
               accent="blue"
+              agents={collaboration.agents.filter((agent) => agent.systemId === 'letta')}
               selectedSystem={chat.selectedSystem}
               activeAgent={chat.activeAgent}
-              onSelect={(system, agent) => {
-                chat.switchSystem(system, agent);
-                setSearch('');
-                setMobileDrawerOpen(false);
-              }}
+              onSelect={openAgent}
             />
             <SystemCard
               id="hermes"
               label="Hermes"
               accent="violet"
+              agents={hermesAgents}
               selectedSystem={chat.selectedSystem}
               activeAgent={chat.activeAgent}
-              onSelect={(system, agent) => {
-                chat.switchSystem(system, agent);
-                setSearch('');
-                setMobileDrawerOpen(false);
-              }}
+              onSelect={openAgent}
             />
           </section>
 
@@ -241,7 +249,7 @@ function App() {
               <div className="chat-header__text">
                 <strong>{chat.activeConversation?.title ?? '새 Conversation'}</strong>
                 <span>
-                  {chat.activeAgent} · {chat.selectedSystem === 'letta' ? 'Personal' : 'Hermes System'}
+                  {chat.activeAgent} · {chat.selectedSystem === 'letta' ? 'Personal' : chat.activeAgent === '[Hermes] Lucy' ? 'Hermes Lead' : 'Direct Agent'}
                   {chat.activeConversation?.branchedFromConversationId ? ' · Branched' : ''}
                 </span>
               </div>
@@ -283,13 +291,18 @@ function App() {
                 </div>
               </details>
               {chat.selectedSystem === 'hermes' && (
-                <button className="team-button" onClick={() => setTeamPanelOpen(true)}><Users size={16} /> 팀 활동</button>
+                <button className="team-button" onClick={() => setTeamPanelOpen(true)}>
+                  <Users size={16} /> 팀 {collaboration.participants.length}
+                </button>
               )}
             </div>
           </header>
 
-          {chat.error && (
-            <div className="error-banner"><span>{chat.error}</span><button onClick={chat.clearError}><X size={15} /></button></div>
+          {(chat.error || collaboration.error) && (
+            <div className="error-banner">
+              <span>{chat.error ?? collaboration.error}</span>
+              <button onClick={() => { chat.clearError(); collaboration.clearError(); }}><X size={15} /></button>
+            </div>
           )}
 
           <div className="conversation-canvas">
@@ -319,6 +332,21 @@ function App() {
 
           {chat.selectedStatus === 'active' ? (
             <div className="composer-zone">
+              {chat.selectedSystem === 'hermes' && chat.activeAgent === '[Hermes] Lucy' && mentionAgents.length > 0 && (
+                <div className="mention-toolbar" aria-label="Hermes 에이전트 멘션">
+                  <span>호출:</span>
+                  {mentionAgents.map((agent) => (
+                    <button
+                      type="button"
+                      key={agent.id}
+                      className={collaboration.participantIds.has(agent.id) ? 'is-participant' : ''}
+                      onClick={() => addMention(agent)}
+                      title={`${agent.displayName} 원문 결과를 요청`}
+                    >@{agent.shortName}</button>
+                  ))}
+                  {collaboration.routing && <em>{collaboration.routing.mode} · {collaboration.routing.targetAgentIds.join(' → ')}</em>}
+                </div>
+              )}
               {(chat.uploads.length > 0 || pendingArtifacts.length > 0) && (
                 <div className="pending-attachments">
                   {chat.uploads.map((item) => (
@@ -374,7 +402,9 @@ function App() {
                       event.currentTarget.form?.requestSubmit();
                     }
                   }}
-                  placeholder={`Message ${chat.activeAgent}...`}
+                  placeholder={chat.selectedSystem === 'hermes' && chat.activeAgent === '[Hermes] Lucy'
+                    ? 'Lucy에게 메시지… 필요하면 @Xixi @Lynn @Gemma'
+                    : `Message ${chat.activeAgent}...`}
                   rows={1}
                   disabled={chat.isStreaming}
                 />
@@ -392,7 +422,9 @@ function App() {
               <p className="composer-footnote">
                 {chat.selectedSystem === 'letta'
                   ? 'Letta의 Lucy는 Conversation을 넘어 승인된 개인 기억을 유지합니다.'
-                  : 'Hermes의 Lucy는 필요할 때만 subagent와 협업합니다.'}
+                  : chat.activeAgent === '[Hermes] Lucy'
+                    ? '명시적으로 멘션한 subagent의 원문을 보존하고 Lucy가 마지막에 종합합니다.'
+                    : `${chat.activeAgent}와 직접 대화 중입니다. 이 Conversation의 문맥은 다른 에이전트와 자동 공유되지 않습니다.`}
               </p>
             </div>
           ) : (
@@ -405,21 +437,17 @@ function App() {
           {dragActive && <div className="drop-overlay"><Upload size={28} /><strong>파일을 여기에 놓으세요</strong></div>}
         </section>
 
-        {teamPanelOpen && (
-          <aside className="team-panel">
-            <div className="team-panel__header">
-              <div><strong>Hermes Team</strong><span>현재 Conversation에서 선택적으로 참여</span></div>
-              <button className="icon-button" onClick={() => setTeamPanelOpen(false)}><X size={18} /></button>
-            </div>
-            {agents.hermes.map((agent, index) => (
-              <div className="team-member" key={agent.name}>
-                <div className="team-member__avatar"><Bot size={16} /></div>
-                <div><strong>{agent.name}</strong><span>{agent.role}</span></div>
-                <span className={`presence ${agent.active ? 'presence--active' : ''}`} />
-                <small>{index === 0 ? '대화 책임자' : '2차에서 직접 참여 활성화'}</small>
-              </div>
-            ))}
-          </aside>
+        {teamPanelOpen && chat.selectedSystem === 'hermes' && (
+          <TeamPanel
+            agents={hermesAgents}
+            participants={collaboration.participants}
+            activities={collaboration.activities}
+            routing={collaboration.routing}
+            saving={collaboration.saving}
+            onToggleParticipant={(agentId, enabled) => void collaboration.setParticipantEnabled(agentId, enabled)}
+            onOpenDirect={(agent) => void openAgent(agent)}
+            onClose={() => setTeamPanelOpen(false)}
+          />
         )}
       </main>
     </div>
@@ -438,13 +466,15 @@ function MessageItem({
   onBranch: () => void;
 }) {
   const isUser = message.role === 'user';
+  const agentClass = !isUser ? ` message--${message.authorId.toLowerCase().replace(/[^a-z0-9]+/g, '-')}` : '';
   return (
-    <article className={`message ${isUser ? 'message--user' : 'message--assistant'}`}>
+    <article className={`message ${isUser ? 'message--user' : 'message--assistant'}${agentClass}`}>
       <div className="message__meta">
         {!isUser && <div className={`agent-avatar agent-avatar--${system}`}><Bot size={15} /></div>}
         <strong>{isUser ? 'Tei' : message.authorId}</strong>
         <span>{formatTime(message.createdAt)}</span>
         {message.state !== 'complete' && <em>{message.state}</em>}
+        {!isUser && message.authorId !== '[Hermes] Lucy' && <small className="source-output">원문</small>}
         <button className="message-branch" onClick={onBranch} title="이 메시지까지 새 Conversation으로 분기"><GitBranch size={13} /></button>
       </div>
       <p>{message.content || ' '}{message.state === 'streaming' && <span className="stream-cursor" />}</p>
@@ -479,6 +509,7 @@ function SystemCard({
   id,
   label,
   accent,
+  agents,
   selectedSystem,
   activeAgent,
   onSelect,
@@ -486,29 +517,31 @@ function SystemCard({
   id: SystemId;
   label: string;
   accent: 'blue' | 'violet';
+  agents: AgentRecord[];
   selectedSystem: SystemId;
   activeAgent: string;
-  onSelect: (system: SystemId, agentName: string) => void;
+  onSelect: (agent: AgentRecord) => void;
 }) {
+  const lead = agents.find((agent) => agent.isLead) ?? agents[0];
   return (
     <div className={`system-card system-card--${accent} ${selectedSystem === id ? 'is-selected' : ''}`}>
-      <button className="system-card__header" onClick={() => onSelect(id, agents[id][0].name)}>
+      <button className="system-card__header" onClick={() => lead && onSelect(lead)} disabled={!lead}>
         <span className="system-card__icon">{id === 'letta' ? <Sparkles size={16} /> : <Bot size={17} />}</span>
         <span><strong>{label}</strong><small>{id === 'letta' ? 'Memory-first system' : 'Collaborative system'}</small></span>
         <ChevronDown size={15} />
       </button>
       <div className="agent-list">
-        {agents[id].map((agent) => (
+        {agents.map((agent) => (
           <button
-            key={agent.name}
-            className={`agent-row ${selectedSystem === id && activeAgent === agent.name ? 'is-active' : ''}`}
-            onClick={() => agent.enabled && onSelect(id, agent.name)}
-            disabled={!agent.enabled}
-            title={agent.enabled ? agent.role : `${agent.role} · 2차 활성화`}
+            key={agent.id}
+            className={`agent-row ${selectedSystem === id && activeAgent === agent.id ? 'is-active' : ''}`}
+            onClick={() => agent.enabled && agent.directChatEnabled && onSelect(agent)}
+            disabled={!agent.enabled || !agent.directChatEnabled}
+            title={`${agent.role} · ${agent.capabilities.join(', ')}`}
           >
-            <span className="mini-avatar">{agent.name === '[Letta] Lucy' ? <Sparkles size={13} /> : <Bot size={14} />}</span>
-            <span className="agent-row__name">{agent.name}</span>
-            {agent.role === 'Personal' ? <em>Personal</em> : agent.enabled ? <span className={`presence ${agent.active ? 'presence--active' : ''}`} /> : <small>2차</small>}
+            <span className="mini-avatar">{agent.id === '[Letta] Lucy' ? <Sparkles size={13} /> : <Bot size={14} />}</span>
+            <span className="agent-row__name">{agent.displayName}</span>
+            {agent.systemId === 'letta' ? <em>Personal</em> : agent.isLead ? <em>Lead</em> : <span className="presence presence--active" />}
           </button>
         ))}
       </div>
@@ -539,7 +572,7 @@ function ConversationGroup({
         >
           <span className="conversation-row__content">
             <strong>{conversation.title}</strong>
-            <small>{conversation.preview || '아직 메시지가 없습니다.'}</small>
+            <small>{conversation.agentId !== '[Hermes] Lucy' && conversation.systemId === 'hermes' ? `${conversation.agentId} · ` : ''}{conversation.preview || '아직 메시지가 없습니다.'}</small>
           </span>
           <time>{formatRelative(conversation.updatedAt)}</time>
         </button>
