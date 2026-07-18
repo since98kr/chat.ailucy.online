@@ -9,6 +9,7 @@ import './giant-step-2.css';
 import './auth-shell.css';
 
 registerPwa();
+window.addEventListener('chat-auth-required', () => window.location.reload());
 
 createRoot(document.getElementById('root')!).render(
   <StrictMode>
