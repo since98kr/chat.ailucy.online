@@ -3,8 +3,6 @@ import cors from '@fastify/cors';
 import multipart from '@fastify/multipart';
 import { Readable } from 'node:stream';
 import { createReadStream } from 'node:fs';
-import { resolve } from 'node:path';
-import { pathToFileURL } from 'node:url';
 import { randomUUID } from 'node:crypto';
 import { z } from 'zod';
 import { ChatDatabase } from './database.js';
@@ -237,18 +235,4 @@ export function buildApp(options?: { databasePath?: string; artifactRoot?: strin
   });
 
   return app;
-}
-
-async function start() {
-  const app = buildApp();
-  const port = Number(process.env.CHAT_API_PORT ?? 4174);
-  await app.listen({ host: '0.0.0.0', port });
-}
-
-const entry = process.argv[1] ? pathToFileURL(resolve(process.argv[1])).href : '';
-if (import.meta.url === entry) {
-  start().catch((error) => {
-    console.error(error);
-    process.exitCode = 1;
-  });
 }
