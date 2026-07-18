@@ -3,7 +3,7 @@ import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 
 export type ChatAuthMode = 'disabled' | 'token' | 'cloudflare';
 
-type SecurityConfig = {
+export type SecurityConfig = {
   authMode: ChatAuthMode;
   accessToken?: string;
   allowedEmails: Set<string>;
@@ -18,6 +18,8 @@ type RateRecord = { count: number; resetAt: number };
 
 const rateRecords = new Map<string, RateRecord>();
 const mutationMethods = new Set(['POST', 'PATCH', 'PUT', 'DELETE']);
+const publicApiPaths = new Set(['/api/health', '/api/auth/config', '/api/auth/login', '/api/auth/logout']);
+const sessionCookieName = 'chat_v2_session';
 
 function csv(value: string | undefined) {
   return new Set(
@@ -57,9 +59,48 @@ function bearerToken(request: FastifyRequest) {
   return authorization.slice('Bearer '.length).trim();
 }
 
+function cookies(request: FastifyRequest) {
+  const header = request.headers.cookie ?? '';
+  return new Map(
+    header
+      .split(';')
+      .map((part) => part.trim())
+      .filter(Boolean)
+      .map((part) => {
+        const separator = part.indexOf('=');
+        const name = separator < 0 ? part : part.slice(0, separator);
+        const value = separator < 0 ? '' : part.slice(separator + 1);
+        return [name, decodeURIComponent(value)] as const;
+      }),
+  );
+}
+
+function cookieToken(request: FastifyRequest) {
+  return cookies(request).get(sessionCookieName) ?? '';
+}
+
 function requestEmail(request: FastifyRequest) {
   const value = request.headers['cf-access-authenticated-user-email'];
   return (Array.isArray(value) ? value[0] : value ?? '').trim().toLowerCase();
+}
+
+function cookieSecure(request: FastifyRequest) {
+  if ((process.env.CHAT_COOKIE_SECURE ?? '').trim().toLowerCase() === 'true') return true;
+  const forwarded = request.headers['x-forwarded-proto'];
+  const protocol = Array.isArray(forwarded) ? forwarded[0] : forwarded;
+  return protocol === 'https';
+}
+
+function sessionCookie(value: string, request: FastifyRequest, maxAgeSeconds?: number) {
+  const attributes = [
+    `${sessionCookieName}=${encodeURIComponent(value)}`,
+    'Path=/',
+    'HttpOnly',
+    'SameSite=Strict',
+    ...(cookieSecure(request) ? ['Secure'] : []),
+    ...(maxAgeSeconds === undefined ? [] : [`Max-Age=${maxAgeSeconds}`]),
+  ];
+  return attributes.join('; ');
 }
 
 function rateLimitFor(request: FastifyRequest, config: SecurityConfig) {
@@ -97,11 +138,15 @@ function applyRateLimit(request: FastifyRequest, reply: FastifyReply, config: Se
   }
 }
 
+function validToken(request: FastifyRequest, config: SecurityConfig) {
+  const provided = bearerToken(request) || cookieToken(request);
+  return Boolean(config.accessToken && provided && secureEqual(provided, config.accessToken));
+}
+
 function authenticate(request: FastifyRequest, reply: FastifyReply, config: SecurityConfig) {
   if (config.authMode === 'disabled') return;
   if (config.authMode === 'token') {
-    const provided = bearerToken(request);
-    if (!config.accessToken || !provided || !secureEqual(provided, config.accessToken)) {
+    if (!validToken(request, config)) {
       return reply.status(401).send({ error: 'AUTHENTICATION_REQUIRED' });
     }
     return;
@@ -129,8 +174,40 @@ export function registerRuntimeSecurity(app: FastifyInstance, config = securityC
     throw new Error('CHAT_ALLOWED_EMAILS is required when CHAT_AUTH_MODE=cloudflare');
   }
 
+  app.get('/api/auth/config', async () => ({ mode: config.authMode }));
+
+  app.post('/api/auth/login', async (request, reply) => {
+    if (config.authMode !== 'token') {
+      return reply.status(400).send({ error: 'TOKEN_LOGIN_NOT_ENABLED' });
+    }
+    const body = request.body as { token?: unknown } | null;
+    const token = typeof body?.token === 'string' ? body.token.trim() : '';
+    if (!config.accessToken || !token || !secureEqual(token, config.accessToken)) {
+      return reply.status(401).send({ error: 'INVALID_ACCESS_TOKEN' });
+    }
+    reply.header('Set-Cookie', sessionCookie(token, request));
+    return { authenticated: true, mode: config.authMode, identity: 'private-session' };
+  });
+
+  app.post('/api/auth/logout', async (request, reply) => {
+    reply.header('Set-Cookie', sessionCookie('', request, 0));
+    return { authenticated: false };
+  });
+
+  app.get('/api/auth/session', async (request) => ({
+    authenticated: true,
+    mode: config.authMode,
+    identity:
+      config.authMode === 'cloudflare'
+        ? requestEmail(request)
+        : config.authMode === 'token'
+          ? 'private-session'
+          : 'local',
+  }));
+
   app.addHook('onRequest', async (request, reply) => {
-    if (request.url === '/api/health' || request.url.startsWith('/api/health?')) return;
+    const pathname = request.url.split('?')[0];
+    if (publicApiPaths.has(pathname)) return;
     const originResult = validateOrigin(request, reply, config);
     if (originResult) return originResult;
     if (request.url.startsWith('/api/')) {
