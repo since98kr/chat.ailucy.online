@@ -21,7 +21,7 @@ jobs:
     name: Deploy isolated staging
     runs-on: [self-hosted, linux, x64, chat-staging]
     environment: staging
-    timeout-minutes: 45
+    timeout-minutes: 60
 
     steps:
       - name: Checkout approved revision
@@ -30,16 +30,24 @@ jobs:
           ref: ${{ inputs.ref }}
           clean: true
 
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
       - name: Verify source revision
         run: |
+          set -euo pipefail
           git status --short
           git rev-parse HEAD
 
-      - name: Deploy with backup, health check, and rollback
+      - name: Deploy with strict preflight, backup, health check, and rollback
         env:
           CHAT_STAGING_ROOT: /opt/chat-v2/staging
           CHAT_STAGING_DATA_DIR: /opt/chat-v2/staging/data
           CHAT_STAGING_PORT: '14174'
+          CHAT_PREFLIGHT_STRICT: 'true'
+          CHAT_PREFLIGHT_MIN_FREE_BYTES: ${{ vars.CHAT_PREFLIGHT_MIN_FREE_BYTES }}
           CHAT_BACKUP_RETENTION: ${{ vars.CHAT_BACKUP_RETENTION }}
           CHAT_PUBLIC_ORIGIN: ${{ vars.CHAT_PUBLIC_ORIGIN }}
           CHAT_ALLOWED_ORIGIN: ${{ vars.CHAT_ALLOWED_ORIGIN }}
@@ -54,33 +62,49 @@ jobs:
           LETTA_HEALTH_PATH: ${{ vars.LETTA_HEALTH_PATH }}
           LETTA_AGENT_ID: ${{ vars.LETTA_AGENT_ID }}
           LETTA_API_KEY: ${{ secrets.LETTA_API_KEY }}
+          LETTA_TIMEOUT_MS: ${{ vars.LETTA_TIMEOUT_MS }}
           HERMES_BASE_URL: ${{ vars.HERMES_BASE_URL }}
           HERMES_CHAT_PATH: ${{ vars.HERMES_CHAT_PATH }}
           HERMES_HEALTH_PATH: ${{ vars.HERMES_HEALTH_PATH }}
           HERMES_AGENT_ID: ${{ vars.HERMES_AGENT_ID }}
           HERMES_API_KEY: ${{ secrets.HERMES_API_KEY }}
+          HERMES_TIMEOUT_MS: ${{ vars.HERMES_TIMEOUT_MS }}
         run: bash scripts/deploy/staging.sh "$(git rev-parse HEAD)"
 
       - name: Publish deployment summary
         if: always()
+        shell: bash
         run: |
           {
             echo '## Chat V2 staging'
             echo
-            echo "- Revision: \`$(git rev-parse HEAD)\`"
+            echo "- Requested revision: \`$(git rev-parse HEAD)\`"
             echo '- Local endpoint: `http://127.0.0.1:14174`'
-            if [[ -f /opt/chat-v2/staging/state/last-backup.json ]]; then
-              echo '- Pre-deployment backup:'
-              echo '```json'
-              cat /opt/chat-v2/staging/state/last-backup.json
-              echo
-              echo '```'
-            fi
-            if [[ -f /opt/chat-v2/staging/state/last-health.json ]]; then
-              echo '- Last health response:'
-              echo '```json'
-              cat /opt/chat-v2/staging/state/last-health.json
-              echo
-              echo '```'
-            fi
+            for item in last-deployment.json last-preflight.json last-backup.json last-backup-verify.json last-health.json last-ops-status.json; do
+              path="/opt/chat-v2/staging/state/${item}"
+              if [[ -f "${path}" ]]; then
+                echo
+                echo "### ${item}"
+                echo '```json'
+                cat "${path}"
+                echo
+                echo '```'
+              fi
+            done
           } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload deployment evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: chat-v2-staging-deployment-${{ github.run_id }}
+          path: |
+            /opt/chat-v2/staging/state/last-deployment.json
+            /opt/chat-v2/staging/state/last-preflight.json
+            /opt/chat-v2/staging/state/last-preflight-output.log
+            /opt/chat-v2/staging/state/last-backup.json
+            /opt/chat-v2/staging/state/last-backup-verify.json
+            /opt/chat-v2/staging/state/last-health.json
+            /opt/chat-v2/staging/state/last-ops-status.json
+          if-no-files-found: warn
+          retention-days: 30
