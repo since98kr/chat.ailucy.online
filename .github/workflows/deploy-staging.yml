@@ -35,12 +35,20 @@ jobs:
           git status --short
           git rev-parse HEAD
 
-      - name: Deploy with health check and rollback
+      - name: Deploy with backup, health check, and rollback
         env:
           CHAT_STAGING_ROOT: /opt/chat-v2/staging
           CHAT_STAGING_DATA_DIR: /opt/chat-v2/staging/data
           CHAT_STAGING_PORT: '14174'
+          CHAT_BACKUP_RETENTION: ${{ vars.CHAT_BACKUP_RETENTION }}
+          CHAT_PUBLIC_ORIGIN: ${{ vars.CHAT_PUBLIC_ORIGIN }}
           CHAT_ALLOWED_ORIGIN: ${{ vars.CHAT_ALLOWED_ORIGIN }}
+          CHAT_AUTH_MODE: ${{ vars.CHAT_AUTH_MODE }}
+          CHAT_ALLOWED_EMAILS: ${{ vars.CHAT_ALLOWED_EMAILS }}
+          CHAT_ACCESS_TOKEN: ${{ secrets.CHAT_ACCESS_TOKEN }}
+          CHAT_RATE_LIMIT_GENERAL: ${{ vars.CHAT_RATE_LIMIT_GENERAL }}
+          CHAT_RATE_LIMIT_CHAT: ${{ vars.CHAT_RATE_LIMIT_CHAT }}
+          CHAT_RATE_LIMIT_UPLOAD: ${{ vars.CHAT_RATE_LIMIT_UPLOAD }}
           LETTA_BASE_URL: ${{ vars.LETTA_BASE_URL }}
           LETTA_CHAT_PATH: ${{ vars.LETTA_CHAT_PATH }}
           LETTA_HEALTH_PATH: ${{ vars.LETTA_HEALTH_PATH }}
@@ -61,6 +69,13 @@ jobs:
             echo
             echo "- Revision: \`$(git rev-parse HEAD)\`"
             echo '- Local endpoint: `http://127.0.0.1:14174`'
+            if [[ -f /opt/chat-v2/staging/state/last-backup.json ]]; then
+              echo '- Pre-deployment backup:'
+              echo '```json'
+              cat /opt/chat-v2/staging/state/last-backup.json
+              echo
+              echo '```'
+            fi
             if [[ -f /opt/chat-v2/staging/state/last-health.json ]]; then
               echo '- Last health response:'
               echo '```json'
