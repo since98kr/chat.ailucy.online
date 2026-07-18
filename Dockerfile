@@ -20,6 +20,8 @@ ENV NODE_ENV=production \
     CHAT_API_PORT=4174 \
     CHAT_DB_PATH=/data/chat-v2.sqlite \
     CHAT_ARTIFACT_ROOT=/data/artifacts \
+    CHAT_BACKUP_ROOT=/data/backups \
+    CHAT_BACKUP_RETENTION=10 \
     CHAT_WEB_ROOT=/app/dist
 
 WORKDIR /app
@@ -29,7 +31,7 @@ COPY --from=build /app/node_modules ./node_modules
 COPY --from=build /app/dist ./dist
 COPY --from=build /app/dist-server ./dist-server
 
-RUN mkdir -p /data \
+RUN mkdir -p /data/artifacts /data/backups \
   && chown -R node:node /app /data
 
 USER node
