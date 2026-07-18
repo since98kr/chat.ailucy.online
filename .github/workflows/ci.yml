@@ -16,9 +16,9 @@ concurrency:
 
 jobs:
   application:
-    name: Typecheck, test, build, and container smoke
+    name: Typecheck, test, browser regression, build, and container smoke
     runs-on: ubuntu-latest
-    timeout-minutes: 25
+    timeout-minutes: 40
 
     steps:
       - name: Checkout
@@ -55,11 +55,28 @@ jobs:
           if-no-files-found: warn
           retention-days: 7
 
-      - name: API integration tests
+      - name: API and adapter integration tests
         run: npm test
 
       - name: Production build
         run: npm run build
+
+      - name: Install Chromium for browser regression
+        run: npx playwright install --with-deps chromium
+
+      - name: Desktop and mobile browser regression
+        run: npm run test:e2e
+
+      - name: Upload browser screenshots and diagnostics
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: chat-v2-browser-regression
+          path: |
+            test-results
+            playwright-report
+          if-no-files-found: warn
+          retention-days: 14
 
       - name: Upload web build
         uses: actions/upload-artifact@v4
@@ -100,5 +117,7 @@ jobs:
 
           node -e "const h=require('./health.json'); if(!h.ok || h.adapters.letta.mode!=='mock' || h.adapters.hermes.mode!=='mock') process.exit(1)"
           curl --fail --silent http://127.0.0.1:4180/ | grep --quiet 'chat.ailucy.online V2'
+          curl --fail --silent http://127.0.0.1:4180/manifest.webmanifest | grep --quiet 'Lucy Chat'
+          curl --fail --silent http://127.0.0.1:4180/sw.js | grep --quiet 'CHAT_NAME\|CACHE_NAME'
           curl --fail --silent 'http://127.0.0.1:4180/api/search?q=Chat&systemId=hermes' | grep --quiet 'Chat V2 개발'
           test "$(docker inspect --format='{{.State.Health.Status}}' chat-v2-ci)" != "unhealthy"
