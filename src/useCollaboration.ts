@@ -33,7 +33,7 @@ export function useCollaboration(
     setLoading(true);
     setError(null);
     try {
-      const nextAgents = await listAgents(systemId);
+      const nextAgents = await listAgents();
       setAgents(nextAgents);
       if (!conversationId) {
         setParticipants([]);
@@ -51,7 +51,7 @@ export function useCollaboration(
     } finally {
       setLoading(false);
     }
-  }, [conversationId, systemId]);
+  }, [conversationId]);
 
   useEffect(() => {
     void refresh();
@@ -71,12 +71,13 @@ export function useCollaboration(
     }
   }), []);
 
+  const systemAgents = useMemo(() => agents.filter((agent) => agent.systemId === systemId), [agents, systemId]);
   const lead = useMemo(
     () => participants.find((participant) => participant.role === 'lead')?.agent
-      ?? agents.find((agent) => agent.id === primaryAgentId)
-      ?? agents.find((agent) => agent.isLead)
+      ?? systemAgents.find((agent) => agent.id === primaryAgentId)
+      ?? systemAgents.find((agent) => agent.isLead)
       ?? null,
-    [agents, participants, primaryAgentId],
+    [participants, primaryAgentId, systemAgents],
   );
 
   const participantIds = useMemo(() => new Set(participants.map((participant) => participant.agentId)), [participants]);
@@ -116,6 +117,7 @@ export function useCollaboration(
 
   return {
     agents,
+    systemAgents,
     participants,
     participantIds,
     activities,
