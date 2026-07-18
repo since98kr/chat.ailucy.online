@@ -115,14 +115,20 @@ export function registerFederationRoutes(
 
   app.post('/api/workflows/:runId/resume/stream', async (request, reply) => {
     const { runId } = z.object({ runId: z.string().uuid() }).parse(request.params);
-    const run = federation.getRun(runId);
-    if (!run) return reply.status(404).send({ error: 'WORKFLOW_RUN_NOT_FOUND' });
-    if (!['paused', 'failed'].includes(run.status)) {
-      return reply.status(409).send({ error: 'WORKFLOW_RUN_NOT_RESUMABLE', status: run.status });
+    const foundRun = federation.getRun(runId);
+    if (!foundRun) return reply.status(404).send({ error: 'WORKFLOW_RUN_NOT_FOUND' });
+    if (!['paused', 'failed'].includes(foundRun.status)) {
+      return reply.status(409).send({ error: 'WORKFLOW_RUN_NOT_RESUMABLE', status: foundRun.status });
     }
-    const conversation = database.getConversation(run.conversationId);
-    const userMessage = database.getMessage(run.sourceMessageId);
-    if (!conversation || !userMessage) return reply.status(409).send({ error: 'WORKFLOW_SOURCE_CONTEXT_MISSING' });
+    const foundConversation = database.getConversation(foundRun.conversationId);
+    const foundUserMessage = database.getMessage(foundRun.sourceMessageId);
+    if (!foundConversation || !foundUserMessage) {
+      return reply.status(409).send({ error: 'WORKFLOW_SOURCE_CONTEXT_MISSING' });
+    }
+
+    const run = foundRun;
+    const conversation = foundConversation;
+    const userMessage = foundUserMessage;
     const attachedArtifacts = conversation.artifacts.filter((artifact) => artifact.messageId === userMessage.id);
     const controller = new AbortController();
     reply.raw.once('close', () => controller.abort());
