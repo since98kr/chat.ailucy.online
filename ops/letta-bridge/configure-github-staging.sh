@@ -6,6 +6,7 @@ ENVIRONMENT="${GITHUB_ENVIRONMENT:-staging}"
 REMOTE_HOST="${LETTA_SSH_HOST:-ax.hni-gl.ai}"
 REMOTE_PORT="${LETTA_SSH_PORT:-3004}"
 REMOTE_USER="${LETTA_SSH_USER:-since98kr}"
+HERMES_ENV_FILE="${HERMES_ENV_FILE:-${HOME}/.hermes/.env}"
 
 command -v gh >/dev/null || { echo 'GitHub CLI (gh) is required.' >&2; exit 1; }
 gh auth status >/dev/null
@@ -44,30 +45,48 @@ set_variable LETTA_TIMEOUT_MS '300000'
 set_variable LETTA_PROTOCOL 'native'
 set_variable LETTA_MODEL_MAP_JSON '{}'
 
-set_variable HERMES_BASE_URL 'http://hermes:8643'
+set_variable HERMES_BASE_URL 'http://host.docker.internal:8642'
 set_variable HERMES_CHAT_PATH '/v1/chat/completions'
 set_variable HERMES_HEALTH_PATH '/health'
 set_variable HERMES_AGENT_ID '[Hermes] Lucy'
-set_variable HERMES_TIMEOUT_MS '120000'
+set_variable HERMES_TIMEOUT_MS '300000'
 set_variable HERMES_PROTOCOL 'openai'
-set_variable HERMES_MODEL_MAP_JSON '{}'
+set_variable HERMES_MODEL_MAP_JSON '{"[Hermes] Lucy":"hermes-agent"}'
 set_variable HERMES_DOCKER_NETWORK 'hermes_default'
 
+gh api --method DELETE \
+  "repos/${REPO}/environments/${ENVIRONMENT}/variables/CHAT_V1" \
+  >/dev/null 2>&1 || true
+
 printf 'Reading the Letta bridge token over SSH without printing it...\n'
-TOKEN="$({
+LETTA_TOKEN="$({
   ssh -p "${REMOTE_PORT}" \
     -o BatchMode=yes \
     -o ConnectTimeout=10 \
     "${REMOTE_USER}@${REMOTE_HOST}" \
     "sed -n 's/^LETTA_BRIDGE_TOKEN=//p' ~/.config/letta-bridge.env"
 } | head -n 1)"
-[[ -n "${TOKEN}" ]] || {
+[[ -n "${LETTA_TOKEN}" ]] || {
   echo 'Could not read LETTA_BRIDGE_TOKEN. Install the bridge and passwordless SSH first.' >&2
   exit 1
 }
-printf '%s' "${TOKEN}" | gh secret set LETTA_API_KEY --repo "${REPO}" --env "${ENVIRONMENT}"
-unset TOKEN
+printf '%s' "${LETTA_TOKEN}" | gh secret set LETTA_API_KEY --repo "${REPO}" --env "${ENVIRONMENT}"
+unset LETTA_TOKEN
+
+printf 'Reading the local Hermes API key without printing it...\n'
+[[ -f "${HERMES_ENV_FILE}" ]] || {
+  echo "Hermes environment file not found: ${HERMES_ENV_FILE}" >&2
+  echo 'Install the Hermes native API first.' >&2
+  exit 1
+}
+HERMES_TOKEN="$(sed -n 's/^API_SERVER_KEY=//p' "${HERMES_ENV_FILE}" | tail -n 1)"
+[[ -n "${HERMES_TOKEN}" ]] || {
+  echo 'API_SERVER_KEY is missing from the Hermes environment file.' >&2
+  exit 1
+}
+printf '%s' "${HERMES_TOKEN}" | gh secret set HERMES_API_KEY --repo "${REPO}" --env "${ENVIRONMENT}"
+unset HERMES_TOKEN
 
 printf '\nConfigured GitHub Environment variables:\n'
 gh variable list --repo "${REPO}" --env "${ENVIRONMENT}"
-printf '\nLETTA_API_KEY was stored as an Environment secret. Its value was not printed.\n'
+printf '\nLETTA_API_KEY and HERMES_API_KEY were stored as Environment secrets. Their values were not printed.\n'
