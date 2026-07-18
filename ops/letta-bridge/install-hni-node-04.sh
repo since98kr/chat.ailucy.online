@@ -1,8 +1,24 @@
 #!/usr/bin/env bash
 set -Eeuo pipefail
+trap 'printf "Letta bridge installation failed at line %s: %s\n" "${LINENO}" "${BASH_COMMAND}" >&2' ERR
 
-TARGET_USER="${SUDO_USER:-${USER}}"
+[[ "${EUID}" -eq 0 ]] || {
+  echo 'Run this installer with sudo: sudo bash ops/letta-bridge/install-hni-node-04.sh'
+  exit 1
+}
+
+TARGET_USER="${LETTA_BRIDGE_USER:-${SUDO_USER:-}}"
+[[ -n "${TARGET_USER}" && "${TARGET_USER}" != 'root' ]] || {
+  echo 'Unable to determine the non-root Letta user. Set LETTA_BRIDGE_USER explicitly.'
+  exit 1
+}
+
 TARGET_HOME="$(getent passwd "${TARGET_USER}" | cut -d: -f6)"
+[[ -n "${TARGET_HOME}" && -d "${TARGET_HOME}" ]] || {
+  echo "Home directory not found for ${TARGET_USER}"
+  exit 1
+}
+
 SOURCE_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 INSTALL_DIR="${TARGET_HOME}/.local/share/letta-bridge"
 CONFIG_DIR="${TARGET_HOME}/.config"
@@ -11,21 +27,47 @@ UNIT_FILE="/etc/systemd/system/letta-bridge.service"
 AGENT_ID="agent-local-0dc7f93b-7b2e-41f3-8193-a9520950557c"
 LETTA_CWD="${TARGET_HOME}/tei-letta"
 LETTA_COMMAND="${TARGET_HOME}/.local/bin/lucy-routed"
-NODE_BIN="$(sudo -u "${TARGET_USER}" bash -lc 'command -v node')"
+
+NODE_BIN="$(
+  runuser -u "${TARGET_USER}" -- env HOME="${TARGET_HOME}" bash -lc '
+    if command -v node >/dev/null 2>&1; then
+      command -v node
+      exit 0
+    fi
+    if [[ -s "$HOME/.nvm/nvm.sh" ]]; then
+      # shellcheck disable=SC1091
+      . "$HOME/.nvm/nvm.sh"
+      command -v node
+      exit 0
+    fi
+    exit 1
+  '
+)" || {
+  echo "Node.js executable was not found for ${TARGET_USER}, including under ${TARGET_HOME}/.nvm."
+  exit 1
+}
+[[ -x "${NODE_BIN}" ]] || {
+  echo "Resolved Node.js path is not executable: ${NODE_BIN}"
+  exit 1
+}
 NODE_DIR="$(dirname "${NODE_BIN}")"
+
+echo "Installing Letta bridge for user ${TARGET_USER}"
+echo "Using Node.js: ${NODE_BIN}"
 
 [[ -f "${SOURCE_DIR}/letta-bridge.mjs" ]] || { echo 'letta-bridge.mjs not found'; exit 1; }
 [[ -x "${LETTA_COMMAND}" ]] || { echo "Lucy launcher not executable: ${LETTA_COMMAND}"; exit 1; }
 [[ -d "${LETTA_CWD}" ]] || { echo "Letta working directory not found: ${LETTA_CWD}"; exit 1; }
 
-sudo install -d -m 0755 -o "${TARGET_USER}" -g "${TARGET_USER}" "${INSTALL_DIR}"
-sudo install -m 0755 -o "${TARGET_USER}" -g "${TARGET_USER}" \
+install -d -m 0755 -o "${TARGET_USER}" -g "${TARGET_USER}" "${INSTALL_DIR}"
+install -m 0755 -o "${TARGET_USER}" -g "${TARGET_USER}" \
   "${SOURCE_DIR}/letta-bridge.mjs" "${INSTALL_DIR}/letta-bridge.mjs"
-sudo install -d -m 0700 -o "${TARGET_USER}" -g "${TARGET_USER}" "${CONFIG_DIR}"
+install -d -m 0700 -o "${TARGET_USER}" -g "${TARGET_USER}" "${CONFIG_DIR}"
 
 if [[ ! -f "${ENV_FILE}" ]]; then
   TOKEN="$(openssl rand -hex 32)"
-  sudo -u "${TARGET_USER}" tee "${ENV_FILE}" >/dev/null <<ENV
+  install -m 0600 -o "${TARGET_USER}" -g "${TARGET_USER}" /dev/null "${ENV_FILE}"
+  cat >"${ENV_FILE}" <<ENV
 LETTA_BRIDGE_HOST=127.0.0.1
 LETTA_BRIDGE_PORT=18283
 LETTA_BRIDGE_TOKEN=${TOKEN}
@@ -38,10 +80,9 @@ LETTA_SESSION_IDLE_MS=1800000
 LETTA_REQUEST_TIMEOUT_MS=300000
 LETTA_LOCAL_BACKEND_DIR=${LETTA_CWD}/.letta-local
 ENV
-  chmod 0600 "${ENV_FILE}"
 fi
 
-sudo tee "${UNIT_FILE}" >/dev/null <<UNIT
+cat >"${UNIT_FILE}" <<UNIT
 [Unit]
 Description=Lucy Letta Thin Bridge
 After=network-online.target
@@ -70,8 +111,8 @@ UMask=0077
 WantedBy=multi-user.target
 UNIT
 
-sudo systemctl daemon-reload
-sudo systemctl enable --now letta-bridge.service
+systemctl daemon-reload
+systemctl enable --now letta-bridge.service
 sleep 2
 curl -fsS http://127.0.0.1:18283/health
 echo
