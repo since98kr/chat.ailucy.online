@@ -1,227 +1,117 @@
-import { FormEvent, useMemo, useState } from 'react';
+import { FormEvent, useEffect, useMemo, useRef, useState } from 'react';
 import {
   Archive,
   Bot,
   ChevronDown,
-  ChevronRight,
   Download,
   FileText,
   Image,
+  LoaderCircle,
   Menu,
-  MessageSquarePlus,
   Mic,
   MoreHorizontal,
   Paperclip,
   Pin,
   Plus,
+  RotateCcw,
   Search,
   Send,
   Settings,
   Sparkles,
+  Square,
   Trash2,
   Upload,
   Users,
   X,
 } from 'lucide-react';
-
-type SystemId = 'letta' | 'hermes';
-type ConversationStatus = 'active' | 'archived' | 'trashed';
-
-type Conversation = {
-  id: string;
-  system: SystemId;
-  agent: string;
-  title: string;
-  preview: string;
-  updatedAt: string;
-  pinned: boolean;
-  status: ConversationStatus;
-};
-
-const initialConversations: Conversation[] = [
-  {
-    id: 'chat-v2',
-    system: 'hermes',
-    agent: '[Hermes] Lucy',
-    title: 'Chat V2 개발',
-    preview: 'Conversation 중심 UI와 파일 UX 확정',
-    updatedAt: '방금',
-    pinned: true,
-    status: 'active',
-  },
-  {
-    id: 'hermes-v2',
-    system: 'hermes',
-    agent: '[Hermes] Lucy',
-    title: 'Hermes V2 구축',
-    preview: 'Lucy와 subagent 협업 구조',
-    updatedAt: '10:18',
-    pinned: true,
-    status: 'active',
-  },
-  {
-    id: 'trade',
-    system: 'hermes',
-    agent: '[Hermes] Lucy',
-    title: 'Trade 운영 안정화',
-    preview: 'Dispatcher 검증과 다음 작업',
-    updatedAt: '어제',
-    pinned: true,
-    status: 'active',
-  },
-  {
-    id: 'drone-report',
-    system: 'hermes',
-    agent: 'Gemma',
-    title: '액화수소 드론 보고서',
-    preview: '장기체공 활용 사례와 시장 기회',
-    updatedAt: '금요일',
-    pinned: false,
-    status: 'active',
-  },
-  {
-    id: 'weekly',
-    system: 'letta',
-    agent: '[Letta] Lucy',
-    title: '이번 주 업무 정리',
-    preview: '중요 의사결정과 다음 일정',
-    updatedAt: '어제',
-    pinned: true,
-    status: 'active',
-  },
-  {
-    id: 'study',
-    system: 'letta',
-    agent: '[Letta] Lucy',
-    title: '미국 유학 준비',
-    preview: '지원 일정과 영어 점수 계획',
-    updatedAt: '7월 15일',
-    pinned: false,
-    status: 'active',
-  },
-];
+import type {
+  ArtifactRecord,
+  ConversationRecord,
+  ConversationStatus,
+  MessageRecord,
+  SystemId,
+} from '../shared/contracts';
+import { artifactContentUrl, artifactDownloadUrl } from './api';
+import { useChat } from './useChat';
 
 const agents = {
-  letta: [{ name: '[Letta] Lucy', role: 'Personal', active: true }],
+  letta: [{ name: '[Letta] Lucy', role: 'Personal', active: true, enabled: true }],
   hermes: [
-    { name: '[Hermes] Lucy', role: 'Lead', active: true },
-    { name: 'Xixi', role: 'Implementation', active: true },
-    { name: 'Lynn', role: 'Review', active: false },
-    { name: 'Gemma', role: 'Multimodal', active: true },
+    { name: '[Hermes] Lucy', role: 'Lead', active: true, enabled: true },
+    { name: 'Xixi', role: 'Implementation', active: true, enabled: false },
+    { name: 'Lynn', role: 'Review', active: false, enabled: false },
+    { name: 'Gemma', role: 'Multimodal', active: true, enabled: false },
   ],
-} satisfies Record<SystemId, Array<{ name: string; role: string; active: boolean }>>;
+} satisfies Record<
+  SystemId,
+  Array<{ name: string; role: string; active: boolean; enabled: boolean }>
+>;
 
 function App() {
-  const [selectedSystem, setSelectedSystem] = useState<SystemId>('hermes');
-  const [activeAgent, setActiveAgent] = useState('[Hermes] Lucy');
-  const [conversations, setConversations] = useState(initialConversations);
-  const [activeConversationId, setActiveConversationId] = useState('chat-v2');
-  const [composer, setComposer] = useState('');
+  const chat = useChat();
   const [mobileDrawerOpen, setMobileDrawerOpen] = useState(false);
   const [teamPanelOpen, setTeamPanelOpen] = useState(false);
+  const [search, setSearch] = useState('');
+  const [dragActive, setDragActive] = useState(false);
+  const [uploading, setUploading] = useState(false);
+  const fileInputRef = useRef<HTMLInputElement>(null);
+  const streamEndRef = useRef<HTMLDivElement>(null);
 
-  const visibleConversations = useMemo(
-    () =>
-      conversations.filter(
-        (conversation) =>
-          conversation.system === selectedSystem && conversation.status === 'active',
-      ),
-    [conversations, selectedSystem],
-  );
-
-  const activeConversation =
-    conversations.find((conversation) => conversation.id === activeConversationId) ??
-    visibleConversations[0];
-
-  const switchSystem = (system: SystemId, agentName: string) => {
-    setSelectedSystem(system);
-    setActiveAgent(agentName);
-    const nextConversation = conversations.find(
-      (conversation) => conversation.system === system && conversation.status === 'active',
+  const filteredConversations = useMemo(() => {
+    const query = search.trim().toLocaleLowerCase('ko');
+    if (!query) return chat.conversations;
+    return chat.conversations.filter((conversation) =>
+      `${conversation.title} ${conversation.preview}`.toLocaleLowerCase('ko').includes(query),
     );
-    if (nextConversation) setActiveConversationId(nextConversation.id);
+  }, [chat.conversations, search]);
+
+  useEffect(() => {
+    streamEndRef.current?.scrollIntoView({ block: 'end' });
+  }, [chat.activeConversation?.messages, chat.runStatus]);
+
+  const handleFiles = async (files: File[]) => {
+    if (!files.length || !chat.activeConversation) return;
+    setUploading(true);
+    try {
+      await chat.uploadFiles(files);
+    } finally {
+      setUploading(false);
+      if (fileInputRef.current) fileInputRef.current.value = '';
+    }
   };
 
-  const createConversation = () => {
-    const id = `conversation-${Date.now()}`;
-    const newConversation: Conversation = {
-      id,
-      system: selectedSystem,
-      agent: activeAgent,
-      title: '새 대화',
-      preview: '첫 메시지를 입력해 제목을 생성하세요.',
-      updatedAt: '방금',
-      pinned: false,
-      status: 'active',
-    };
-    setConversations((current) => [newConversation, ...current]);
-    setActiveConversationId(id);
-    setMobileDrawerOpen(false);
+  const renameConversation = async () => {
+    if (!chat.activeConversation) return;
+    const title = window.prompt('대화 이름을 입력하세요.', chat.activeConversation.title)?.trim();
+    if (title) await chat.patchConversation({ title });
   };
 
-  const updateConversation = (
-    id: string,
-    update: Partial<Pick<Conversation, 'title' | 'pinned' | 'status'>>,
-  ) => {
-    setConversations((current) =>
-      current.map((conversation) =>
-        conversation.id === id ? { ...conversation, ...update } : conversation,
-      ),
-    );
+  const moveConversation = async (status: ConversationStatus) => {
+    await chat.patchConversation({ status });
   };
 
-  const renameConversation = () => {
-    if (!activeConversation) return;
-    const nextTitle = window.prompt('대화 이름을 입력하세요.', activeConversation.title)?.trim();
-    if (nextTitle) updateConversation(activeConversation.id, { title: nextTitle });
-  };
-
-  const archiveConversation = () => {
-    if (!activeConversation) return;
-    updateConversation(activeConversation.id, { status: 'archived' });
-    const next = visibleConversations.find(
-      (conversation) => conversation.id !== activeConversation.id,
-    );
-    if (next) setActiveConversationId(next.id);
-  };
-
-  const trashConversation = () => {
-    if (!activeConversation) return;
-    updateConversation(activeConversation.id, { status: 'trashed' });
-    const next = visibleConversations.find(
-      (conversation) => conversation.id !== activeConversation.id,
-    );
-    if (next) setActiveConversationId(next.id);
-  };
-
-  const submitMessage = (event: FormEvent) => {
+  const submitMessage = async (event: FormEvent) => {
     event.preventDefault();
-    const message = composer.trim();
-    if (!message || !activeConversation) return;
-
-    setComposer('');
-    updateConversation(activeConversation.id, {
-      title: activeConversation.title === '새 대화' ? message.slice(0, 24) : activeConversation.title,
-    });
+    const content = chat.activeConversation?.draft ?? '';
+    if (!content.trim()) return;
+    chat.saveDraft('');
+    await chat.sendMessage(content);
   };
 
   return (
     <div className="page-shell">
-      <main className="app-frame">
+      <main className={`app-frame ${dragActive ? 'is-dragging' : ''}`}>
         <aside className={`sidebar ${mobileDrawerOpen ? 'sidebar--open' : ''}`}>
           <div className="sidebar__mobile-head">
             <strong>시스템과 대화</strong>
-            <button className="icon-button" onClick={() => setMobileDrawerOpen(false)}>
+            <button className="icon-button" onClick={() => setMobileDrawerOpen(false)} aria-label="메뉴 닫기">
               <X size={18} />
             </button>
           </div>
 
           <div className="brand-row">
             <div className="brand-mark"><Sparkles size={18} /></div>
-            <div>
-              <strong>ailucy.online</strong>
-              <span>V2</span>
-            </div>
+            <div><strong>ailucy.online</strong><span>V2</span></div>
           </div>
 
           <section className="sidebar-section systems-section">
@@ -229,94 +119,170 @@ function App() {
               <span>SYSTEMS</span>
               <button className="icon-button" aria-label="시스템 설정"><Settings size={15} /></button>
             </div>
-
             <SystemCard
               id="letta"
               label="Letta"
               accent="blue"
-              selectedSystem={selectedSystem}
-              activeAgent={activeAgent}
-              onSelect={switchSystem}
+              selectedSystem={chat.selectedSystem}
+              activeAgent={chat.activeAgent}
+              onSelect={(system, agent) => {
+                chat.switchSystem(system, agent);
+                setMobileDrawerOpen(false);
+              }}
             />
             <SystemCard
               id="hermes"
               label="Hermes"
               accent="violet"
-              selectedSystem={selectedSystem}
-              activeAgent={activeAgent}
-              onSelect={switchSystem}
+              selectedSystem={chat.selectedSystem}
+              activeAgent={chat.activeAgent}
+              onSelect={(system, agent) => {
+                chat.switchSystem(system, agent);
+                setMobileDrawerOpen(false);
+              }}
             />
           </section>
 
           <section className="sidebar-section conversations-section">
             <div className="section-title-row conversations-title">
-              <span>CONVERSATIONS</span>
+              <span>{statusLabel(chat.selectedStatus)}</span>
               <div>
-                <button className="icon-button" aria-label="대화 검색"><Search size={15} /></button>
-                <button className="icon-button" onClick={createConversation} aria-label="새 대화">
+                <button
+                  className="icon-button"
+                  onClick={() => chat.createConversation().then(() => setMobileDrawerOpen(false))}
+                  aria-label="새 대화"
+                  disabled={chat.selectedStatus !== 'active'}
+                >
                   <Plus size={16} />
                 </button>
               </div>
             </div>
+            <label className="conversation-search">
+              <Search size={14} />
+              <input value={search} onChange={(event) => setSearch(event.target.value)} placeholder="대화 검색" />
+              {search && <button onClick={() => setSearch('')} aria-label="검색 초기화"><X size={13} /></button>}
+            </label>
 
-            <ConversationGroup
-              title="고정됨"
-              conversations={visibleConversations.filter((conversation) => conversation.pinned)}
-              activeConversationId={activeConversationId}
-              onSelect={(id) => {
-                setActiveConversationId(id);
-                setMobileDrawerOpen(false);
-              }}
-            />
-            <ConversationGroup
-              title="최근"
-              conversations={visibleConversations.filter((conversation) => !conversation.pinned)}
-              activeConversationId={activeConversationId}
-              onSelect={(id) => {
-                setActiveConversationId(id);
-                setMobileDrawerOpen(false);
-              }}
-            />
+            {chat.loading ? (
+              <div className="sidebar-loading"><LoaderCircle size={18} className="spin" /> 불러오는 중</div>
+            ) : chat.selectedStatus === 'active' ? (
+              <>
+                <ConversationGroup
+                  title="고정됨"
+                  conversations={filteredConversations.filter((conversation) => conversation.pinned)}
+                  activeConversationId={chat.activeConversation?.id ?? null}
+                  onSelect={(id) => {
+                    chat.selectConversation(id);
+                    setMobileDrawerOpen(false);
+                  }}
+                />
+                <ConversationGroup
+                  title="최근"
+                  conversations={filteredConversations.filter((conversation) => !conversation.pinned)}
+                  activeConversationId={chat.activeConversation?.id ?? null}
+                  onSelect={(id) => {
+                    chat.selectConversation(id);
+                    setMobileDrawerOpen(false);
+                  }}
+                />
+              </>
+            ) : (
+              <ConversationGroup
+                title={chat.selectedStatus === 'archived' ? '보관된 대화' : '삭제 대기'}
+                conversations={filteredConversations}
+                activeConversationId={chat.activeConversation?.id ?? null}
+                onSelect={(id) => {
+                  chat.selectConversation(id);
+                  setMobileDrawerOpen(false);
+                }}
+              />
+            )}
+
+            {!chat.loading && filteredConversations.length === 0 && (
+              <div className="empty-sidebar">표시할 Conversation이 없습니다.</div>
+            )}
           </section>
 
-          <div className="sidebar-footer">
-            <button><Archive size={15} /> 보관함 <span>{conversations.filter((item) => item.status === 'archived').length}</span></button>
-            <button><Trash2 size={15} /> 휴지통 <span>{conversations.filter((item) => item.status === 'trashed').length}</span></button>
+          <div className="sidebar-footer sidebar-footer--three">
+            <button
+              className={chat.selectedStatus === 'active' ? 'is-active' : ''}
+              onClick={() => chat.switchStatus('active')}
+            ><Bot size={15} /> 활성</button>
+            <button
+              className={chat.selectedStatus === 'archived' ? 'is-active' : ''}
+              onClick={() => chat.switchStatus('archived')}
+            ><Archive size={15} /> 보관함</button>
+            <button
+              className={chat.selectedStatus === 'trashed' ? 'is-active' : ''}
+              onClick={() => chat.switchStatus('trashed')}
+            ><Trash2 size={15} /> 휴지통</button>
           </div>
         </aside>
 
         {mobileDrawerOpen && <button className="drawer-scrim" onClick={() => setMobileDrawerOpen(false)} />}
 
-        <section className="chat-column">
+        <section
+          className="chat-column"
+          onDragEnter={(event) => {
+            event.preventDefault();
+            if (chat.selectedStatus === 'active') setDragActive(true);
+          }}
+          onDragOver={(event) => event.preventDefault()}
+          onDragLeave={(event) => {
+            if (event.currentTarget === event.target) setDragActive(false);
+          }}
+          onDrop={(event) => {
+            event.preventDefault();
+            setDragActive(false);
+            void handleFiles(Array.from(event.dataTransfer.files));
+          }}
+        >
           <header className="chat-header">
             <div className="chat-header__identity">
               <button className="icon-button mobile-menu" onClick={() => setMobileDrawerOpen(true)}>
                 <Menu size={20} />
               </button>
-              <div className={`agent-avatar agent-avatar--${selectedSystem}`}>
-                {selectedSystem === 'letta' ? <Sparkles size={18} /> : <Bot size={19} />}
+              <div className={`agent-avatar agent-avatar--${chat.selectedSystem}`}>
+                {chat.selectedSystem === 'letta' ? <Sparkles size={18} /> : <Bot size={19} />}
               </div>
               <div className="chat-header__text">
-                <strong>{activeConversation?.title ?? '새 대화'}</strong>
-                <span>{activeAgent} · {selectedSystem === 'letta' ? 'Personal' : 'Hermes System'}</span>
+                <strong>{chat.activeConversation?.title ?? '새 Conversation'}</strong>
+                <span>{chat.activeAgent} · {chat.selectedSystem === 'letta' ? 'Personal' : 'Hermes System'}</span>
               </div>
             </div>
 
             <div className="chat-header__actions">
-              <button
-                className={`icon-button ${activeConversation?.pinned ? 'is-active' : ''}`}
-                title="고정"
-                onClick={() =>
-                  activeConversation &&
-                  updateConversation(activeConversation.id, { pinned: !activeConversation.pinned })
-                }
-              >
-                <Pin size={17} />
-              </button>
-              <button className="icon-button" title="이름 변경" onClick={renameConversation}>
-                <MoreHorizontal size={18} />
-              </button>
-              {selectedSystem === 'hermes' && (
+              {chat.selectedStatus === 'active' && chat.activeConversation && (
+                <button
+                  className={`icon-button ${chat.activeConversation.pinned ? 'is-active' : ''}`}
+                  title="고정"
+                  onClick={() => chat.patchConversation({ pinned: !chat.activeConversation?.pinned })}
+                ><Pin size={17} /></button>
+              )}
+              <details className="conversation-menu">
+                <summary className="icon-button" aria-label="대화 메뉴"><MoreHorizontal size={18} /></summary>
+                <div className="conversation-menu__popup">
+                  {chat.selectedStatus === 'active' && (
+                    <>
+                      <button onClick={renameConversation}>이름 변경</button>
+                      <button onClick={() => moveConversation('archived')}><Archive size={14} /> 보관</button>
+                      <button className="danger" onClick={() => moveConversation('trashed')}><Trash2 size={14} /> 휴지통으로 이동</button>
+                    </>
+                  )}
+                  {chat.selectedStatus !== 'active' && (
+                    <button onClick={() => moveConversation('active')}><RotateCcw size={14} /> 활성 대화로 복원</button>
+                  )}
+                  {chat.selectedStatus === 'trashed' && (
+                    <button
+                      className="danger"
+                      onClick={() => {
+                        if (window.confirm('이 대화 기록을 영구 삭제하시겠습니까?')) void chat.deletePermanently();
+                      }}
+                    ><Trash2 size={14} /> 영구 삭제</button>
+                  )}
+                </div>
+              </details>
+              {chat.selectedSystem === 'hermes' && (
                 <button className="team-button" onClick={() => setTeamPanelOpen(true)}>
                   <Users size={16} /> 팀 활동
                 </button>
@@ -324,86 +290,113 @@ function App() {
             </div>
           </header>
 
-          <div className="conversation-canvas">
-            <div className="message-stream">
-              <article className="message message--user">
-                <div className="message__meta"><strong>Tei</strong><span>10:30</span></div>
-                <p>승인된 디자인을 기준으로 Chat V2의 첫 화면을 구현해줘. Conversation 관리가 가장 중요해.</p>
-              </article>
-
-              <article className="message message--assistant">
-                <div className="message__meta">
-                  <div className={`agent-avatar agent-avatar--${selectedSystem}`}><Bot size={15} /></div>
-                  <strong>{activeAgent}</strong><span>10:31</span>
-                </div>
-                <p>
-                  시스템은 AI의 소속을 구분하고, Conversation은 Tei님의 아젠다를 구분하도록 설계하겠습니다.
-                  현재 대화는 고정·이름 변경·보관·삭제가 가능하며, 모바일에서도 같은 구조를 유지합니다.
-                </p>
-
-                <div className="inline-image-card">
-                  <img
-                    src="https://images.unsplash.com/photo-1555066931-4365d14bab8c?auto=format&fit=crop&w=1200&q=80"
-                    alt="개발 화면 예시"
-                  />
-                  <div className="image-toolbar">
-                    <button><Download size={15} /> 다운로드</button>
-                    <button><Image size={15} /> 전체 화면</button>
-                  </div>
-                </div>
-
-                <div className="file-card">
-                  <div className="file-icon"><FileText size={19} /></div>
-                  <div><strong>chat-v2-ui-spec.md</strong><span>Markdown · 42 KB</span></div>
-                  <button className="icon-button"><Download size={17} /></button>
-                </div>
-
-                {selectedSystem === 'hermes' && (
-                  <button className="activity-summary" onClick={() => setTeamPanelOpen(true)}>
-                    <Users size={15} /> 팀 작업 2건 <ChevronRight size={15} />
-                  </button>
-                )}
-              </article>
+          {chat.error && (
+            <div className="error-banner">
+              <span>{chat.error}</span>
+              <button onClick={chat.clearError}><X size={15} /></button>
             </div>
+          )}
+
+          <div className="conversation-canvas">
+            {!chat.activeConversation && !chat.loading ? (
+              <div className="empty-conversation">
+                <div className="empty-icon"><Bot size={26} /></div>
+                <strong>새 아젠다를 시작하세요.</strong>
+                <p>Conversation은 Tei님의 생각과 프로젝트 문맥을 분리해 보존합니다.</p>
+                {chat.selectedStatus === 'active' && <button onClick={() => chat.createConversation()}>새 Conversation</button>}
+              </div>
+            ) : (
+              <div className="message-stream">
+                {chat.activeConversation?.messages.map((message) => (
+                  <MessageItem key={message.id} message={message} system={chat.selectedSystem} />
+                ))}
+
+                {chat.runStatus && (
+                  <div className="run-status"><LoaderCircle size={15} className="spin" /> {chat.runStatus}</div>
+                )}
+
+                {!!chat.activeConversation?.artifacts.length && (
+                  <section className="artifact-gallery">
+                    <h3>이 Conversation의 파일</h3>
+                    {chat.activeConversation.artifacts.map((artifact) => <ArtifactItem key={artifact.id} artifact={artifact} />)}
+                  </section>
+                )}
+                <div ref={streamEndRef} />
+              </div>
+            )}
           </div>
 
-          <div className="composer-zone">
-            <div className="drop-hint"><Upload size={15} /> 파일을 끌어놓거나 이미지를 붙여넣을 수 있습니다.</div>
-            <form className="composer" onSubmit={submitMessage}>
-              <div className="composer__tools">
-                <button type="button" className="icon-button"><Plus size={18} /></button>
-                <button type="button" className="icon-button"><Paperclip size={17} /></button>
-                <button type="button" className="icon-button"><Image size={17} /></button>
+          {chat.selectedStatus === 'active' ? (
+            <div className="composer-zone">
+              <div className="drop-hint">
+                {uploading ? <><LoaderCircle size={15} className="spin" /> 업로드 중</> : <><Upload size={15} /> 파일을 끌어놓거나 이미지를 붙여넣을 수 있습니다.</>}
               </div>
-              <textarea
-                value={composer}
-                onChange={(event) => setComposer(event.target.value)}
-                onKeyDown={(event) => {
-                  if (event.key === 'Enter' && !event.shiftKey && !event.nativeEvent.isComposing) {
-                    event.preventDefault();
-                    event.currentTarget.form?.requestSubmit();
-                  }
-                }}
-                placeholder={`Message ${activeAgent}...`}
-                rows={1}
-              />
-              <div className="composer__send">
-                <button type="button" className="icon-button"><Mic size={18} /></button>
-                <button type="submit" className="send-button" aria-label="전송"><Send size={18} /></button>
-              </div>
-            </form>
-            <p className="composer-footnote">
-              {selectedSystem === 'letta'
-                ? 'Letta의 Lucy는 Conversation을 넘어 개인 기억을 유지합니다.'
-                : 'Hermes의 Lucy는 필요할 때 subagent와 협업합니다.'}
-            </p>
-          </div>
+              <form className="composer" onSubmit={submitMessage}>
+                <div className="composer__tools">
+                  <button type="button" className="icon-button" onClick={() => fileInputRef.current?.click()}><Plus size={18} /></button>
+                  <button type="button" className="icon-button" onClick={() => fileInputRef.current?.click()}><Paperclip size={17} /></button>
+                  <button type="button" className="icon-button" onClick={() => fileInputRef.current?.click()}><Image size={17} /></button>
+                  <input
+                    ref={fileInputRef}
+                    type="file"
+                    multiple
+                    hidden
+                    onChange={(event) => void handleFiles(Array.from(event.target.files ?? []))}
+                  />
+                </div>
+                <textarea
+                  value={chat.activeConversation?.draft ?? ''}
+                  onChange={(event) => chat.saveDraft(event.target.value)}
+                  onPaste={(event) => {
+                    const images = Array.from(event.clipboardData.files).filter((file) => file.type.startsWith('image/'));
+                    if (images.length) {
+                      event.preventDefault();
+                      void handleFiles(images);
+                    }
+                  }}
+                  onKeyDown={(event) => {
+                    if (event.key === 'Enter' && !event.shiftKey && !event.nativeEvent.isComposing) {
+                      event.preventDefault();
+                      event.currentTarget.form?.requestSubmit();
+                    }
+                  }}
+                  placeholder={`Message ${chat.activeAgent}...`}
+                  rows={1}
+                  disabled={chat.isStreaming}
+                />
+                <div className="composer__send">
+                  {chat.isStreaming ? (
+                    <button type="button" className="stop-button" onClick={chat.stopStreaming} aria-label="응답 중단"><Square size={15} /></button>
+                  ) : (
+                    <>
+                      <button type="button" className="icon-button"><Mic size={18} /></button>
+                      <button type="submit" className="send-button" aria-label="전송"><Send size={18} /></button>
+                    </>
+                  )}
+                </div>
+              </form>
+              <p className="composer-footnote">
+                {chat.selectedSystem === 'letta'
+                  ? 'Letta의 Lucy는 Conversation을 넘어 승인된 개인 기억을 유지합니다.'
+                  : 'Hermes의 Lucy는 필요할 때만 subagent와 협업합니다.'}
+              </p>
+            </div>
+          ) : (
+            <div className="readonly-bar">
+              <span>{chat.selectedStatus === 'archived' ? '보관된 Conversation입니다.' : '휴지통의 Conversation입니다.'}</span>
+              <button onClick={() => moveConversation('active')}><RotateCcw size={14} /> 복원</button>
+            </div>
+          )}
+
+          {dragActive && (
+            <div className="drop-overlay"><Upload size={28} /><strong>파일을 여기에 놓으세요</strong></div>
+          )}
         </section>
 
         {teamPanelOpen && (
           <aside className="team-panel">
             <div className="team-panel__header">
-              <div><strong>Hermes Team</strong><span>현재 Conversation 활동</span></div>
+              <div><strong>Hermes Team</strong><span>현재 Conversation에서 선택적으로 참여</span></div>
               <button className="icon-button" onClick={() => setTeamPanelOpen(false)}><X size={18} /></button>
             </div>
             {agents.hermes.map((agent, index) => (
@@ -411,12 +404,50 @@ function App() {
                 <div className="team-member__avatar"><Bot size={16} /></div>
                 <div><strong>{agent.name}</strong><span>{agent.role}</span></div>
                 <span className={`presence ${agent.active ? 'presence--active' : ''}`} />
-                <small>{index === 0 ? '대화 중' : index === 1 ? '구현안 작성' : index === 2 ? '대기' : '시각자료 준비'}</small>
+                <small>{index === 0 ? '대화 책임자' : '2차에서 직접 참여 활성화'}</small>
               </div>
             ))}
           </aside>
         )}
       </main>
+    </div>
+  );
+}
+
+function MessageItem({ message, system }: { message: MessageRecord; system: SystemId }) {
+  const isUser = message.role === 'user';
+  return (
+    <article className={`message ${isUser ? 'message--user' : 'message--assistant'}`}>
+      <div className="message__meta">
+        {!isUser && <div className={`agent-avatar agent-avatar--${system}`}><Bot size={15} /></div>}
+        <strong>{isUser ? 'Tei' : message.authorId}</strong>
+        <span>{formatTime(message.createdAt)}</span>
+        {message.state !== 'complete' && <em>{message.state}</em>}
+      </div>
+      <p>{message.content || ' '}{message.state === 'streaming' && <span className="stream-cursor" />}</p>
+    </article>
+  );
+}
+
+function ArtifactItem({ artifact }: { artifact: ArtifactRecord }) {
+  const isImage = artifact.mimeType.startsWith('image/');
+  if (isImage) {
+    return (
+      <div className="inline-image-card">
+        <img src={artifactContentUrl(artifact.id)} alt={artifact.filename} />
+        <div className="image-toolbar">
+          <a href={artifactDownloadUrl(artifact.id)}><Download size={15} /> 다운로드</a>
+          <a href={artifactContentUrl(artifact.id)} target="_blank" rel="noreferrer"><Image size={15} /> 전체 화면</a>
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div className="file-card">
+      <div className="file-icon"><FileText size={19} /></div>
+      <div><strong>{artifact.filename}</strong><span>{artifact.mimeType} · {formatBytes(artifact.sizeBytes)}</span></div>
+      <a className="icon-button" href={artifactDownloadUrl(artifact.id)} aria-label="파일 다운로드"><Download size={17} /></a>
     </div>
   );
 }
@@ -448,11 +479,13 @@ function SystemCard({
           <button
             key={agent.name}
             className={`agent-row ${selectedSystem === id && activeAgent === agent.name ? 'is-active' : ''}`}
-            onClick={() => onSelect(id, agent.name)}
+            onClick={() => agent.enabled && onSelect(id, agent.name)}
+            disabled={!agent.enabled}
+            title={agent.enabled ? agent.role : `${agent.role} · 2차 활성화`}
           >
             <span className="mini-avatar">{agent.name === '[Letta] Lucy' ? <Sparkles size={13} /> : <Bot size={14} />}</span>
             <span className="agent-row__name">{agent.name}</span>
-            {agent.role === 'Personal' ? <em>Personal</em> : <span className={`presence ${agent.active ? 'presence--active' : ''}`} />}
+            {agent.role === 'Personal' ? <em>Personal</em> : agent.enabled ? <span className={`presence ${agent.active ? 'presence--active' : ''}`} /> : <small>2차</small>}
           </button>
         ))}
       </div>
@@ -467,8 +500,8 @@ function ConversationGroup({
   onSelect,
 }: {
   title: string;
-  conversations: Conversation[];
-  activeConversationId: string;
+  conversations: ConversationRecord[];
+  activeConversationId: string | null;
   onSelect: (id: string) => void;
 }) {
   if (conversations.length === 0) return null;
@@ -483,13 +516,36 @@ function ConversationGroup({
         >
           <span className="conversation-row__content">
             <strong>{conversation.title}</strong>
-            <small>{conversation.preview}</small>
+            <small>{conversation.preview || '아직 메시지가 없습니다.'}</small>
           </span>
-          <time>{conversation.updatedAt}</time>
+          <time>{formatRelative(conversation.updatedAt)}</time>
         </button>
       ))}
     </div>
   );
+}
+
+function statusLabel(status: ConversationStatus) {
+  if (status === 'archived') return 'ARCHIVE';
+  if (status === 'trashed') return 'TRASH';
+  return 'CONVERSATIONS';
+}
+
+function formatTime(value: string) {
+  return new Intl.DateTimeFormat('ko-KR', { hour: '2-digit', minute: '2-digit' }).format(new Date(value));
+}
+
+function formatRelative(value: string) {
+  const date = new Date(value);
+  const today = new Date();
+  if (date.toDateString() === today.toDateString()) return formatTime(value);
+  return new Intl.DateTimeFormat('ko-KR', { month: 'numeric', day: 'numeric' }).format(date);
+}
+
+function formatBytes(bytes: number) {
+  if (bytes < 1024) return `${bytes} B`;
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+  return `${(bytes / 1024 / 1024).toFixed(1)} MB`;
 }
 
 export default App;
