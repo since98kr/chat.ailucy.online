@@ -1,0 +1,118 @@
+name: Staging preflight
+
+on:
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: Git ref or commit to validate
+        required: true
+        default: main
+        type: string
+      strict:
+        description: Require authentication and real Letta/Hermes adapters
+        required: true
+        default: true
+        type: boolean
+
+permissions:
+  contents: read
+
+concurrency:
+  group: chat-v2-staging-preflight
+  cancel-in-progress: true
+
+jobs:
+  preflight:
+    name: Validate home-server staging readiness
+    runs-on: [self-hosted, linux, x64, chat-staging]
+    environment: staging
+    timeout-minutes: 45
+
+    steps:
+      - name: Checkout requested revision
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.ref }}
+          clean: true
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Build exact revision image
+        shell: bash
+        run: |
+          set -euo pipefail
+          REVISION="$(git rev-parse HEAD)"
+          VERSION="$(node -p "require('./package.json').version")"
+          BUILD_TIME="$(date -u +'%Y-%m-%dT%H:%M:%SZ')"
+          docker build --pull \
+            --build-arg "CHAT_BUILD_SHA=${REVISION}" \
+            --build-arg "CHAT_BUILD_TIME=${BUILD_TIME}" \
+            --build-arg "CHAT_VERSION=${VERSION}" \
+            --tag "chat-ailucy-v2:preflight-${REVISION}" .
+          echo "CHAT_PREFLIGHT_IMAGE=chat-ailucy-v2:preflight-${REVISION}" >> "$GITHUB_ENV"
+          echo "CHAT_PREFLIGHT_REVISION=${REVISION}" >> "$GITHUB_ENV"
+
+      - name: Run exact-runtime preflight
+        env:
+          CHAT_STAGING_ROOT: /opt/chat-v2/staging
+          CHAT_STAGING_DATA_DIR: /opt/chat-v2/staging/data
+          CHAT_STAGING_PORT: '14174'
+          CHAT_PREFLIGHT_STRICT: ${{ inputs.strict }}
+          CHAT_PREFLIGHT_MIN_FREE_BYTES: ${{ vars.CHAT_PREFLIGHT_MIN_FREE_BYTES }}
+          CHAT_PUBLIC_ORIGIN: ${{ vars.CHAT_PUBLIC_ORIGIN }}
+          CHAT_ALLOWED_ORIGIN: ${{ vars.CHAT_ALLOWED_ORIGIN }}
+          CHAT_AUTH_MODE: ${{ vars.CHAT_AUTH_MODE }}
+          CHAT_ALLOWED_EMAILS: ${{ vars.CHAT_ALLOWED_EMAILS }}
+          CHAT_ACCESS_TOKEN: ${{ secrets.CHAT_ACCESS_TOKEN }}
+          CHAT_RATE_LIMIT_GENERAL: ${{ vars.CHAT_RATE_LIMIT_GENERAL }}
+          CHAT_RATE_LIMIT_CHAT: ${{ vars.CHAT_RATE_LIMIT_CHAT }}
+          CHAT_RATE_LIMIT_UPLOAD: ${{ vars.CHAT_RATE_LIMIT_UPLOAD }}
+          LETTA_BASE_URL: ${{ vars.LETTA_BASE_URL }}
+          LETTA_CHAT_PATH: ${{ vars.LETTA_CHAT_PATH }}
+          LETTA_HEALTH_PATH: ${{ vars.LETTA_HEALTH_PATH }}
+          LETTA_AGENT_ID: ${{ vars.LETTA_AGENT_ID }}
+          LETTA_API_KEY: ${{ secrets.LETTA_API_KEY }}
+          LETTA_TIMEOUT_MS: ${{ vars.LETTA_TIMEOUT_MS }}
+          HERMES_BASE_URL: ${{ vars.HERMES_BASE_URL }}
+          HERMES_CHAT_PATH: ${{ vars.HERMES_CHAT_PATH }}
+          HERMES_HEALTH_PATH: ${{ vars.HERMES_HEALTH_PATH }}
+          HERMES_AGENT_ID: ${{ vars.HERMES_AGENT_ID }}
+          HERMES_API_KEY: ${{ secrets.HERMES_API_KEY }}
+          HERMES_TIMEOUT_MS: ${{ vars.HERMES_TIMEOUT_MS }}
+        run: bash scripts/ops/staging-preflight.sh "$CHAT_PREFLIGHT_IMAGE" "$CHAT_PREFLIGHT_REVISION"
+
+      - name: Publish preflight summary
+        if: always()
+        shell: bash
+        run: |
+          {
+            echo '## Chat V2 staging preflight'
+            echo
+            echo "- Revision: \`${CHAT_PREFLIGHT_REVISION:-unknown}\`"
+            echo "- Strict mode: \`${{ inputs.strict }}\`"
+            if [[ -f /opt/chat-v2/staging/state/last-preflight.json ]]; then
+              echo '- Runtime report:'
+              echo '```json'
+              cat /opt/chat-v2/staging/state/last-preflight.json
+              echo
+              echo '```'
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload preflight evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: chat-v2-staging-preflight-${{ github.run_id }}
+          path: |
+            /opt/chat-v2/staging/state/last-preflight.json
+            /opt/chat-v2/staging/state/last-preflight-output.log
+          if-no-files-found: warn
+          retention-days: 14
+
+      - name: Remove temporary image
+        if: always()
+        run: docker image rm "$CHAT_PREFLIGHT_IMAGE" >/dev/null 2>&1 || true
