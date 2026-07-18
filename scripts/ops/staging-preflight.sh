@@ -72,6 +72,8 @@ if [[ -n "${HERMES_DOCKER_NETWORK}" ]]; then
   DOCKER_NETWORK_ARGS+=(--network "${HERMES_DOCKER_NETWORK}")
 fi
 
+DOCKER_HOST_ARGS=(--add-host 'host.docker.internal:host-gateway')
+
 ARGS=()
 if [[ "${STRICT}" == 'true' ]]; then
   ARGS+=(--strict)
@@ -81,6 +83,7 @@ log "Running exact-runtime preflight for ${IMAGE} as ${RUNTIME_UID}:${RUNTIME_GI
 set +e
 docker run --rm \
   "${DOCKER_NETWORK_ARGS[@]}" \
+  "${DOCKER_HOST_ARGS[@]}" \
   --user "${RUNTIME_UID}:${RUNTIME_GID}" \
   --volume "${DATA_DIR}:/data" \
   "${DOCKER_ENV[@]}" \

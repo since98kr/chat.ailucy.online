@@ -7,6 +7,8 @@ services:
     user: "${CHAT_RUNTIME_UID:-1000}:${CHAT_RUNTIME_GID:-1000}"
     ports:
       - "127.0.0.1:${CHAT_STAGING_PORT:-14174}:4174"
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     environment:
       NODE_ENV: production
       CHAT_ENVIRONMENT: staging
