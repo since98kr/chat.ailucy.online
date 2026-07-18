@@ -10,6 +10,7 @@ import { z } from 'zod';
 import { ChatDatabase } from './database.js';
 import { adapterHealth, getAdapter } from './adapters/index.js';
 import { storeArtifact } from './artifacts.js';
+import { getArtifact } from './artifact-repository.js';
 import type { StreamEvent, SystemId } from '../shared/contracts.js';
 
 const conversationStatusSchema = z.enum(['active', 'archived', 'trashed']);
@@ -151,7 +152,7 @@ export function buildApp(options?: { databasePath?: string; artifactRoot?: strin
     });
     const adapter = getAdapter(existing.systemId as SystemId);
     const controller = new AbortController();
-    request.raw.once('close', () => controller.abort());
+    reply.raw.once('close', () => controller.abort());
 
     async function* generate() {
       yield eventLine({ type: 'message.accepted', message: userMessage });
@@ -217,7 +218,7 @@ export function buildApp(options?: { databasePath?: string; artifactRoot?: strin
 
   app.get('/api/artifacts/:id/download', async (request, reply) => {
     const { id } = z.object({ id: z.string().uuid() }).parse(request.params);
-    const artifact = db.getArtifact(id);
+    const artifact = getArtifact(db, id);
     if (!artifact) return reply.status(404).send({ error: 'ARTIFACT_NOT_FOUND' });
     reply.header('Content-Type', artifact.mimeType);
     reply.header('Content-Disposition', `attachment; filename*=UTF-8''${encodeURIComponent(artifact.filename)}`);
