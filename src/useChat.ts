@@ -22,6 +22,7 @@ import {
   updateConversation as updateConversationApi,
   uploadArtifact,
 } from './api';
+import { emitCollaborationEvent } from './collaboration-events';
 
 const defaultAgent: Record<SystemId, string> = {
   letta: '[Letta] Lucy',
@@ -140,17 +141,41 @@ export function useChat() {
     }
   }, [loadConversation]);
 
-  const createConversation = useCallback(async () => {
+  const createConversation = useCallback(async (agentId = activeAgent || defaultAgent[selectedSystem], title?: string) => {
     setError(null);
     setSelectedStatus('active');
-    const detail = await createConversationApi({
-      systemId: selectedSystem,
-      agentId: activeAgent || defaultAgent[selectedSystem],
-    });
+    const detail = await createConversationApi({ systemId: selectedSystem, agentId, title });
     setConversations((current) => [detail, ...current]);
     applyDetail(detail);
     return detail;
   }, [activeAgent, applyDetail, selectedSystem]);
+
+  const openAgentConversation = useCallback(async (systemId: SystemId, agentId: string) => {
+    abortRef.current?.abort();
+    setLoading(true);
+    setError(null);
+    setSelectedSystem(systemId);
+    setSelectedStatus('active');
+    setActiveAgent(agentId);
+    try {
+      const list = await listConversations(systemId, 'active');
+      setConversations(list);
+      const existing = list.find((conversation) => conversation.agentId === agentId);
+      if (existing) return await loadConversation(existing.id);
+      const detail = await createConversationApi({
+        systemId,
+        agentId,
+        title: agentId.includes('Lucy') ? '새 대화' : `${agentId}와 새 대화`,
+      });
+      setConversations((current) => [detail, ...current]);
+      return applyDetail(detail);
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : '에이전트 대화를 열지 못했습니다.');
+      return null;
+    } finally {
+      setLoading(false);
+    }
+  }, [applyDetail, loadConversation]);
 
   const branchConversation = useCallback(async (fromMessageId?: string | null) => {
     if (!activeIdRef.current) return null;
@@ -212,7 +237,11 @@ export function useChat() {
   }, [selectedStatus, selectedSystem]);
 
   const handleStreamEvent = useCallback((event: StreamEvent) => {
-    if (event.type === 'message.accepted') {
+    if (event.type === 'routing.resolved' || event.type === 'participants.updated' || event.type === 'team.activity') {
+      emitCollaborationEvent(event);
+      return;
+    }
+    if (event.type === 'message.accepted' || event.type === 'message.created') {
       setActiveConversation((current) =>
         current ? { ...current, messages: upsertMessage(current.messages, event.message) } : current,
       );
@@ -228,31 +257,31 @@ export function useChat() {
       return;
     }
     if (event.type === 'run.started') {
-      setRunStatus('응답을 준비하는 중');
+      setRunStatus(event.agentId ? `${event.agentId} 응답 준비 중` : '응답을 준비하는 중');
       return;
     }
     if (event.type === 'run.status') {
-      setRunStatus(event.status);
+      setRunStatus(event.agentId ? `${event.agentId} · ${event.status}` : event.status);
       return;
     }
     if (event.type === 'content.delta') {
-      setRunStatus('응답 작성 중');
+      setRunStatus(event.authorId ? `${event.authorId} 응답 작성 중` : '응답 작성 중');
       setActiveConversation((current) => {
         if (!current) return current;
         const existing = current.messages.find((message) => message.id === event.messageId);
-        const timestamp = new Date().toISOString();
+        const updatedAt = new Date().toISOString();
         const next: MessageRecord = existing
-          ? { ...existing, content: existing.content + event.delta, state: 'streaming', updatedAt: timestamp }
+          ? { ...existing, content: existing.content + event.delta, state: 'streaming', updatedAt }
           : {
               id: event.messageId,
               conversationId: current.id,
               role: 'assistant',
-              authorId: current.agentId,
+              authorId: event.authorId ?? current.agentId,
               content: event.delta,
               state: 'streaming',
               parentMessageId: current.messages.at(-1)?.id ?? null,
-              createdAt: timestamp,
-              updatedAt: timestamp,
+              createdAt: updatedAt,
+              updatedAt,
             };
         return { ...current, messages: upsertMessage(current.messages, next) };
       });
@@ -272,18 +301,18 @@ export function useChat() {
       return;
     }
     if (event.type === 'run.failed') {
-      setError(event.error);
+      setError(`${event.agentId ? `${event.agentId}: ` : ''}${event.error}`);
       setRunStatus(null);
     }
   }, []);
 
-  const sendMessage = useCallback(async (content: string) => {
+  const sendMessage = useCallback(async (content: string, targetAgentIds: string[] = []) => {
     const trimmed = content.trim();
     if (!trimmed || isStreaming || selectedStatus !== 'active') return;
     let conversation = activeConversation;
     if (!conversation) conversation = await createConversation();
     const clientMessageId = crypto.randomUUID();
-    const timestamp = new Date().toISOString();
+    const createdAt = new Date().toISOString();
     const optimistic: MessageRecord = {
       id: clientMessageId,
       conversationId: conversation.id,
@@ -292,8 +321,8 @@ export function useChat() {
       content: trimmed,
       state: 'complete',
       parentMessageId: conversation.messages.at(-1)?.id ?? null,
-      createdAt: timestamp,
-      updatedAt: timestamp,
+      createdAt,
+      updatedAt: createdAt,
     };
     setActiveConversation((current) =>
       current ? { ...current, draft: '', messages: upsertMessage(current.messages, optimistic) } : current,
@@ -311,6 +340,7 @@ export function useChat() {
           clientMessageId,
           parentMessageId: optimistic.parentMessageId,
           artifactIds: pendingArtifactIds,
+          targetAgentIds,
         },
         handleStreamEvent,
         controller.signal,
@@ -386,6 +416,7 @@ export function useChat() {
     switchStatus,
     selectConversation,
     createConversation,
+    openAgentConversation,
     branchConversation,
     patchConversation,
     deletePermanently,
