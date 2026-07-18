@@ -76,12 +76,16 @@ jobs:
           LETTA_AGENT_ID: ${{ vars.LETTA_AGENT_ID }}
           LETTA_API_KEY: ${{ secrets.LETTA_API_KEY }}
           LETTA_TIMEOUT_MS: ${{ vars.LETTA_TIMEOUT_MS }}
+          LETTA_PROTOCOL: ${{ vars.LETTA_PROTOCOL }}
+          LETTA_MODEL_MAP_JSON: ${{ vars.LETTA_MODEL_MAP_JSON }}
           HERMES_BASE_URL: ${{ vars.HERMES_BASE_URL }}
           HERMES_CHAT_PATH: ${{ vars.HERMES_CHAT_PATH }}
           HERMES_HEALTH_PATH: ${{ vars.HERMES_HEALTH_PATH }}
           HERMES_AGENT_ID: ${{ vars.HERMES_AGENT_ID }}
           HERMES_API_KEY: ${{ secrets.HERMES_API_KEY }}
           HERMES_TIMEOUT_MS: ${{ vars.HERMES_TIMEOUT_MS }}
+          HERMES_PROTOCOL: ${{ vars.HERMES_PROTOCOL }}
+          HERMES_MODEL_MAP_JSON: ${{ vars.HERMES_MODEL_MAP_JSON }}
           HERMES_DOCKER_NETWORK: ${{ vars.HERMES_DOCKER_NETWORK }}
         run: bash scripts/ops/staging-preflight.sh "$CHAT_PREFLIGHT_IMAGE" "$CHAT_PREFLIGHT_REVISION"
 
