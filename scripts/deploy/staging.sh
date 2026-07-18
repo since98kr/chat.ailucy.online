@@ -8,6 +8,7 @@ STATE_DIR="${DEPLOY_ROOT}/state"
 STATE_FILE="${STATE_DIR}/current-image"
 PORT="${CHAT_STAGING_PORT:-14174}"
 BACKUP_RETENTION="${CHAT_BACKUP_RETENTION:-10}"
+HERMES_DOCKER_NETWORK="${HERMES_DOCKER_NETWORK:-}"
 REVISION="${1:-${GITHUB_SHA:-$(git -C "${REPO_ROOT}" rev-parse HEAD)}}"
 VERSION="$(node -p "require('${REPO_ROOT}/package.json').version")"
 BUILD_TIME="$(date -u +'%Y-%m-%dT%H:%M:%SZ')"
@@ -23,12 +24,29 @@ cleanup_failed_image() {
   docker image inspect "${IMAGE}" >/dev/null 2>&1 && docker image rm "${IMAGE}" >/dev/null 2>&1 || true
 }
 
+connect_adapter_network() {
+  if [[ -z "${HERMES_DOCKER_NETWORK}" ]]; then
+    return
+  fi
+
+  docker network inspect "${HERMES_DOCKER_NETWORK}" >/dev/null 2>&1 \
+    || { log "Hermes Docker network not found: ${HERMES_DOCKER_NETWORK}."; false; }
+
+  if ! docker inspect -f '{{range $name, $_ := .NetworkSettings.Networks}}{{println $name}}{{end}}' chat-v2-staging \
+    | grep -Fxq "${HERMES_DOCKER_NETWORK}"; then
+    docker network connect "${HERMES_DOCKER_NETWORK}" chat-v2-staging
+  fi
+
+  log "Connected staging service to adapter network ${HERMES_DOCKER_NETWORK}."
+}
+
 rollback() {
   log 'Deployment failed. Starting rollback.'
   docker compose -p chat-v2-staging -f "${REPO_ROOT}/compose.staging.yml" logs --tail=120 || true
   if [[ -n "${PREVIOUS_IMAGE}" ]] && docker image inspect "${PREVIOUS_IMAGE}" >/dev/null 2>&1; then
     export CHAT_IMAGE="${PREVIOUS_IMAGE}"
     docker compose -p chat-v2-staging -f "${REPO_ROOT}/compose.staging.yml" up -d --remove-orphans
+    connect_adapter_network || true
     log "Rolled back to ${PREVIOUS_IMAGE}."
   else
     docker compose -p chat-v2-staging -f "${REPO_ROOT}/compose.staging.yml" down || true
@@ -89,6 +107,7 @@ export CHAT_STAGING_PORT="${PORT}"
 
 log "Starting isolated staging service on 127.0.0.1:${PORT} as ${CHAT_RUNTIME_UID}:${CHAT_RUNTIME_GID}."
 docker compose -p chat-v2-staging -f "${REPO_ROOT}/compose.staging.yml" up -d --remove-orphans
+connect_adapter_network
 
 log 'Waiting for application health.'
 healthy=0
