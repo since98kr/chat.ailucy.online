@@ -9,12 +9,12 @@
     "dev:api": "tsx watch server/index.ts",
     "build": "npm run typecheck && npm run build:web && npm run build:api",
     "build:web": "vite build",
-    "build:api": "tsup server/index.ts --format esm --platform node --target node22 --out-dir dist-server --sourcemap",
+    "build:api": "tsup server/runtime.ts --format esm --platform node --target node22 --out-dir dist-server --sourcemap",
     "typecheck": "tsc --noEmit --pretty false",
     "test": "vitest run",
     "preview": "vite preview --host 0.0.0.0",
-    "start": "node dist-server/index.js",
-    "start:api": "node dist-server/index.js"
+    "start": "node dist-server/runtime.js",
+    "start:api": "node dist-server/runtime.js"
   },
   "dependencies": {
     "@fastify/cors": "latest",
