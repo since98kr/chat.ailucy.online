@@ -17,7 +17,7 @@ afterEach(async () => {
 });
 
 describe('operations status', () => {
-  it('is authenticated and reports the exact build identity without secrets', async () => {
+  it('is authenticated and reports the exact applied security and build identity without secrets', async () => {
     const directory = mkdtempSync(join(tmpdir(), 'chat-v2-ops-'));
     directories.push(directory);
     process.env.CHAT_BUILD_SHA = 'abc123';
@@ -29,7 +29,7 @@ describe('operations status', () => {
       databasePath: join(directory, 'chat.sqlite'),
       artifactRoot: join(directory, 'artifacts'),
     });
-    registerRuntimeSecurity(app, {
+    const security = registerRuntimeSecurity(app, {
       authMode: 'token',
       accessToken: 'private-secret',
       allowedEmails: new Set(),
@@ -39,7 +39,7 @@ describe('operations status', () => {
       chatRateLimit: 30,
       uploadRateLimit: 60,
     });
-    registerOperationsRoutes(app);
+    registerOperationsRoutes(app, security);
     apps.push(app);
 
     const unauthorized = await app.inject({ method: 'GET', url: '/api/ops/status' });
