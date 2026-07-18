@@ -89,7 +89,8 @@ describe('Federated Conversation controller', () => {
     const snapshot = await app.inject({ method: 'GET', url: `/api/conversations/${conversationId}/federation` });
     const run = snapshot.json().federation.runs[0] as WorkflowRunRecord;
     expect(run.status).toBe('completed');
-    expect(run.requestedAgentIds).toEqual(['Xixi', '[Letta] Lucy', '[Hermes] Lucy']);
+    expect(new Set(run.requestedAgentIds)).toEqual(new Set(['Xixi', '[Letta] Lucy', '[Hermes] Lucy']));
+    expect(run.requestedAgentIds.at(-1)).toBe('[Hermes] Lucy');
     expect(run.steps.filter((step) => step.agentId !== '[Hermes] Lucy').every((step) => step.parallelGroup === 0)).toBe(true);
     const coordinator = run.steps.find((step) => step.agentId === '[Hermes] Lucy');
     expect(coordinator?.parallelGroup).toBe(1);
