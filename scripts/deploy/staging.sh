@@ -113,6 +113,22 @@ if [[ "${RUNNING_REVISION}" != "${REVISION}" ]]; then
   false
 fi
 
+AUTH_ARGS=()
+case "${CHAT_AUTH_MODE:-disabled}" in
+  token)
+    AUTH_ARGS+=(--header "Authorization: Bearer ${CHAT_ACCESS_TOKEN:?CHAT_ACCESS_TOKEN is required}")
+    ;;
+  cloudflare)
+    FIRST_ALLOWED_EMAIL="${CHAT_ALLOWED_EMAILS%%,*}"
+    [[ -n "${FIRST_ALLOWED_EMAIL}" ]] || { log 'CHAT_ALLOWED_EMAILS is required for Cloudflare mode.'; false; }
+    AUTH_ARGS+=(--header "Cf-Access-Authenticated-User-Email: ${FIRST_ALLOWED_EMAIL}")
+    ;;
+esac
+
+curl --fail --silent --show-error "${AUTH_ARGS[@]}" \
+  "http://127.0.0.1:${PORT}/api/ops/status" >"${STATE_DIR}/last-ops-status.json"
+node -e "const j=require('${STATE_DIR}/last-ops-status.json');if(!j.ok||j.build.sha!=='${REVISION}')process.exit(1)"
+
 printf '%s' "${IMAGE}" >"${STATE_FILE}"
 printf '%s' "${REVISION}" >"${STATE_DIR}/current-revision"
 node - "${STATE_DIR}/last-deployment.json" "${REVISION}" "${VERSION}" "${BUILD_TIME}" "${IMAGE}" "${PREVIOUS_IMAGE}" "${BACKUP_ID}" <<'NODE'
