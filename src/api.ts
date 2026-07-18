@@ -1,15 +1,20 @@
 import type {
+  AgentRecord,
   ArtifactRecord,
   BranchConversationInput,
   ConversationDetail,
+  ConversationParticipantRecord,
   ConversationRecord,
   ConversationSearchResult,
   ConversationStatus,
   CreateConversationInput,
+  RoutingPlanRecord,
   SendMessageInput,
   StreamEvent,
   SystemId,
+  TeamActivityRecord,
   UpdateConversationInput,
+  UpdateParticipantsInput,
 } from '../shared/contracts';
 
 const API_BASE = import.meta.env.VITE_API_BASE ?? '';
@@ -32,10 +37,48 @@ async function requestJson<T>(path: string, init?: RequestInit): Promise<T> {
   if (!response.ok) {
     signalAuthenticationRequired(response.status);
     const payload = await response.json().catch(() => null);
-    throw new Error(payload?.error ?? `${response.status} ${response.statusText}`);
+    throw new Error(payload?.message ?? payload?.error ?? `${response.status} ${response.statusText}`);
   }
   if (response.status === 204) return undefined as T;
   return response.json() as Promise<T>;
+}
+
+export async function listAgents(systemId?: SystemId) {
+  const query = new URLSearchParams();
+  if (systemId) query.set('systemId', systemId);
+  const suffix = query.size ? `?${query}` : '';
+  const response = await requestJson<{ agents: AgentRecord[] }>(`/api/agents${suffix}`);
+  return response.agents;
+}
+
+export async function listParticipants(conversationId: string) {
+  const response = await requestJson<{ participants: ConversationParticipantRecord[] }>(
+    `/api/conversations/${conversationId}/participants`,
+  );
+  return response.participants;
+}
+
+export async function updateParticipants(conversationId: string, input: UpdateParticipantsInput) {
+  const response = await requestJson<{ participants: ConversationParticipantRecord[] }>(
+    `/api/conversations/${conversationId}/participants`,
+    { method: 'PUT', body: JSON.stringify(input) },
+  );
+  return response.participants;
+}
+
+export async function listTeamActivity(conversationId: string, limit = 100) {
+  const response = await requestJson<{ activities: TeamActivityRecord[] }>(
+    `/api/conversations/${conversationId}/team-activity?limit=${limit}`,
+  );
+  return response.activities;
+}
+
+export async function previewRouting(conversationId: string, content: string, targetAgentIds: string[] = []) {
+  const response = await requestJson<{ routing: RoutingPlanRecord }>(
+    `/api/conversations/${conversationId}/routing/preview`,
+    { method: 'POST', body: JSON.stringify({ content, targetAgentIds }) },
+  );
+  return response.routing;
 }
 
 export async function listConversations(systemId: SystemId, status: ConversationStatus = 'active') {
@@ -105,7 +148,7 @@ export async function streamMessage(
   if (!response.ok || !response.body) {
     signalAuthenticationRequired(response.status);
     const payload = await response.json().catch(() => null);
-    throw new Error(payload?.error ?? `${response.status} ${response.statusText}`);
+    throw new Error(payload?.message ?? payload?.error ?? `${response.status} ${response.statusText}`);
   }
   const reader = response.body.getReader();
   const decoder = new TextDecoder();
