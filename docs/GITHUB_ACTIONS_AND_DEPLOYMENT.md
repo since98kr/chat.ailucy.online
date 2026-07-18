@@ -1,66 +1,109 @@
-# GitHub Actions and Deployment Plan
+# GitHub Actions and deployment
 
-## What GitHub Actions does
+## What is implemented
 
-GitHub Actions is an automation runner attached to this repository. A workflow can start automatically when code is pushed or a pull request is opened.
+### V2 CI
 
-The initial `V2 CI` workflow performs verification only:
+Every pull request and push to `main` or `agent/**` runs on a GitHub-hosted runner:
 
-1. Checks out the exact commit.
-2. Installs Node.js dependencies.
-3. Runs TypeScript validation.
-4. Builds the web application.
-5. Stores the built `dist` directory as a temporary workflow artifact.
+1. Install dependencies.
+2. Strict TypeScript validation.
+3. API integration tests.
+4. Web and API production builds.
+5. Production Docker image build.
+6. Running-container smoke tests for Web UI and API health.
+7. Temporary publication of Web and API build artifacts.
 
-It does **not** deploy to the home server yet.
+### Staging deployment
 
-## Why this is useful
+`.github/workflows/deploy-staging.yml` is a manual deployment workflow targeting only a self-hosted runner with all of these labels:
 
-- The result does not depend on a developer's laptop.
-- Every branch and pull request is checked consistently.
-- ChatGPT or another connected agent can inspect failed workflow steps and logs.
-- Broken code can be stopped before merge or deployment.
-- The same automation layer can later deploy without requiring Tei to copy commands manually.
+```text
+self-hosted, linux, x64, chat-staging
+```
 
-## Long-term deployment architecture
+The workflow does not run on a generic server runner. It checks out an explicit ref and executes `scripts/deploy/staging.sh`.
 
-Recommended path:
+The staging service:
+
+- Binds to `127.0.0.1:14174` only.
+- Uses `/opt/chat-v2/staging/data`, separate from production.
+- Builds a revision-tagged Docker image.
+- Keeps the previous image as a rollback target.
+- Runs application health checks after replacement.
+- Automatically restores the previous image if health validation fails.
+- Writes the deployed revision and last health response under `/opt/chat-v2/staging/state`.
+
+## One-time self-hosted runner bootstrap
+
+Use `scripts/runner/install-chat-staging-runner.sh` on the home server. The script requires:
+
+- `GITHUB_REPOSITORY_URL`
+- A short-lived `GITHUB_RUNNER_TOKEN`
+- An explicitly approved `RUNNER_VERSION`
+- The official `RUNNER_SHA256`
+
+It creates a dedicated `chat-runner` service account and a repository-scoped runner under `/opt/actions-runner-chat-staging`.
+
+The registration token and checksum are intentionally not stored in this repository. Runner installation is a one-time home-server action and cannot be completed from the GitHub connector alone because it requires host root access.
+
+## Environment configuration
+
+Create a GitHub Environment named `staging`.
+
+Variables:
+
+- `CHAT_ALLOWED_ORIGIN`
+- `LETTA_BASE_URL`
+- `LETTA_CHAT_PATH`
+- `LETTA_HEALTH_PATH`
+- `LETTA_AGENT_ID`
+- `HERMES_BASE_URL`
+- `HERMES_CHAT_PATH`
+- `HERMES_HEALTH_PATH`
+- `HERMES_AGENT_ID`
+
+Secrets:
+
+- `LETTA_API_KEY`
+- `HERMES_API_KEY`
+
+Empty backend URLs keep the corresponding system in deterministic mock mode. A configured backend that fails its health probe is reported unhealthy; it does not silently fall back to mock mode.
+
+## Safety model
 
 ```text
 GitHub branch / pull request
           ↓
-GitHub-hosted CI runner
-  typecheck + build + tests
+GitHub-hosted CI
+  typecheck + tests + build + container smoke
           ↓
-Tei deployment approval gate
+main integration
           ↓
-Home-server self-hosted runner
-  fetch approved release artifact
-  deploy to a versioned release directory
-  health check
-  atomically switch current symlink
-  rollback on failure
+manual staging workflow
+          ↓
+home-server chat-staging runner
+  revision image build
+  isolated container replacement
+  health validation
+  automatic rollback on failure
 ```
 
-A **self-hosted runner** is a small GitHub Actions service installed on the home server. It receives only jobs allowed by repository workflow and runner labels. This provides an auditable deployment channel without exposing general SSH credentials to the web application.
+Production remains separate from staging. The current workflow does not modify the production container, production database, Cloudflare route, Letta service, or Hermes service.
 
-## Deployment safety requirements
+Production deployment will require:
 
-- Deployment runs only after explicit approval.
-- Production secrets stay in GitHub Environment secrets or on the home server, never in the repository.
-- The runner uses a dedicated low-privilege Linux account.
-- The deployment workflow cannot access unrelated home-server services.
-- Every deployment uses a versioned release directory.
-- A failed health check restores the previous release.
-- Database migrations require backups and separate approval when destructive.
-- Letta and Hermes adapters are validated independently before production routing changes.
+- A separate runner label and Compose project.
+- Backup of SQLite and artifacts before migration.
+- Production-specific health and external URL checks.
+- An explicit production environment gate.
+- Verified rollback against the previous production image.
 
-## Planned environments
+## Why this architecture is useful
 
-- `preview`: branch-specific UI preview; mock adapters allowed.
-- `staging`: home-server staging service with real adapter connectivity but isolated data.
-- `production`: `chat.ailucy.online`.
-
-## Current status
-
-Only CI verification is enabled. Deployment workflow, self-hosted runner registration, Cloudflare routing, production secrets, and rollback scripts will be implemented after the UI prototype and Chat Core are accepted.
+- Development no longer depends on Tei manually copying deployment commands.
+- Every deployed revision is traceable to a Git commit.
+- A broken container is rejected before staging replacement.
+- A runtime failure after replacement triggers rollback.
+- Backend credentials remain outside source control.
+- The Chat application does not need broad SSH credentials or access to unrelated services.
