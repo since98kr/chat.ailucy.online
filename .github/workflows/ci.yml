@@ -18,7 +18,7 @@ jobs:
   application:
     name: Typecheck, test, browser regression, build, and container smoke
     runs-on: ubuntu-latest
-    timeout-minutes: 50
+    timeout-minutes: 55
 
     steps:
       - name: Checkout
@@ -82,6 +82,9 @@ jobs:
       - name: Desktop and mobile browser regression
         run: npm run test:e2e
 
+      - name: Token-authenticated desktop and mobile regression
+        run: npm run test:e2e:auth
+
       - name: Upload browser screenshots and diagnostics
         if: always()
         uses: actions/upload-artifact@v4
@@ -90,6 +93,7 @@ jobs:
           path: |
             test-results
             playwright-report
+            playwright-auth-report
           if-no-files-found: warn
           retention-days: 14
 
@@ -114,7 +118,7 @@ jobs:
           docker build \
             --build-arg CHAT_BUILD_SHA=ci-sha \
             --build-arg CHAT_BUILD_TIME=2026-07-18T00:00:00Z \
-            --build-arg CHAT_VERSION=0.5.0 \
+            --build-arg CHAT_VERSION=0.6.0 \
             --tag chat-ailucy-v2:ci .
 
       - name: Exercise host staging-preflight wrapper
