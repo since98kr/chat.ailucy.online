@@ -10,13 +10,86 @@ ENV_FILE="${HERMES_HOME}/.env"
 UNIT_FILE="/etc/systemd/system/hermes-gateway.service"
 DOCKER_GATEWAY="$(docker network inspect bridge --format '{{(index .IPAM.Config 0).Gateway}}')"
 API_PORT="${HERMES_API_PORT:-8642}"
+STAMP="$(date -u +%Y%m%dT%H%M%SZ)"
+BACKUP_DIR="${HERMES_HOME}/api-install-backups/${STAMP}"
+HEALTH_FILE="/tmp/hermes-api-health-${STAMP}.json"
 
 [[ -n "${TARGET_HOME}" ]] || { echo 'Could not determine target home.' >&2; exit 1; }
 [[ -x "${HERMES_BIN}" ]] || { echo "Hermes executable not found: ${HERMES_BIN}" >&2; exit 1; }
 [[ -n "${DOCKER_GATEWAY}" ]] || { echo 'Could not determine Docker bridge gateway.' >&2; exit 1; }
 
+ENV_EXISTED=0
+UNIT_EXISTED=0
+SERVICE_WAS_ACTIVE=0
+SERVICE_WAS_ENABLED=0
+INSTALL_COMMITTED=0
+
+sudo install -d -m 0700 -o "${TARGET_USER}" -g "${TARGET_GROUP}" "${BACKUP_DIR}"
+
+if [[ -f "${ENV_FILE}" ]]; then
+  ENV_EXISTED=1
+  sudo cp -a "${ENV_FILE}" "${BACKUP_DIR}/hermes.env.before"
+fi
+
+if [[ -f "${UNIT_FILE}" ]]; then
+  UNIT_EXISTED=1
+  sudo cp -a "${UNIT_FILE}" "${BACKUP_DIR}/hermes-gateway.service.before"
+fi
+
+if sudo systemctl is-active --quiet hermes-gateway.service; then
+  SERVICE_WAS_ACTIVE=1
+fi
+if sudo systemctl is-enabled --quiet hermes-gateway.service 2>/dev/null; then
+  SERVICE_WAS_ENABLED=1
+fi
+
+rollback() {
+  local rc="${1:-1}"
+  trap - ERR INT TERM
+  set +e
+
+  if [[ "${INSTALL_COMMITTED}" -eq 1 ]]; then
+    exit "${rc}"
+  fi
+
+  echo 'Hermes API installation failed; restoring previous state.' >&2
+  sudo systemctl stop hermes-gateway.service >/dev/null 2>&1 || true
+
+  if [[ "${UNIT_EXISTED}" -eq 1 ]]; then
+    sudo cp -a "${BACKUP_DIR}/hermes-gateway.service.before" "${UNIT_FILE}"
+  else
+    sudo rm -f "${UNIT_FILE}"
+  fi
+  sudo systemctl daemon-reload >/dev/null 2>&1 || true
+
+  if [[ "${SERVICE_WAS_ENABLED}" -eq 1 ]]; then
+    sudo systemctl enable hermes-gateway.service >/dev/null 2>&1 || true
+  else
+    sudo systemctl disable hermes-gateway.service >/dev/null 2>&1 || true
+  fi
+
+  if [[ "${SERVICE_WAS_ACTIVE}" -eq 1 ]]; then
+    sudo systemctl start hermes-gateway.service >/dev/null 2>&1 || true
+  fi
+
+  if [[ "${ENV_EXISTED}" -eq 1 ]]; then
+    sudo cp -a "${BACKUP_DIR}/hermes.env.before" "${ENV_FILE}"
+  else
+    sudo rm -f "${ENV_FILE}"
+  fi
+
+  sudo chown -R "${TARGET_USER}:${TARGET_GROUP}" "${BACKUP_DIR}" >/dev/null 2>&1 || true
+  rm -f "${HEALTH_FILE}" >/dev/null 2>&1 || true
+  echo "Rollback evidence retained in ${BACKUP_DIR}" >&2
+  exit "${rc}"
+}
+
+trap 'rollback $?' ERR
+trap 'rollback 130' INT TERM
+
 printf 'Installing Hermes native API for user %s\n' "${TARGET_USER}"
 printf 'Docker-only bind: %s:%s\n' "${DOCKER_GATEWAY}" "${API_PORT}"
+printf 'Rollback backup: %s\n' "${BACKUP_DIR}"
 
 sudo install -d -m 0700 -o "${TARGET_USER}" -g "${TARGET_GROUP}" "${HERMES_HOME}"
 sudo -u "${TARGET_USER}" touch "${ENV_FILE}"
@@ -100,11 +173,16 @@ sudo systemctl enable --now hermes-gateway.service
 for _ in $(seq 1 30); do
   if curl -fsS --max-time 3 \
     -H "Authorization: Bearer ${EXISTING_KEY}" \
-    "http://${DOCKER_GATEWAY}:${API_PORT}/health" >/tmp/hermes-api-health.json; then
-    cat /tmp/hermes-api-health.json
+    "http://${DOCKER_GATEWAY}:${API_PORT}/health" >"${HEALTH_FILE}"; then
+    cat "${HEALTH_FILE}"
     echo
+    INSTALL_COMMITTED=1
+    trap - ERR INT TERM
+    rm -f "${HEALTH_FILE}"
+    sudo chown -R "${TARGET_USER}:${TARGET_GROUP}" "${BACKUP_DIR}"
     echo "Hermes API ready on Docker gateway ${DOCKER_GATEWAY}:${API_PORT}."
     echo "API key remains in ${ENV_FILE}; it was not printed."
+    echo "Rollback backup retained in ${BACKUP_DIR}."
     exit 0
   fi
   sleep 1
@@ -113,4 +191,4 @@ done
 echo 'Hermes gateway did not become healthy.' >&2
 sudo systemctl --no-pager --full status hermes-gateway.service >&2 || true
 sudo journalctl -u hermes-gateway.service -n 80 --no-pager >&2 || true
-exit 1
+rollback 1
