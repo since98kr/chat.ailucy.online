@@ -7,6 +7,7 @@ import './styles.css';
 import './chat-core.css';
 import './giant-step-2.css';
 import './auth-shell.css';
+import './collaboration.css';
 
 registerPwa();
 window.addEventListener('chat-auth-required', () => window.location.reload());
