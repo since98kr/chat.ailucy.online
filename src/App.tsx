@@ -152,6 +152,7 @@ function App() {
             selectedSystem={chat.selectedSystem}
             loading={chat.loading}
             runStatus={retryBusy ? '기존 응답을 보존하고 새 응답을 생성하는 중' : chat.runStatus}
+            artifactDeliveries={chat.artifactDeliveries}
             streamEndRef={streamEndRef}
             onCreate={() => void chat.createConversation()}
             onBranch={(messageId) => void chat.branchConversation(messageId)}
