@@ -27,12 +27,7 @@ get_staging_variable() {
 }
 
 EMAIL="$(get_staging_variable CHAT_ALLOWED_EMAILS | cut -d',' -f1)"
-HERMES_AGENT="$(get_staging_variable HERMES_AGENT_ID)"
-LETTA_AGENT="$(get_staging_variable LETTA_AGENT_ID)"
-
 test -n "${EMAIL}" || fail 'CHAT_ALLOWED_EMAILS is empty'
-test -n "${HERMES_AGENT}" || fail 'HERMES_AGENT_ID is empty'
-test -n "${LETTA_AGENT}" || fail 'LETTA_AGENT_ID is empty'
 
 AUTH_HEADER="Cf-Access-Authenticated-User-Email: ${EMAIL}"
 TMP_DIR="$(mktemp -d)"
@@ -64,22 +59,58 @@ if not payload.get("ok"):
     raise SystemExit("staging ops status is not ok")
 PY
 
-log 'Checking registered agents.'
+log 'Selecting registered Chat V2 agents.'
 curl -fsS \
   -H "${AUTH_HEADER}" \
   "${BASE}/api/agents" >"${TMP_DIR}/agents.json"
-python3 - "${TMP_DIR}/agents.json" "${HERMES_AGENT}" "${LETTA_AGENT}" <<'PY'
+
+mapfile -t CHAT_AGENT_IDS < <(
+  python3 - "${TMP_DIR}/agents.json" <<'PY'
 import json
 import sys
 from pathlib import Path
 
 payload = json.loads(Path(sys.argv[1]).read_text())
 agents = payload.get("agents", [])
-ids = {agent.get("id") for agent in agents}
-for expected in sys.argv[2:]:
-    if expected not in ids:
-        raise SystemExit(f"registered agent not found: {expected}")
+
+
+def select(system_id: str) -> str:
+    candidates = [
+        agent for agent in agents
+        if agent.get("systemId") == system_id
+        and agent.get("enabled") is not False
+        and agent.get("directChatEnabled") is not False
+    ]
+    if not candidates:
+        raise SystemExit(f"no enabled direct-chat agent registered for system: {system_id}")
+
+    def score(agent: dict) -> tuple:
+        text = " ".join(str(agent.get(key, "")) for key in ("id", "displayName", "shortName")).lower()
+        return (
+            0 if agent.get("isLead") else 1,
+            0 if "lucy" in text else 1,
+            int(agent.get("sortOrder", 999999)),
+            str(agent.get("id", "")),
+        )
+
+    selected = sorted(candidates, key=score)[0]
+    agent_id = selected.get("id")
+    if not agent_id:
+        raise SystemExit(f"selected agent has no id for system: {system_id}")
+    return str(agent_id)
+
+
+print(select("hermes"))
+print(select("letta"))
 PY
+)
+
+[[ "${#CHAT_AGENT_IDS[@]}" -eq 2 ]] || fail 'could not resolve Hermes and Letta Chat V2 agent IDs'
+HERMES_CHAT_AGENT="${CHAT_AGENT_IDS[0]}"
+LETTA_CHAT_AGENT="${CHAT_AGENT_IDS[1]}"
+
+log "Selected Hermes Chat V2 agent: ${HERMES_CHAT_AGENT}"
+log "Selected Letta Chat V2 agent: ${LETTA_CHAT_AGENT}"
 
 run_agent_smoke() {
   local system_id="$1"
@@ -174,7 +205,7 @@ print(marker)
 PY
 }
 
-run_agent_smoke hermes "${HERMES_AGENT}" CHAT_V2_HERMES_OK hermes
-run_agent_smoke letta "${LETTA_AGENT}" CHAT_V2_LETTA_OK letta
+run_agent_smoke hermes "${HERMES_CHAT_AGENT}" CHAT_V2_HERMES_OK hermes
+run_agent_smoke letta "${LETTA_CHAT_AGENT}" CHAT_V2_LETTA_OK letta
 
 log 'PASS: staging, authentication, Hermes, and Letta are all healthy.'
