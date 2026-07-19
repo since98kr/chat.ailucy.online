@@ -14,7 +14,7 @@ fail() {
   exit 1
 }
 
-for command_name in gh git bash; do
+for command_name in gh git; do
   command -v "${command_name}" >/dev/null 2>&1 || fail "missing command: ${command_name}"
 done
 
@@ -25,7 +25,7 @@ BRANCH="$(git -C "${REPO_ROOT}" branch --show-current)"
 [[ "${BRANCH}" == 'main' ]] || fail "repository must be on main; current branch: ${BRANCH:-detached}"
 [[ -z "$(git -C "${REPO_ROOT}" status --short)" ]] || fail 'repository has uncommitted changes'
 
-log "Triggering staging deployment for ${REVISION}."
+log "Triggering staging deployment and full QA for ${REVISION}."
 gh workflow run "${WORKFLOW}" \
   --repo "${REPO}" \
   --ref main \
@@ -49,15 +49,7 @@ done
 
 [[ -n "${RUN_ID}" ]] || fail "could not find the deployment run for ${REVISION}"
 
-log "Watching deployment run ${RUN_ID}."
+log "Watching deployment and QA run ${RUN_ID}."
 gh run watch "${RUN_ID}" --repo "${REPO}" --exit-status
 
-log 'Deployment passed. Running end-to-end Hermes and Letta staging smoke.'
-bash "${REPO_ROOT}/scripts/ops/staging-smoke.sh"
-
-if [[ "${CHAT_SKIP_STAGING_BROWSER:-false}" != 'true' ]]; then
-  log 'Adapter smoke passed. Running real Chromium staging artifact smoke.'
-  bash "${REPO_ROOT}/scripts/ops/staging-browser-smoke.sh"
-fi
-
-log 'PASS: deployment, Hermes/Letta, and real staging browser artifact smoke completed.'
+log 'PASS: deployment, Hermes/Letta transport, and real Chromium artifact QA completed in the staging workflow.'

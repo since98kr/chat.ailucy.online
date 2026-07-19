@@ -1,6 +1,9 @@
 name: Deploy staging
 
 on:
+  push:
+    branches:
+      - main
   workflow_dispatch:
     inputs:
       ref:
@@ -18,7 +21,7 @@ concurrency:
 
 jobs:
   deploy:
-    name: Deploy isolated staging
+    name: Deploy and verify isolated staging
     runs-on: [self-hosted, linux, x64, chat-staging]
     environment: staging
     timeout-minutes: 60
@@ -27,7 +30,7 @@ jobs:
       - name: Checkout approved revision
         uses: actions/checkout@v4
         with:
-          ref: ${{ inputs.ref }}
+          ref: ${{ inputs.ref || github.sha }}
           clean: true
 
       - name: Setup Node.js
@@ -76,6 +79,19 @@ jobs:
           HERMES_DOCKER_NETWORK: ${{ vars.HERMES_DOCKER_NETWORK }}
         run: bash scripts/deploy/staging.sh "$(git rev-parse HEAD)"
 
+      - name: Verify real Hermes and Letta transport
+        env:
+          CHAT_STAGING_BASE_URL: http://127.0.0.1:14174
+          CHAT_STAGING_EMAIL: ${{ vars.CHAT_ALLOWED_EMAILS }}
+        run: bash scripts/ops/staging-smoke.sh
+
+      - name: Verify real browser links and artifact transport
+        env:
+          CHAT_STAGING_BASE_URL: http://127.0.0.1:14174
+          CHAT_STAGING_EMAIL: ${{ vars.CHAT_ALLOWED_EMAILS }}
+          CHAT_STAGING_ORIGIN: ${{ vars.CHAT_PUBLIC_ORIGIN }}
+        run: bash scripts/ops/staging-browser-smoke.sh
+
       - name: Publish deployment summary
         if: always()
         shell: bash
@@ -85,6 +101,7 @@ jobs:
             echo
             echo "- Requested revision: \`$(git rev-parse HEAD)\`"
             echo '- Local endpoint: `http://127.0.0.1:14174`'
+            echo '- Required gates: deploy, Hermes, Letta, Chromium links and artifacts'
             for item in last-deployment.json last-preflight.json last-backup.json last-backup-verify.json last-health.json last-ops-status.json; do
               path="/opt/chat-v2/staging/state/${item}"
               if [[ -f "${path}" ]]; then
@@ -98,7 +115,7 @@ jobs:
             done
           } >> "$GITHUB_STEP_SUMMARY"
 
-      - name: Upload deployment evidence
+      - name: Upload deployment and browser evidence
         if: always()
         uses: actions/upload-artifact@v4
         with:
@@ -111,5 +128,7 @@ jobs:
             /opt/chat-v2/staging/state/last-backup-verify.json
             /opt/chat-v2/staging/state/last-health.json
             /opt/chat-v2/staging/state/last-ops-status.json
+            test-results-staging-browser
+            playwright-staging-report
           if-no-files-found: warn
           retention-days: 30

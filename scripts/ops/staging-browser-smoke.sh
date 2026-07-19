@@ -16,11 +16,9 @@ fail() {
   exit 1
 }
 
-for command_name in curl gh node npm npx python3; do
+for command_name in curl node npm npx python3; do
   command -v "${command_name}" >/dev/null 2>&1 || fail "missing command: ${command_name}"
 done
-
-gh auth status >/dev/null
 
 log 'Checking the deployed staging application.'
 HEALTH="$(curl --fail --silent --show-error --max-time 15 "${BASE_URL%/}/api/health")"
@@ -29,13 +27,16 @@ python3 -c 'import json,sys; raise SystemExit(0 if json.load(sys.stdin).get("ok"
 
 EMAIL="${CHAT_STAGING_EMAIL:-}"
 if [[ -z "${EMAIL}" ]]; then
+  command -v gh >/dev/null 2>&1 || fail 'missing command: gh'
+  gh auth status >/dev/null
   EMAIL="$(
     gh api \
       -H 'X-GitHub-Api-Version: 2022-11-28' \
       "repos/${REPO}/environments/${ENVIRONMENT}/variables/CHAT_ALLOWED_EMAILS" \
-      --jq '.value' 2>/dev/null | cut -d',' -f1 || true
+      --jq '.value' 2>/dev/null || true
   )"
 fi
+EMAIL="$(printf '%s' "${EMAIL}" | cut -d',' -f1 | xargs)"
 [[ -n "${EMAIL}" ]] || fail 'could not obtain the staging allowlisted email'
 
 cd "${REPO_ROOT}"

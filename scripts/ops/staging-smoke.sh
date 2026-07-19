@@ -14,24 +14,50 @@ fail() {
   exit 1
 }
 
-for command_name in gh curl python3; do
+for command_name in curl python3; do
   command -v "${command_name}" >/dev/null 2>&1 || fail "missing command: ${command_name}"
 done
 
 get_staging_variable() {
   local name="$1"
+  command -v gh >/dev/null 2>&1 || fail 'missing command: gh'
+  gh auth status >/dev/null
   gh api \
     -H 'X-GitHub-Api-Version: 2022-11-28' \
     "repos/${REPO}/environments/${ENVIRONMENT}/variables/${name}" \
     --jq '.value'
 }
 
-EMAIL="$(get_staging_variable CHAT_ALLOWED_EMAILS | cut -d',' -f1)"
+EMAIL="${CHAT_STAGING_EMAIL:-}"
+if [[ -z "${EMAIL}" ]]; then
+  EMAIL="$(get_staging_variable CHAT_ALLOWED_EMAILS)"
+fi
+EMAIL="$(printf '%s' "${EMAIL}" | cut -d',' -f1 | xargs)"
 test -n "${EMAIL}" || fail 'CHAT_ALLOWED_EMAILS is empty'
 
 AUTH_HEADER="Cf-Access-Authenticated-User-Email: ${EMAIL}"
 TMP_DIR="$(mktemp -d)"
-trap 'rm -rf "${TMP_DIR}"' EXIT
+declare -a CREATED_CONVERSATION_IDS=()
+
+cleanup() {
+  local status=$?
+  set +e
+  for conversation_id in "${CREATED_CONVERSATION_IDS[@]}"; do
+    curl -sS \
+      -H "${AUTH_HEADER}" \
+      -H 'Content-Type: application/json' \
+      -X PATCH \
+      --data '{"status":"trashed"}' \
+      "${BASE}/api/conversations/${conversation_id}" >/dev/null 2>&1
+    curl -sS \
+      -H "${AUTH_HEADER}" \
+      -X DELETE \
+      "${BASE}/api/conversations/${conversation_id}" >/dev/null 2>&1
+  done
+  rm -rf "${TMP_DIR}"
+  return "${status}"
+}
+trap cleanup EXIT
 
 log 'Checking staging health.'
 curl -fsS "${BASE}/api/health" >"${TMP_DIR}/health.json"
@@ -162,6 +188,7 @@ payload = json.loads(Path(sys.argv[1]).read_text())
 print(payload["conversation"]["id"])
 PY
 )"
+  CREATED_CONVERSATION_IDS+=("${conversation_id}")
 
   payload="$(python3 - "${marker}" <<'PY'
 import json
