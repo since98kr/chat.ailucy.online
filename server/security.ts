@@ -1,13 +1,22 @@
 import { timingSafeEqual } from 'node:crypto';
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
+import {
+  createCloudflareAccessVerifier,
+  type CloudflareAccessIdentity,
+  type CloudflareAccessVerifier,
+} from './cloudflare-access.js';
 
 export type ChatAuthMode = 'disabled' | 'token' | 'cloudflare';
 
 export type SecurityConfig = {
   authMode: ChatAuthMode;
   accessToken?: string;
+  accessIssuer?: string;
+  accessAudience?: string;
   allowedEmails: Set<string>;
+  allowedServiceClientIds: Set<string>;
   allowedOrigins: Set<string>;
+  cloudflareAccessVerifier?: CloudflareAccessVerifier;
   rateWindowMs: number;
   generalRateLimit: number;
   chatRateLimit: number;
@@ -17,6 +26,7 @@ export type SecurityConfig = {
 type RateRecord = { count: number; resetAt: number };
 
 const rateRecords = new Map<string, RateRecord>();
+const requestIdentities = new WeakMap<FastifyRequest, string>();
 const mutationMethods = new Set(['POST', 'PATCH', 'PUT', 'DELETE']);
 const publicApiPaths = new Set(['/api/health', '/api/auth/config', '/api/auth/login', '/api/auth/logout']);
 const sessionCookieName = 'chat_v2_session';
@@ -34,11 +44,21 @@ export function securityConfigFromEnv(): SecurityConfig {
   const requestedMode = (process.env.CHAT_AUTH_MODE ?? 'disabled').trim().toLowerCase();
   const authMode: ChatAuthMode =
     requestedMode === 'token' || requestedMode === 'cloudflare' ? requestedMode : 'disabled';
+  const accessIssuer = process.env.CHAT_CF_ACCESS_ISSUER?.trim();
+  const accessAudience = process.env.CHAT_CF_ACCESS_AUD?.trim();
+
   return {
     authMode,
     accessToken: process.env.CHAT_ACCESS_TOKEN?.trim(),
+    accessIssuer,
+    accessAudience,
     allowedEmails: csv(process.env.CHAT_ALLOWED_EMAILS),
+    allowedServiceClientIds: csv(process.env.CHAT_ALLOWED_SERVICE_CLIENT_IDS),
     allowedOrigins: csv(process.env.CHAT_ALLOWED_ORIGIN || process.env.CHAT_PUBLIC_ORIGIN),
+    cloudflareAccessVerifier:
+      accessIssuer && accessAudience
+        ? createCloudflareAccessVerifier(accessIssuer, accessAudience)
+        : undefined,
     rateWindowMs: Number(process.env.CHAT_RATE_WINDOW_MS ?? 60_000),
     generalRateLimit: Number(process.env.CHAT_RATE_LIMIT_GENERAL ?? 300),
     chatRateLimit: Number(process.env.CHAT_RATE_LIMIT_CHAT ?? 30),
@@ -51,6 +71,11 @@ function secureEqual(left: string, right: string) {
   const rightBuffer = Buffer.from(right);
   if (leftBuffer.length !== rightBuffer.length) return false;
   return timingSafeEqual(leftBuffer, rightBuffer);
+}
+
+function requestHeader(request: FastifyRequest, name: string) {
+  const value = request.headers[name];
+  return (Array.isArray(value) ? value[0] : value ?? '').trim();
 }
 
 function bearerToken(request: FastifyRequest) {
@@ -80,8 +105,11 @@ function cookieToken(request: FastifyRequest) {
 }
 
 function requestEmail(request: FastifyRequest) {
-  const value = request.headers['cf-access-authenticated-user-email'];
-  return (Array.isArray(value) ? value[0] : value ?? '').trim().toLowerCase();
+  return requestHeader(request, 'cf-access-authenticated-user-email').toLowerCase();
+}
+
+function requestAssertion(request: FastifyRequest) {
+  return requestHeader(request, 'cf-access-jwt-assertion');
 }
 
 function cookieSecure(request: FastifyRequest) {
@@ -143,19 +171,44 @@ function validToken(request: FastifyRequest, config: SecurityConfig) {
   return Boolean(config.accessToken && provided && secureEqual(provided, config.accessToken));
 }
 
-function authenticate(request: FastifyRequest, reply: FastifyReply, config: SecurityConfig) {
+function allowedCloudflareIdentity(identity: CloudflareAccessIdentity, config: SecurityConfig) {
+  if (identity.kind === 'email') {
+    return config.allowedEmails.has(identity.value.toLowerCase())
+      ? identity.value.toLowerCase()
+      : null;
+  }
+  const clientId = identity.value.toLowerCase();
+  return config.allowedServiceClientIds.has(clientId) ? `service:${clientId}` : null;
+}
+
+async function resolveCloudflareIdentity(request: FastifyRequest, config: SecurityConfig) {
+  const assertion = requestAssertion(request);
+  if (assertion && config.cloudflareAccessVerifier) {
+    try {
+      const verified = await config.cloudflareAccessVerifier(assertion);
+      return verified ? allowedCloudflareIdentity(verified, config) : null;
+    } catch {
+      return null;
+    }
+  }
+
+  const email = requestEmail(request);
+  return email && config.allowedEmails.has(email) ? email : null;
+}
+
+async function authenticate(request: FastifyRequest, reply: FastifyReply, config: SecurityConfig) {
   if (config.authMode === 'disabled') return;
   if (config.authMode === 'token') {
     if (!validToken(request, config)) {
       return reply.status(401).send({ error: 'AUTHENTICATION_REQUIRED' });
     }
+    requestIdentities.set(request, 'private-session');
     return;
   }
 
-  const email = requestEmail(request);
-  if (!email || config.allowedEmails.size === 0 || !config.allowedEmails.has(email)) {
-    return reply.status(403).send({ error: 'ACCESS_DENIED' });
-  }
+  const identity = await resolveCloudflareIdentity(request, config);
+  if (!identity) return reply.status(403).send({ error: 'ACCESS_DENIED' });
+  requestIdentities.set(request, identity);
 }
 
 function validateOrigin(request: FastifyRequest, reply: FastifyReply, config: SecurityConfig) {
@@ -170,8 +223,15 @@ export function registerRuntimeSecurity(app: FastifyInstance, config = securityC
   if (config.authMode === 'token' && !config.accessToken) {
     throw new Error('CHAT_ACCESS_TOKEN is required when CHAT_AUTH_MODE=token');
   }
-  if (config.authMode === 'cloudflare' && config.allowedEmails.size === 0) {
-    throw new Error('CHAT_ALLOWED_EMAILS is required when CHAT_AUTH_MODE=cloudflare');
+  if (
+    config.authMode === 'cloudflare'
+    && config.allowedEmails.size === 0
+    && config.allowedServiceClientIds.size === 0
+  ) {
+    throw new Error('Cloudflare mode requires an allowed email or service client ID');
+  }
+  if (config.allowedServiceClientIds.size > 0 && !config.cloudflareAccessVerifier) {
+    throw new Error('Cloudflare service clients require CHAT_CF_ACCESS_ISSUER and CHAT_CF_ACCESS_AUD');
   }
 
   app.get('/api/auth/config', async () => ({ mode: config.authMode }));
@@ -198,11 +258,8 @@ export function registerRuntimeSecurity(app: FastifyInstance, config = securityC
     authenticated: true,
     mode: config.authMode,
     identity:
-      config.authMode === 'cloudflare'
-        ? requestEmail(request)
-        : config.authMode === 'token'
-          ? 'private-session'
-          : 'local',
+      requestIdentities.get(request)
+      ?? (config.authMode === 'token' ? 'private-session' : config.authMode === 'disabled' ? 'local' : requestEmail(request)),
   }));
 
   app.addHook('onRequest', async (request, reply) => {
@@ -211,7 +268,7 @@ export function registerRuntimeSecurity(app: FastifyInstance, config = securityC
     const originResult = validateOrigin(request, reply, config);
     if (originResult) return originResult;
     if (request.url.startsWith('/api/')) {
-      const authResult = authenticate(request, reply, config);
+      const authResult = await authenticate(request, reply, config);
       if (authResult) return authResult;
       return applyRateLimit(request, reply, config);
     }

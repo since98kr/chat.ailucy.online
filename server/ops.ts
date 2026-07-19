@@ -13,6 +13,8 @@ export function registerOperationsRoutes(
     auth: {
       mode: security.authMode,
       allowedEmailCount: security.allowedEmails.size,
+      allowedServiceClientCount: security.allowedServiceClientIds.size,
+      accessJwtVerificationConfigured: Boolean(security.cloudflareAccessVerifier),
       allowedOriginCount: security.allowedOrigins.size,
     },
     adapters: await adapterHealth(),

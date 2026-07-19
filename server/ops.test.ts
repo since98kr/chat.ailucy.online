@@ -33,6 +33,7 @@ describe('operations status', () => {
       authMode: 'token',
       accessToken: 'private-secret',
       allowedEmails: new Set(),
+      allowedServiceClientIds: new Set(),
       allowedOrigins: new Set(),
       rateWindowMs: 60_000,
       generalRateLimit: 300,
@@ -53,7 +54,11 @@ describe('operations status', () => {
     expect(response.statusCode).toBe(200);
     const payload = response.json();
     expect(payload.build).toMatchObject({ sha: 'abc123', version: '0.5.0', environment: 'test' });
-    expect(payload.auth).toMatchObject({ mode: 'token' });
+    expect(payload.auth).toMatchObject({
+      mode: 'token',
+      allowedServiceClientCount: 0,
+      accessJwtVerificationConfigured: false,
+    });
     expect(JSON.stringify(payload)).not.toContain('private-secret');
   });
 });

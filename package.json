@@ -30,6 +30,7 @@
     "@fastify/static": "latest",
     "better-sqlite3": "latest",
     "fastify": "latest",
+    "jose": "latest",
     "lucide-react": "latest",
     "react": "latest",
     "react-dom": "latest",

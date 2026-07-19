@@ -29,6 +29,7 @@ afterEach(async () => {
 
 const defaults = {
   allowedEmails: new Set<string>(),
+  allowedServiceClientIds: new Set<string>(),
   allowedOrigins: new Set<string>(),
   rateWindowMs: 60_000,
   generalRateLimit: 300,
@@ -104,7 +105,7 @@ describe('runtime security', () => {
     expect(authorized.statusCode).toBe(200);
   });
 
-  it('accepts only the configured Cloudflare Access identity', async () => {
+  it('accepts only the configured Cloudflare Access email identity', async () => {
     const app = createApp({
       ...defaults,
       authMode: 'cloudflare',
@@ -125,6 +126,57 @@ describe('runtime security', () => {
     });
     expect(allowed.statusCode).toBe(200);
     expect(allowed.json()).toMatchObject({ identity: 'tei@example.com', mode: 'cloudflare' });
+  });
+
+  it('accepts a verified and allowlisted Cloudflare service token identity', async () => {
+    const app = createApp({
+      ...defaults,
+      authMode: 'cloudflare',
+      allowedServiceClientIds: new Set(['qa-client.access']),
+      cloudflareAccessVerifier: async (assertion) => {
+        if (assertion !== 'signed-service-assertion') throw new Error('invalid assertion');
+        return { kind: 'service', value: 'QA-CLIENT.ACCESS' };
+      },
+    });
+
+    const allowed = await app.inject({
+      method: 'GET',
+      url: '/api/auth/session',
+      headers: { 'cf-access-jwt-assertion': 'signed-service-assertion' },
+    });
+    expect(allowed.statusCode).toBe(200);
+    expect(allowed.json()).toMatchObject({
+      identity: 'service:qa-client.access',
+      mode: 'cloudflare',
+    });
+  });
+
+  it('rejects invalid or non-allowlisted Cloudflare service identities', async () => {
+    const app = createApp({
+      ...defaults,
+      authMode: 'cloudflare',
+      allowedServiceClientIds: new Set(['qa-client.access']),
+      cloudflareAccessVerifier: async (assertion) => {
+        if (assertion === 'bad-signature') throw new Error('signature verification failed');
+        return { kind: 'service', value: 'different-client.access' };
+      },
+    });
+
+    const wrongClient = await app.inject({
+      method: 'GET',
+      url: '/api/conversations',
+      headers: { 'cf-access-jwt-assertion': 'valid-but-wrong-client' },
+    });
+    expect(wrongClient.statusCode).toBe(403);
+    expect(wrongClient.json()).toEqual({ error: 'ACCESS_DENIED' });
+
+    const badSignature = await app.inject({
+      method: 'GET',
+      url: '/api/conversations',
+      headers: { 'cf-access-jwt-assertion': 'bad-signature' },
+    });
+    expect(badSignature.statusCode).toBe(403);
+    expect(badSignature.json()).toEqual({ error: 'ACCESS_DENIED' });
   });
 
   it('rejects cross-origin mutations and rate limits repeated private requests', async () => {
