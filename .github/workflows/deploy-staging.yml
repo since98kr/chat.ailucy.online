@@ -1,6 +1,9 @@
 name: Deploy staging
 
 on:
+  push:
+    branches:
+      - main
   workflow_dispatch:
     inputs:
       ref:
@@ -27,7 +30,7 @@ jobs:
       - name: Checkout approved revision
         uses: actions/checkout@v4
         with:
-          ref: ${{ inputs.ref }}
+          ref: ${{ inputs.ref || github.sha }}
           clean: true
 
       - name: Setup Node.js
