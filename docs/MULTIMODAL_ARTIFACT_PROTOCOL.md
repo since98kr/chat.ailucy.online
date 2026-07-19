@@ -44,6 +44,8 @@ The internal adapter request contains the persisted `ArtifactRecord[]` associate
 
 Native backends may use `text` directly for supported textual formats or decode `content_base64` for model-native multimodal processing. They must not request or rely on the Chat V2 filesystem path.
 
+For the current Letta native bridge, supported text attachments are also injected into the current user turn inside a delimited `<ATTACHMENTS>` block. Unsupported binary input fails unless the native binary capability is explicitly enabled.
+
 ### OpenAI-compatible payload
 
 Text attachments are appended to the current user turn inside a delimited attachment block. Supported image formats are sent as `image_url` data URIs in the current user content array.
@@ -59,7 +61,9 @@ Unsupported binary types fail explicitly. They are never silently omitted.
 
 ## Output contract
 
-A backend returns a generated file as an NDJSON or SSE event:
+### Native Chat V2 event
+
+A backend may return a generated file as an NDJSON or SSE event:
 
 ```json
 {
@@ -73,6 +77,22 @@ A backend returns a generated file as an NDJSON or SSE event:
 ```
 
 For text output, `content_text` may be supplied instead of `content_base64`.
+
+### OpenAI function tool
+
+When `<SYSTEM>_ARTIFACT_TOOL_ENABLED=true`, Chat V2 advertises a `return_artifact` function tool. The model supplies:
+
+```json
+{
+  "filename": "analysis.md",
+  "mime_type": "text/markdown",
+  "content_text": "# Analysis"
+}
+```
+
+`content_base64` may be used instead of `content_text`. Streamed tool-call argument fragments are accumulated and validated before any file is persisted. This flag remains disabled until the selected backend models are verified to accept function tools.
+
+### Chat V2 persistence
 
 Chat V2 then:
 
@@ -91,26 +111,31 @@ Backends cannot return a local path or remote URL as a trusted file reference.
 
 Default limits:
 
-- uploaded file: `CHAT_MAX_UPLOAD_BYTES=52428800`
-- one file transferred to a backend: `100663296` is not the default; the adapter default is 10 MiB
-- aggregate files transferred in one turn: adapter default 20 MiB
-- one generated artifact: adapter default 50 MiB
+- uploaded file: 50 MiB (`CHAT_MAX_UPLOAD_BYTES=52428800`)
+- one file transferred to a backend: 10 MiB
+- aggregate files transferred in one turn: 20 MiB
+- Letta text inserted into one model turn: 2 MiB
+- one generated artifact: 50 MiB
 
 Runtime variables:
 
 - `LETTA_MAX_ARTIFACT_BYTES`
 - `LETTA_MAX_ARTIFACT_TOTAL_BYTES`
+- `LETTA_MAX_TEXT_ARTIFACT_BYTES`
+- `LETTA_NATIVE_BINARY_ARTIFACTS`
+- `LETTA_ARTIFACT_TOOL_ENABLED`
 - `HERMES_MAX_ARTIFACT_BYTES`
 - `HERMES_MAX_ARTIFACT_TOTAL_BYTES`
+- `HERMES_ARTIFACT_TOOL_ENABLED`
 - `CHAT_MAX_GENERATED_ARTIFACT_BYTES`
 
 ## Backend capability matrix
 
 | Backend path | Text document | Image | Other binary | Generated file |
 |---|---:|---:|---:|---:|
-| Hermes OpenAI-compatible | yes | model-dependent | explicit failure | custom artifact event required |
-| Letta native bridge | text context required | bridge/model capability required | explicit failure unless implemented | native artifact event required |
-| Generic native adapter | backend-defined | backend-defined | backend-defined | artifact event |
+| Hermes OpenAI-compatible | yes | model-dependent | explicit failure | native event or optional function tool |
+| Letta native bridge | current-turn context | explicit failure by default | explicit failure by default | native event required |
+| Generic native adapter | backend-defined | capability flag required | capability flag required | artifact event |
 
 A green transport test is not evidence of AI understanding. Release E2E must place a marker only inside the attachment and require the backend response to reproduce it.
 
