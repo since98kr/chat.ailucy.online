@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { Bot, Check, Copy, Download, FileText, GitBranch, Image, LoaderCircle } from 'lucide-react';
+import { Bot, Check, Copy, Download, FileText, GitBranch, Image, LoaderCircle, RefreshCw } from 'lucide-react';
 import type { ArtifactRecord, ConversationDetail, MessageRecord, SystemId } from '../shared/contracts';
 import { isInlineImageMime } from '../shared/artifact-mime';
 import { artifactContentUrl, artifactDownloadUrl } from './api';
@@ -13,6 +13,9 @@ export default function MessageStream({
   streamEndRef,
   onCreate,
   onBranch,
+  onRetry,
+  retryEnabled,
+  retryingMessageId,
 }: {
   conversation: ConversationDetail | null;
   selectedSystem: SystemId;
@@ -21,6 +24,9 @@ export default function MessageStream({
   streamEndRef: React.RefObject<HTMLDivElement | null>;
   onCreate: () => void;
   onBranch: (messageId: string) => void;
+  onRetry: (messageId: string, mode: 'retry' | 'regenerate') => void;
+  retryEnabled: boolean;
+  retryingMessageId: string | null;
 }) {
   if (!conversation && !loading) {
     return (
@@ -38,15 +44,28 @@ export default function MessageStream({
   return (
     <div className="conversation-canvas">
       <div className="message-stream">
-        {conversation?.messages.map((message) => (
-          <MessageItem
-            key={message.id}
-            message={message}
-            system={message.authorId === '[Letta] Lucy' ? 'letta' : selectedSystem}
-            artifacts={conversation.artifacts.filter((artifact) => artifact.messageId === message.id)}
-            onBranch={() => onBranch(message.id)}
-          />
-        ))}
+        {conversation?.messages.map((message, messageIndex, messages) => {
+          const siblingAttempts = !message.parentMessageId || message.role !== 'assistant'
+            ? []
+            : messages.slice(0, messageIndex).filter((candidate) =>
+                candidate.role === 'assistant'
+                && candidate.parentMessageId === message.parentMessageId
+                && candidate.authorId === message.authorId,
+              );
+          return (
+            <MessageItem
+              key={message.id}
+              message={message}
+              system={message.authorId === '[Letta] Lucy' ? 'letta' : selectedSystem}
+              artifacts={conversation.artifacts.filter((artifact) => artifact.messageId === message.id)}
+              attemptNumber={siblingAttempts.length}
+              onBranch={() => onBranch(message.id)}
+              onRetry={(mode) => onRetry(message.id, mode)}
+              retryEnabled={retryEnabled}
+              retrying={retryingMessageId === message.id}
+            />
+          );
+        })}
         {runStatus && <div className="run-status"><LoaderCircle size={15} className="spin" /> {runStatus}</div>}
         <div ref={streamEndRef} />
       </div>
@@ -54,14 +73,21 @@ export default function MessageStream({
   );
 }
 
-function MessageItem({ message, system, artifacts, onBranch }: {
+function MessageItem({ message, system, artifacts, attemptNumber, onBranch, onRetry, retryEnabled, retrying }: {
   message: MessageRecord;
   system: SystemId;
   artifacts: ArtifactRecord[];
+  attemptNumber: number;
   onBranch: () => void;
+  onRetry: (mode: 'retry' | 'regenerate') => void;
+  retryEnabled: boolean;
+  retrying: boolean;
 }) {
   const [copied, setCopied] = useState(false);
   const isUser = message.role === 'user';
+  const canRetryState = ['complete', 'failed', 'cancelled'].includes(message.state);
+  const retryMode = message.state === 'complete' ? 'regenerate' : 'retry';
+  const retryLabel = retryMode === 'retry' ? '응답 다시 시도' : '응답 재생성';
   const agentClass = !isUser ? ` message--${message.authorId.toLowerCase().replace(/[^a-z0-9]+/g, '-')}` : '';
 
   const copyMessage = async () => {
@@ -79,6 +105,7 @@ function MessageItem({ message, system, artifacts, onBranch }: {
         <span>{formatTime(message.createdAt)}</span>
         {message.state !== 'complete' && <em>{message.state}</em>}
         {!isUser && message.authorId !== '[Hermes] Lucy' && <small className="source-output">원문</small>}
+        {!isUser && attemptNumber > 0 && <small className="source-output">재생성 {attemptNumber}</small>}
         {!isUser && artifacts.length > 0 && <small className="source-output">AI 생성 파일 {artifacts.length}</small>}
         {message.content && (
           <button
@@ -88,6 +115,17 @@ function MessageItem({ message, system, artifacts, onBranch }: {
             aria-label={copied ? '메시지 복사됨' : '메시지 복사'}
           >
             {copied ? <Check size={13} /> : <Copy size={13} />}
+          </button>
+        )}
+        {!isUser && canRetryState && (
+          <button
+            className="message-branch"
+            onClick={() => onRetry(retryMode)}
+            title={retryLabel}
+            aria-label={retryLabel}
+            disabled={!retryEnabled || retrying}
+          >
+            <RefreshCw size={13} className={retrying ? 'spin' : undefined} />
           </button>
         )}
         <button className="message-branch" onClick={onBranch} title="이 메시지까지 새 Conversation으로 분기" aria-label="이 메시지에서 분기"><GitBranch size={13} /></button>
