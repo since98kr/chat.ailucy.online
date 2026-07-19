@@ -1,0 +1,222 @@
+name: Bootstrap Cloudflare Access and close staging E2E blocker
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - ops/cloudflare-access-bootstrap
+    paths:
+      - .ops-trigger/cloudflare-access
+
+permissions:
+  contents: read
+  statuses: write
+  issues: write
+
+concurrency:
+  group: chat-v2-staging-deploy
+  cancel-in-progress: false
+
+jobs:
+  bootstrap:
+    name: Configure Access and verify the public staging path
+    runs-on: [self-hosted, linux, x64, chat-staging]
+    environment: staging
+    timeout-minutes: 90
+
+    steps:
+      - name: Checkout bootstrap controller
+        uses: actions/checkout@v4
+        with:
+          ref: ops/cloudflare-access-bootstrap
+          clean: true
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Validate bootstrap controller
+        run: node --check scripts/ops/bootstrap-cloudflare-staging-access.mjs
+
+      - name: Create or repair the staging Access application and service identity
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ vars.CLOUDFLARE_ACCOUNT_ID }}
+          CHAT_PUBLIC_ORIGIN: https://chat-staging.ailucy.online
+          CHAT_ALLOWED_EMAILS: ${{ vars.CHAT_ALLOWED_EMAILS }}
+          CHAT_CLOUDFLARE_ACCESS_STATE_FILE: /opt/chat-v2/staging/secrets/cloudflare-access-staging.json
+        run: node scripts/ops/bootstrap-cloudflare-staging-access.mjs
+
+      - name: Load the generated service identity without logging its secret
+        run: |
+          set -euo pipefail
+          state=/opt/chat-v2/staging/secrets/cloudflare-access-staging.json
+          test -r "${state}"
+          node - "${state}" "$GITHUB_ENV" <<'NODE'
+          const fs = require('fs');
+          const [statePath, envPath] = process.argv.slice(2);
+          const state = JSON.parse(fs.readFileSync(statePath, 'utf8'));
+          for (const key of ['clientId', 'clientSecret', 'issuer', 'audience', 'applicationId', 'serviceTokenId']) {
+            if (typeof state[key] !== 'string' || !state[key]) throw new Error(`Missing ${key}`);
+          }
+          process.stdout.write(`::add-mask::${state.clientId}\n`);
+          process.stdout.write(`::add-mask::${state.clientSecret}\n`);
+          fs.appendFileSync(envPath, [
+            `CF_ACCESS_CLIENT_ID_RUNTIME=${state.clientId}`,
+            `CF_ACCESS_CLIENT_SECRET_RUNTIME=${state.clientSecret}`,
+            `CHAT_CF_ACCESS_ISSUER_RUNTIME=${state.issuer}`,
+            `CHAT_CF_ACCESS_AUD_RUNTIME=${state.audience}`,
+          ].join('\n') + '\n');
+          NODE
+
+      - name: Checkout the validated Chat V2 staging revision
+        uses: actions/checkout@v4
+        with:
+          ref: 7327a8a512a7d64da5a21be9e81063ef45e0f890
+          clean: true
+
+      - name: Verify exact application source
+        id: source
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "7327a8a512a7d64da5a21be9e81063ef45e0f890"
+          echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+
+      - name: Mark public staging verification pending
+        uses: actions/github-script@v7
+        env:
+          DEPLOY_SHA: ${{ steps.source.outputs.sha }}
+        with:
+          script: |
+            await github.rest.repos.createCommitStatus({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              sha: process.env.DEPLOY_SHA,
+              state: 'pending',
+              context: 'chat-v2/cloudflare-e2e',
+              description: 'Access bootstrap and public staging QA are running',
+              target_url: `${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`,
+            });
+
+      - name: Redeploy isolated staging with Access JWT verification
+        env:
+          CHAT_STAGING_ROOT: /opt/chat-v2/staging
+          CHAT_STAGING_DATA_DIR: /opt/chat-v2/staging/data
+          CHAT_STAGING_PORT: '14174'
+          CHAT_PREFLIGHT_STRICT: 'true'
+          CHAT_PREFLIGHT_MIN_FREE_BYTES: ${{ vars.CHAT_PREFLIGHT_MIN_FREE_BYTES }}
+          CHAT_BACKUP_RETENTION: ${{ vars.CHAT_BACKUP_RETENTION }}
+          CHAT_PUBLIC_ORIGIN: https://chat-staging.ailucy.online
+          CHAT_ALLOWED_ORIGIN: https://chat-staging.ailucy.online,http://127.0.0.1:14174
+          CHAT_AUTH_MODE: cloudflare
+          CHAT_ALLOWED_EMAILS: ${{ vars.CHAT_ALLOWED_EMAILS }}
+          CHAT_ALLOWED_SERVICE_CLIENT_IDS: ${{ env.CF_ACCESS_CLIENT_ID_RUNTIME }}
+          CHAT_CF_ACCESS_ISSUER: ${{ env.CHAT_CF_ACCESS_ISSUER_RUNTIME }}
+          CHAT_CF_ACCESS_AUD: ${{ env.CHAT_CF_ACCESS_AUD_RUNTIME }}
+          CHAT_RATE_LIMIT_GENERAL: ${{ vars.CHAT_RATE_LIMIT_GENERAL }}
+          CHAT_RATE_LIMIT_CHAT: ${{ vars.CHAT_RATE_LIMIT_CHAT }}
+          CHAT_RATE_LIMIT_UPLOAD: ${{ vars.CHAT_RATE_LIMIT_UPLOAD }}
+          CHAT_MAX_UPLOAD_BYTES: ${{ vars.CHAT_MAX_UPLOAD_BYTES }}
+          CHAT_MAX_GENERATED_ARTIFACT_BYTES: ${{ vars.CHAT_MAX_GENERATED_ARTIFACT_BYTES }}
+          CHAT_MAX_INLINE_GENERATED_ARTIFACT_PAYLOAD_BYTES: '10485760'
+          LETTA_BASE_URL: ${{ vars.LETTA_BASE_URL }}
+          LETTA_CHAT_PATH: ${{ vars.LETTA_CHAT_PATH }}
+          LETTA_HEALTH_PATH: ${{ vars.LETTA_HEALTH_PATH }}
+          LETTA_AGENT_ID: ${{ vars.LETTA_AGENT_ID }}
+          LETTA_API_KEY: ${{ secrets.LETTA_API_KEY }}
+          LETTA_TIMEOUT_MS: ${{ vars.LETTA_TIMEOUT_MS }}
+          LETTA_PROTOCOL: ${{ vars.LETTA_PROTOCOL }}
+          LETTA_MODEL_MAP_JSON: ${{ vars.LETTA_MODEL_MAP_JSON }}
+          LETTA_MAX_ARTIFACT_BYTES: ${{ vars.LETTA_MAX_ARTIFACT_BYTES }}
+          LETTA_MAX_ARTIFACT_TOTAL_BYTES: ${{ vars.LETTA_MAX_ARTIFACT_TOTAL_BYTES }}
+          LETTA_MAX_TEXT_ARTIFACT_BYTES: ${{ vars.LETTA_MAX_TEXT_ARTIFACT_BYTES }}
+          LETTA_NATIVE_BINARY_ARTIFACTS: ${{ vars.LETTA_NATIVE_BINARY_ARTIFACTS }}
+          LETTA_ARTIFACT_TOOL_ENABLED: ${{ vars.LETTA_ARTIFACT_TOOL_ENABLED }}
+          HERMES_BASE_URL: ${{ vars.HERMES_BASE_URL }}
+          HERMES_CHAT_PATH: ${{ vars.HERMES_CHAT_PATH }}
+          HERMES_HEALTH_PATH: ${{ vars.HERMES_HEALTH_PATH }}
+          HERMES_AGENT_ID: ${{ vars.HERMES_AGENT_ID }}
+          HERMES_API_KEY: ${{ secrets.HERMES_API_KEY }}
+          HERMES_TIMEOUT_MS: '120000'
+          HERMES_PROTOCOL: openai
+          HERMES_MODEL_MAP_JSON: ${{ vars.HERMES_MODEL_MAP_JSON }}
+          HERMES_MAX_ARTIFACT_BYTES: ${{ vars.HERMES_MAX_ARTIFACT_BYTES }}
+          HERMES_MAX_ARTIFACT_TOTAL_BYTES: ${{ vars.HERMES_MAX_ARTIFACT_TOTAL_BYTES }}
+          HERMES_ARTIFACT_TOOL_ENABLED: 'true'
+          HERMES_ARTIFACT_ENVELOPE_ENABLED: 'true'
+          HERMES_DOCKER_NETWORK: ${{ vars.HERMES_DOCKER_NETWORK }}
+        run: bash scripts/deploy/staging.sh "$(git rev-parse HEAD)"
+
+      - name: Verify local and public AI artifact paths
+        env:
+          CHAT_STAGING_EMAIL: ${{ vars.CHAT_ALLOWED_EMAILS }}
+          CHAT_MULTIMODAL_QA_REQUIRED: 'true'
+          CHAT_GENERATED_ARTIFACT_QA_REQUIRED: 'true'
+          CHAT_HERMES_VISION_AGENT_ID: Gemma
+          CF_ACCESS_CLIENT_ID: ${{ env.CF_ACCESS_CLIENT_ID_RUNTIME }}
+          CF_ACCESS_CLIENT_SECRET: ${{ env.CF_ACCESS_CLIENT_SECRET_RUNTIME }}
+        run: |
+          set -euo pipefail
+          CHAT_STAGING_BASE_URL=http://127.0.0.1:14174 bash scripts/ops/staging-smoke.sh
+          CHAT_STAGING_BASE_URL=http://127.0.0.1:14174 bash scripts/ops/staging-browser-smoke.sh
+          CHAT_STAGING_BASE_URL=https://chat-staging.ailucy.online bash scripts/ops/external-staging-browser-smoke.sh
+
+      - name: Upload Cloudflare and staging evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: chat-v2-cloudflare-access-${{ github.run_id }}
+          path: |
+            /opt/chat-v2/staging/state/last-deployment.json
+            /opt/chat-v2/staging/state/last-preflight.json
+            /opt/chat-v2/staging/state/last-preflight-output.log
+            /opt/chat-v2/staging/state/last-backup.json
+            /opt/chat-v2/staging/state/last-backup-verify.json
+            /opt/chat-v2/staging/state/last-health.json
+            /opt/chat-v2/staging/state/last-ops-status.json
+            test-results-staging-browser
+            playwright-staging-report
+            test-results-external-staging-browser
+            playwright-external-staging-report
+          if-no-files-found: warn
+          retention-days: 30
+
+      - name: Close Issue 53 after full public evidence
+        if: success()
+        uses: actions/github-script@v7
+        with:
+          script: |
+            await github.rest.issues.createComment({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: 53,
+              body: `Resolved by run ${context.runId}. Cloudflare Access application, human Allow policy, dedicated Service Auth policy, service token, origin JWT verification, local QA, and public multimodal/generated-file E2E all passed for Chat V2 SHA 7327a8a512a7d64da5a21be9e81063ef45e0f890. No production deployment or merge was performed.`,
+            });
+            await github.rest.issues.update({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: 53,
+              state: 'closed',
+              state_reason: 'completed',
+            });
+
+      - name: Publish public staging status
+        if: always()
+        uses: actions/github-script@v7
+        env:
+          DEPLOY_SHA: ${{ steps.source.outputs.sha }}
+          DEPLOY_RESULT: ${{ job.status }}
+        with:
+          script: |
+            if (!process.env.DEPLOY_SHA) return;
+            const success = process.env.DEPLOY_RESULT === 'success';
+            await github.rest.repos.createCommitStatus({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              sha: process.env.DEPLOY_SHA,
+              state: success ? 'success' : 'failure',
+              context: 'chat-v2/cloudflare-e2e',
+              description: success ? 'Access and public staging QA passed' : 'Access bootstrap or public QA failed',
+              target_url: `${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`,
+            });
