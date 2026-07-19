@@ -38,6 +38,21 @@ function addCheck(checks: PreflightCheck[], check: PreflightCheck) {
   checks.push(check);
 }
 
+function checkPositiveIntegerEnv(
+  checks: PreflightCheck[],
+  input: { name: string; checkName: string; fallback: number },
+) {
+  const raw = process.env[input.name]?.trim();
+  const value = raw ? Number(raw) : input.fallback;
+  const ok = Number.isFinite(value) && Number.isInteger(value) && value > 0;
+  addCheck(checks, {
+    name: input.checkName,
+    ok,
+    level: ok ? 'info' : 'error',
+    detail: ok ? `${input.name}=${value}` : `${input.name} must be a positive integer`,
+  });
+}
+
 function checkWritableDirectory(checks: PreflightCheck[], name: string, path: string) {
   const absolute = resolve(path);
   try {
@@ -161,6 +176,16 @@ export async function runPreflight(options?: { strict?: boolean }): Promise<Pref
   checkDisk(checks, dataRoot);
   checkDatabase(checks, databasePath);
   checkSecurity(checks, strict);
+  checkPositiveIntegerEnv(checks, {
+    name: 'CHAT_MAX_GENERATED_ARTIFACT_BYTES',
+    checkName: 'generated-artifact-size-limit',
+    fallback: 50 * 1024 * 1024,
+  });
+  checkPositiveIntegerEnv(checks, {
+    name: 'CHAT_MAX_INLINE_GENERATED_ARTIFACT_PAYLOAD_BYTES',
+    checkName: 'inline-generated-artifact-payload-limit',
+    fallback: 10 * 1024 * 1024,
+  });
 
   const adapters = await adapterHealth();
   const requireRealAdapters = boolEnv('CHAT_PREFLIGHT_REQUIRE_REAL_ADAPTERS', strict);
