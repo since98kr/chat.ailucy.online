@@ -144,11 +144,15 @@ export function registerCollaborationRoutes(
       return reply.status(409).send({ error: 'RESPONSE_AGENT_UNAVAILABLE' });
     }
 
+    const retryOriginal = original;
+    const retrySource = sourceMessage;
+    const retryConversation = conversation;
+
     const existing = database.db.prepare(
       `SELECT * FROM message_retry_attempts WHERE idempotency_key = ?`,
     ).get(input.idempotencyKey) as MessageRetryRow | undefined;
     if (existing) {
-      if (existing.original_message_id !== original.id || existing.mode !== input.mode) {
+      if (existing.original_message_id !== retryOriginal.id || existing.mode !== input.mode) {
         return reply.status(409).send({ error: 'RETRY_IDEMPOTENCY_KEY_CONFLICT' });
       }
       if (existing.status === 'running') {
@@ -157,10 +161,16 @@ export function registerCollaborationRoutes(
       if (existing.status === 'completed' && existing.output_message_id) {
         const output = database.getMessage(existing.output_message_id);
         if (!output) return reply.status(409).send({ error: 'RETRY_OUTPUT_MISSING' });
+        const replayOutput = output;
         const runId = `retry-replay:${input.idempotencyKey}`;
         async function* replay() {
-          yield eventLine({ type: 'message.created', message: output });
-          yield eventLine({ type: 'run.completed', runId, message: output, agentId: output.authorId });
+          yield eventLine({ type: 'message.created', message: replayOutput });
+          yield eventLine({
+            type: 'run.completed',
+            runId,
+            message: replayOutput,
+            agentId: replayOutput.authorId,
+          });
         }
         reply
           .header('Content-Type', 'application/x-ndjson; charset=utf-8')
@@ -179,16 +189,16 @@ export function registerCollaborationRoutes(
       ) VALUES (?, ?, ?, ?, NULL, ?, ?, 'running', NULL, ?, ?)
     `).run(
       input.idempotencyKey,
-      conversation.id,
-      original.id,
-      sourceMessage.id,
-      original.authorId,
+      retryConversation.id,
+      retryOriginal.id,
+      retrySource.id,
+      retryOriginal.authorId,
       input.mode,
       createdAt,
       createdAt,
     );
 
-    const attachedArtifacts = conversation.artifacts.filter((artifact) => artifact.messageId === sourceMessage.id);
+    const attachedArtifacts = retryConversation.artifacts.filter((artifact) => artifact.messageId === retrySource.id);
     const controller = new AbortController();
     reply.raw.once('close', () => controller.abort());
 
@@ -198,15 +208,15 @@ export function registerCollaborationRoutes(
         for await (const event of runCollaborativeReply({
           database,
           collaboration,
-          conversation,
-          userMessage: sourceMessage,
+          conversation: retryConversation,
+          userMessage: retrySource,
           attachedArtifacts,
-          sendInput: { content: sourceMessage.content, targetAgentIds: [original.authorId] },
+          sendInput: { content: retrySource.content, targetAgentIds: [retryOriginal.authorId] },
           signal: controller.signal,
-          forcedAgentId: original.authorId,
+          forcedAgentId: retryOriginal.authorId,
           suppressUserAccepted: true,
           historyEndsAtSourceMessage: true,
-          regeneratedFromMessageId: original.id,
+          regeneratedFromMessageId: retryOriginal.id,
           retryMode: input.mode,
         })) {
           if (event.type === 'message.created') {
