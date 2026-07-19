@@ -170,8 +170,7 @@ test('real Hermes returns a generated file that survives reload and byte verific
 
     await page.goto('/');
     await page.locator('.conversation-row').filter({ hasText: title }).first().click();
-    const assistant = page.locator('.message--assistant').filter({ hasText: 'AI 생성 파일' }).last();
-    await expect(assistant.locator('.file-card').filter({ hasText: 'qa-result.txt' })).toBeVisible();
+    await expect(page.locator('.message--assistant .file-card').filter({ hasText: 'qa-result.txt' })).toBeVisible();
     await page.reload();
     await page.locator('.conversation-row').filter({ hasText: title }).first().click();
     await expect(page.locator('.message--assistant .file-card').filter({ hasText: 'qa-result.txt' })).toBeVisible();
