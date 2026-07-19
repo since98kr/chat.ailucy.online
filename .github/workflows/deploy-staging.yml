@@ -39,36 +39,38 @@ jobs:
 
       - name: Collect safe Cloudflare diagnostics
         env:
-          CHAT_STAGING_BASE_URL: ${{ vars.CHAT_PUBLIC_ORIGIN }}
+          CONFIGURED_PUBLIC_ORIGIN: ${{ vars.CHAT_PUBLIC_ORIGIN }}
           CF_ACCESS_CLIENT_ID: ${{ vars.CF_ACCESS_CLIENT_ID }}
           CF_ACCESS_CLIENT_SECRET: ${{ secrets.CF_ACCESS_CLIENT_SECRET }}
         run: |
-          set -u
+          set +e
+          base_url='https://chat-staging.ailucy.online'
+          host='chat-staging.ailucy.online'
           : > cloudflare-diagnostic.txt
           bool() { if [[ -n "$1" ]]; then echo true; else echo false; fi; }
-          echo "public_origin_set=$(bool "${CHAT_STAGING_BASE_URL:-}")" | tee -a cloudflare-diagnostic.txt
+          echo "configured_public_origin_set=$(bool "${CONFIGURED_PUBLIC_ORIGIN:-}")" | tee -a cloudflare-diagnostic.txt
+          echo "configured_public_origin_is_absolute=$(node -e 'try { const u=new URL(process.argv[1]); process.stdout.write(String(Boolean(u.protocol && u.hostname))); } catch { process.stdout.write("false"); }' "${CONFIGURED_PUBLIC_ORIGIN:-}")" | tee -a cloudflare-diagnostic.txt
           echo "client_id_set=$(bool "${CF_ACCESS_CLIENT_ID:-}")" | tee -a cloudflare-diagnostic.txt
           echo "client_secret_set=$(bool "${CF_ACCESS_CLIENT_SECRET:-}")" | tee -a cloudflare-diagnostic.txt
-          if [[ -z "${CHAT_STAGING_BASE_URL:-}" ]]; then
-            echo 'dns_resolves=false' | tee -a cloudflare-diagnostic.txt
-            echo 'unauthenticated_http=not_run' | tee -a cloudflare-diagnostic.txt
-            echo 'service_authenticated_http=not_run' | tee -a cloudflare-diagnostic.txt
-            exit 0
-          fi
-          host="$(node -e "console.log(new URL(process.argv[1]).hostname)" "${CHAT_STAGING_BASE_URL}")"
           if getent ahosts "${host}" >/dev/null 2>&1; then
             echo 'dns_resolves=true' | tee -a cloudflare-diagnostic.txt
           else
             echo 'dns_resolves=false' | tee -a cloudflare-diagnostic.txt
           fi
-          unauth="$(curl --silent --show-error --max-time 30 --output /dev/null --write-out '%{http_code}' "${CHAT_STAGING_BASE_URL%/}/api/auth/config" || echo curl_error)"
-          echo "unauthenticated_http=${unauth}" | tee -a cloudflare-diagnostic.txt
+          unauth="$(curl --silent --show-error --max-time 30 --output /dev/null --write-out '%{http_code}' "${base_url}/api/auth/config")"
+          curl_rc=$?
+          echo "unauthenticated_curl_ok=$([[ ${curl_rc} -eq 0 ]] && echo true || echo false)" | tee -a cloudflare-diagnostic.txt
+          echo "unauthenticated_http=${unauth:-none}" | tee -a cloudflare-diagnostic.txt
           if [[ -n "${CF_ACCESS_CLIENT_ID:-}" && -n "${CF_ACCESS_CLIENT_SECRET:-}" ]]; then
-            service="$(curl --silent --show-error --max-time 30 --output /tmp/chat-v2-cloudflare-service-response --write-out '%{http_code}' --header "CF-Access-Client-Id: ${CF_ACCESS_CLIENT_ID}" --header "CF-Access-Client-Secret: ${CF_ACCESS_CLIENT_SECRET}" "${CHAT_STAGING_BASE_URL%/}/api/auth/config" || echo curl_error)"
-            echo "service_authenticated_http=${service}" | tee -a cloudflare-diagnostic.txt
+            service="$(curl --silent --show-error --max-time 30 --output /dev/null --write-out '%{http_code}' --header "CF-Access-Client-Id: ${CF_ACCESS_CLIENT_ID}" --header "CF-Access-Client-Secret: ${CF_ACCESS_CLIENT_SECRET}" "${base_url}/api/auth/config")"
+            service_rc=$?
+            echo "service_authenticated_curl_ok=$([[ ${service_rc} -eq 0 ]] && echo true || echo false)" | tee -a cloudflare-diagnostic.txt
+            echo "service_authenticated_http=${service:-none}" | tee -a cloudflare-diagnostic.txt
           else
+            echo 'service_authenticated_curl_ok=not_run' | tee -a cloudflare-diagnostic.txt
             echo 'service_authenticated_http=not_run' | tee -a cloudflare-diagnostic.txt
           fi
+          exit 0
 
       - name: Upload safe Cloudflare diagnostics
         if: always()
