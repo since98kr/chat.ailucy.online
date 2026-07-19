@@ -46,48 +46,53 @@ jobs:
           mkdir -p /opt/chat-v2/staging/state
           node <<'NODE'
           const fs = require('fs');
-          const token = (process.env.CLOUDFLARE_API_TOKEN || '').trim();
-          const accountId = (process.env.CLOUDFLARE_ACCOUNT_ID || '').trim();
-          const output = {
-            generatedAt: new Date().toISOString(),
-            tokenPresent: Boolean(token),
-            tokenLength: token.length,
-            tokenLooksLikeAccountId: /^[a-f0-9]{32}$/i.test(token),
-            accountIdPresent: Boolean(accountId),
-            accountIdLooksValid: /^[a-f0-9]{32}$/i.test(accountId),
-            tokenVerify: null,
-            accessAppsRead: null,
-          };
-          async function check(url) {
-            try {
-              const response = await fetch(url, { headers: { Authorization: `Bearer ${token}`, Accept: 'application/json' } });
-              const payload = await response.json().catch(() => null);
-              return {
-                httpStatus: response.status,
-                success: Boolean(payload?.success),
-                resultStatus: typeof payload?.result?.status === 'string' ? payload.result.status : null,
-                errorCodes: Array.isArray(payload?.errors) ? payload.errors.map((item) => item?.code).filter(Boolean) : [],
-                errorMessages: Array.isArray(payload?.errors) ? payload.errors.map((item) => item?.message).filter(Boolean) : [],
-              };
-            } catch (error) {
-              return { transportError: error instanceof Error ? error.message : String(error) };
+          (async () => {
+            const token = (process.env.CLOUDFLARE_API_TOKEN || '').trim();
+            const accountId = (process.env.CLOUDFLARE_ACCOUNT_ID || '').trim();
+            const output = {
+              generatedAt: new Date().toISOString(),
+              tokenPresent: Boolean(token),
+              tokenLength: token.length,
+              tokenLooksLikeAccountId: /^[a-f0-9]{32}$/i.test(token),
+              accountIdPresent: Boolean(accountId),
+              accountIdLooksValid: /^[a-f0-9]{32}$/i.test(accountId),
+              tokenVerify: null,
+              accessAppsRead: null,
+            };
+            async function check(url) {
+              try {
+                const response = await fetch(url, { headers: { Authorization: `Bearer ${token}`, Accept: 'application/json' } });
+                const payload = await response.json().catch(() => null);
+                return {
+                  httpStatus: response.status,
+                  success: Boolean(payload?.success),
+                  resultStatus: typeof payload?.result?.status === 'string' ? payload.result.status : null,
+                  errorCodes: Array.isArray(payload?.errors) ? payload.errors.map((item) => item?.code).filter(Boolean) : [],
+                  errorMessages: Array.isArray(payload?.errors) ? payload.errors.map((item) => item?.message).filter(Boolean) : [],
+                };
+              } catch (error) {
+                return { transportError: error instanceof Error ? error.message : String(error) };
+              }
             }
-          }
-          output.tokenVerify = await check('https://api.cloudflare.com/client/v4/user/tokens/verify');
-          if (accountId) {
-            output.accessAppsRead = await check(`https://api.cloudflare.com/client/v4/accounts/${accountId}/access/apps?per_page=1`);
-          }
-          fs.writeFileSync('/opt/chat-v2/staging/state/cloudflare-token-verification.json', `${JSON.stringify(output, null, 2)}\n`, { mode: 0o600 });
-          console.log(`token-present=${output.tokenPresent}`);
-          console.log(`token-length=${output.tokenLength}`);
-          console.log(`token-looks-like-account-id=${output.tokenLooksLikeAccountId}`);
-          console.log(`account-id-present=${output.accountIdPresent}`);
-          console.log(`account-id-looks-valid=${output.accountIdLooksValid}`);
-          console.log(`verify-http=${output.tokenVerify?.httpStatus ?? 'transport-error'}`);
-          console.log(`verify-success=${output.tokenVerify?.success ?? false}`);
-          console.log(`verify-status=${output.tokenVerify?.resultStatus ?? 'none'}`);
-          console.log(`access-apps-http=${output.accessAppsRead?.httpStatus ?? 'not-run'}`);
-          console.log(`access-apps-success=${output.accessAppsRead?.success ?? false}`);
+            output.tokenVerify = await check('https://api.cloudflare.com/client/v4/user/tokens/verify');
+            if (accountId) {
+              output.accessAppsRead = await check(`https://api.cloudflare.com/client/v4/accounts/${accountId}/access/apps?per_page=1`);
+            }
+            fs.writeFileSync('/opt/chat-v2/staging/state/cloudflare-token-verification.json', `${JSON.stringify(output, null, 2)}\n`, { mode: 0o600 });
+            console.log(`token-present=${output.tokenPresent}`);
+            console.log(`token-length=${output.tokenLength}`);
+            console.log(`token-looks-like-account-id=${output.tokenLooksLikeAccountId}`);
+            console.log(`account-id-present=${output.accountIdPresent}`);
+            console.log(`account-id-looks-valid=${output.accountIdLooksValid}`);
+            console.log(`verify-http=${output.tokenVerify?.httpStatus ?? 'transport-error'}`);
+            console.log(`verify-success=${output.tokenVerify?.success ?? false}`);
+            console.log(`verify-status=${output.tokenVerify?.resultStatus ?? 'none'}`);
+            console.log(`access-apps-http=${output.accessAppsRead?.httpStatus ?? 'not-run'}`);
+            console.log(`access-apps-success=${output.accessAppsRead?.success ?? false}`);
+          })().catch((error) => {
+            console.error(error instanceof Error ? error.stack || error.message : String(error));
+            process.exitCode = 1;
+          });
           NODE
 
       - name: Upload safe verification evidence
