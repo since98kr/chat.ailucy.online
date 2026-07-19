@@ -95,6 +95,13 @@ describe('ArtifactEnvelopeAccumulator', () => {
     accumulator.ingest(`${ARTIFACT_ENVELOPE_OPEN}{"filename":"broken.txt"`);
     expect(() => accumulator.finish()).toThrow('missing its closing marker');
   });
+
+  it('rejects oversized envelope content before an unbounded buffer can accumulate', () => {
+    const accumulator = new ArtifactEnvelopeAccumulator(64);
+    accumulator.ingest(ARTIFACT_ENVELOPE_OPEN);
+    expect(() => accumulator.ingest(`{"filename":"x.txt","mime_type":"text/plain","content_text":"${'x'.repeat(80)}`))
+      .toThrow('exceeds 64 bytes');
+  });
 });
 
 describe('wrapArtifactEnvelopeFallback', () => {
