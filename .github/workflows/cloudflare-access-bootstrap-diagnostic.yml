@@ -37,12 +37,12 @@ jobs:
             printf 'path=%s status=%s redirect=%s content-type=%s\n' \
               "${path}" "${status:-none}" "$([[ -n "${location}" ]] && echo true || echo false)" "${content_type:-unknown}"
             if [[ -n "${location}" ]]; then
-              node - "${location}" <<'NODE'
-              const url = new URL(process.argv[2]);
-              const audience = url.searchParams.get('aud') || url.searchParams.get('kid') || '';
-              console.log(`redirect-origin=${url.origin}`);
-              console.log(`redirect-audience-present=${Boolean(audience)}`);
-              NODE
+              node -e '
+                const url = new URL(process.argv[1]);
+                const audience = url.searchParams.get("aud") || url.searchParams.get("kid") || "";
+                console.log(`redirect-origin=${url.origin}`);
+                console.log(`redirect-audience-present=${Boolean(audience)}`);
+              ' "${location}"
             fi
           done
 
