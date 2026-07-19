@@ -3,7 +3,7 @@ name: Deploy staging
 on:
   push:
     branches:
-      - main
+      - agent/staging-deploy-3d2de7e
   workflow_dispatch:
     inputs:
       ref:
@@ -31,7 +31,7 @@ jobs:
       - name: Checkout approved revision
         uses: actions/checkout@v4
         with:
-          ref: ${{ inputs.ref || github.sha }}
+          ref: 3d2de7ecbcfb422dbbc12b918175926326550b59
           clean: true
 
       - name: Setup Node.js
