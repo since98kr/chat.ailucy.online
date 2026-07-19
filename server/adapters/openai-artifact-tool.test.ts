@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { OpenAiArtifactToolAccumulator } from './openai-artifact-tool.js';
+import { OpenAiArtifactToolAccumulator, parseGeneratedArtifactArguments } from './openai-artifact-tool.js';
 
 describe('OpenAiArtifactToolAccumulator', () => {
   it('parses a complete return_artifact tool call', () => {
@@ -63,5 +63,20 @@ describe('OpenAiArtifactToolAccumulator', () => {
       }],
     });
     expect(() => accumulator.finish()).toThrow('requires content_text or content_base64');
+  });
+
+  it('rejects backend paths and URLs even when inline content is also supplied', () => {
+    expect(() => parseGeneratedArtifactArguments(JSON.stringify({
+      filename: 'unsafe.txt',
+      mime_type: 'text/plain',
+      content_text: 'inline',
+      path: '/home/backend/unsafe.txt',
+    }))).toThrow('must not contain path');
+    expect(() => parseGeneratedArtifactArguments(JSON.stringify({
+      filename: 'unsafe.txt',
+      mime_type: 'text/plain',
+      content_text: 'inline',
+      url: 'https://backend.invalid/unsafe.txt',
+    }))).toThrow('must not contain url');
   });
 });
