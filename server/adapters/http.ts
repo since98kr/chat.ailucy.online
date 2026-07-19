@@ -6,6 +6,7 @@ import type {
   AdapterStreamItem,
   ChatBackendAdapter,
 } from './types.js';
+import { extractArtifactText } from './document-text.js';
 import { OpenAiArtifactToolAccumulator, RETURN_ARTIFACT_TOOL } from './openai-artifact-tool.js';
 
 type HttpAdapterProtocol = 'native' | 'openai';
@@ -42,27 +43,12 @@ type OpenAiMessage = {
   content: string | OpenAiContentPart[];
 };
 
-const TEXT_ATTACHMENT_TYPES = new Set([
-  'application/json',
-  'application/ld+json',
-  'application/xml',
-  'application/x-yaml',
-  'application/yaml',
-  'application/javascript',
-]);
-
 function trimSlash(value: string) {
   return value.replace(/\/+$/, '');
 }
 
 function normalizePath(value: string) {
   return value.startsWith('/') ? value : `/${value}`;
-}
-
-function isTextAttachment(mimeType: string) {
-  const normalized = mimeType.trim().toLowerCase();
-  return normalized.startsWith('text/') || normalized.endsWith('+json') || normalized.endsWith('+xml')
-    || TEXT_ATTACHMENT_TYPES.has(normalized);
 }
 
 function isOpenAiImage(mimeType: string) {
@@ -95,13 +81,14 @@ async function serializeArtifacts(request: AdapterRequest, config: HttpAdapterCo
     if (bytes.length !== artifact.sizeBytes) {
       throw new Error(`Attachment ${artifact.filename} changed after upload`);
     }
+    const text = await extractArtifactText(artifact, bytes);
     serialized.push({
       artifactId: artifact.id,
       filename: artifact.filename,
       mimeType: artifact.mimeType,
       sizeBytes: bytes.length,
       contentBase64: bytes.toString('base64'),
-      ...(isTextAttachment(artifact.mimeType) ? { text: bytes.toString('utf8') } : {}),
+      ...(text === null ? {} : { text }),
     });
   }
 
