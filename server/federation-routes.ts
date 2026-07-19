@@ -28,12 +28,86 @@ const updateCapsuleSchema = z.object({
 
 const eventLine = (event: StreamEvent) => `${JSON.stringify(event)}\n`;
 
+type RetryEvidenceRow = {
+  idempotency_key: string;
+  original_message_id: string;
+  source_message_id: string;
+  output_message_id: string | null;
+  agent_id: string;
+  mode: 'retry' | 'regenerate';
+  status: 'running' | 'completed' | 'failed' | 'cancelled';
+  error: string | null;
+  created_at: string;
+  updated_at: string;
+};
+
 export function registerFederationRoutes(
   app: FastifyInstance,
   database: ChatDatabase,
   collaboration: CollaborationService,
   federation: FederationService,
 ) {
+  app.get('/api/conversations/:id/export/json', async (request, reply) => {
+    const { id } = z.object({ id: z.string().min(1) }).parse(request.params);
+    const conversation = database.getConversation(id);
+    if (!conversation) return reply.status(404).send({ error: 'CONVERSATION_NOT_FOUND' });
+    const { artifacts, ...conversationWithoutArtifacts } = conversation;
+    const publicArtifacts = artifacts.map(({ storagePath: _storagePath, ...artifact }) => artifact);
+    const participants = collaboration.listParticipants(id);
+    const activities = collaboration.listActivities(id, 500);
+    const snapshot = federation.snapshot(id);
+    const retries = database.db.prepare(`
+      SELECT
+        idempotency_key, original_message_id, source_message_id, output_message_id,
+        agent_id, mode, status, error, created_at, updated_at
+      FROM message_retry_attempts
+      WHERE conversation_id = ?
+      ORDER BY created_at ASC, rowid ASC
+    `).all(id) as RetryEvidenceRow[];
+    const payload = {
+      schema: 'chat.ailucy.online/conversation-export-v1',
+      exportedAt: new Date().toISOString(),
+      conversation: {
+        ...conversationWithoutArtifacts,
+        artifacts: publicArtifacts,
+      },
+      collaboration: {
+        participants,
+        activities,
+        activityLimit: 500,
+        activityLimitReached: activities.length === 500,
+      },
+      messageOperations: {
+        retries: retries.map((retry) => ({
+          idempotencyKey: retry.idempotency_key,
+          originalMessageId: retry.original_message_id,
+          sourceMessageId: retry.source_message_id,
+          outputMessageId: retry.output_message_id,
+          agentId: retry.agent_id,
+          mode: retry.mode,
+          status: retry.status,
+          error: retry.error,
+          createdAt: retry.created_at,
+          updatedAt: retry.updated_at,
+        })),
+      },
+      federation: {
+        config: snapshot.config,
+        capsules: snapshot.capsules,
+        workflows: snapshot.runs.map((run) => ({
+          run,
+          events: federation.listEvents(run.id),
+        })),
+      },
+    };
+    reply.header('Content-Type', 'application/json; charset=utf-8');
+    reply.header(
+      'Content-Disposition',
+      `attachment; filename*=UTF-8''${encodeURIComponent(`${conversation.title}.json`)}`,
+    );
+    return reply.send(`${JSON.stringify(payload, null, 2)}\n`);
+  });
+
   app.get('/api/conversations/:id/federation', async (request, reply) => {
     const { id } = z.object({ id: z.string().min(1) }).parse(request.params);
     if (!database.getConversation(id)) return reply.status(404).send({ error: 'CONVERSATION_NOT_FOUND' });
