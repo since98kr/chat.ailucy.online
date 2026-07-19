@@ -14,9 +14,12 @@ The fallback is disabled by default.
 HERMES_PROTOCOL=openai
 HERMES_ARTIFACT_TOOL_ENABLED=true
 HERMES_ARTIFACT_ENVELOPE_ENABLED=true
+CHAT_MAX_INLINE_GENERATED_ARTIFACT_PAYLOAD_BYTES=10485760
 ```
 
 `HERMES_ARTIFACT_TOOL_ENABLED` retains the preferred OpenAI function-tool path. `HERMES_ARTIFACT_ENVELOPE_ENABLED` adds the fallback contract when the gateway strips or hides that tool.
+
+The inline payload limit applies to raw JSON accumulated from both OpenAI function arguments and Chat V2 envelope blocks. It defaults to 10 MiB and is intentionally separate from the final decoded artifact limit. This prevents a broken or hostile backend stream from consuming unbounded server memory before the closing marker arrives.
 
 ## Model contract
 
@@ -34,14 +37,16 @@ Chat V2 inserts a system message instructing Hermes to:
 The JSON object may contain only:
 
 - `filename`;
-- `mime_type` or `mimeType`;
-- exactly one of `content_text`/`contentText` or `content_base64`/`contentBase64`.
+- one MIME field: `mime_type` or `mimeType`;
+- one text field or one base64 field, using only one supported spelling.
 
-Fields such as `path`, `storagePath`, `url`, or any other unrecognized key are rejected.
+Ambiguous alias pairs, fields such as `path`, `storagePath`, `url`, and all other unrecognized keys are rejected. Filename and MIME metadata use the same limits as the preferred function-tool schema.
 
 ## Streaming behavior
 
 The parser recognizes markers even when they are split across arbitrary response chunks. Normal assistant text continues to stream with a short marker look-behind buffer. Envelope JSON is never shown in the message body.
+
+While an envelope is open, Chat V2 measures the buffered UTF-8 bytes on each chunk and fails immediately when the inline transport limit is exceeded. OpenAI function-call arguments are bounded the same way while their streamed fragments are assembled.
 
 Hermes pseudo-content equal to `event: hermes.tool.progress` is treated as internal progress and is not displayed to the user.
 
@@ -66,6 +71,8 @@ Required tests cover:
 - function-tool regression;
 - marker splits across streaming chunks;
 - malformed and unfinished markers;
+- inline payload memory bounds;
+- ambiguous alias rejection;
 - path and URL rejection;
 - duplicate native/envelope rejection;
 - API stream to `artifact.created`;
