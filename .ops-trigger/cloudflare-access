@@ -1,7 +1,8 @@
-triggered_at=2026-07-20T04:15:00+09:00
+triggered_at=2026-07-20T04:30:00+09:00
 requested_by=Tei
 scope=isolated-staging-only
 production=false
 merge=false
 tracking=enabled
 diagnostics=enabled
+account_id_fallback=enabled
