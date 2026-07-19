@@ -19,6 +19,8 @@ function prepareEnvironment() {
   delete process.env.CHAT_PUBLIC_ORIGIN;
   delete process.env.CHAT_ACCESS_TOKEN;
   delete process.env.CHAT_ALLOWED_EMAILS;
+  delete process.env.CHAT_MAX_GENERATED_ARTIFACT_BYTES;
+  delete process.env.CHAT_MAX_INLINE_GENERATED_ARTIFACT_PAYLOAD_BYTES;
   process.env.CHAT_AUTH_MODE = 'disabled';
   return directory;
 }
@@ -37,6 +39,7 @@ describe('deployment preflight', () => {
     expect(report.adapters.letta.mode).toBe('mock');
     expect(report.adapters.hermes.mode).toBe('mock');
     expect(report.checks.find((check) => check.name === 'database-integrity')?.level).toBe('warning');
+    expect(report.checks.find((check) => check.name === 'inline-generated-artifact-payload-limit')?.ok).toBe(true);
   });
 
   it('fails strict mode when authentication and real adapters are not configured', async () => {
@@ -61,5 +64,18 @@ describe('deployment preflight', () => {
     expect(report.ok).toBe(true);
     expect(report.checks.find((check) => check.name === 'authentication')?.ok).toBe(true);
     expect(report.checks.find((check) => check.name === 'public-origin')?.ok).toBe(true);
+  });
+
+  it('fails before deployment when an inline generated artifact limit is invalid', async () => {
+    prepareEnvironment();
+    process.env.CHAT_MAX_INLINE_GENERATED_ARTIFACT_PAYLOAD_BYTES = 'unbounded';
+
+    const report = await runPreflight({ strict: false });
+
+    expect(report.ok).toBe(false);
+    expect(report.checks.find((check) => check.name === 'inline-generated-artifact-payload-limit')).toMatchObject({
+      ok: false,
+      level: 'error',
+    });
   });
 });
