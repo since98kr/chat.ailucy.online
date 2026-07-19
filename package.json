@@ -33,6 +33,8 @@
     "fastify": "latest",
     "jose": "latest",
     "lucide-react": "latest",
+    "mammoth": "latest",
+    "pdfjs-dist": "latest",
     "react": "latest",
     "react-dom": "latest",
     "zod": "latest"
@@ -45,6 +47,7 @@
     "@types/react-dom": "latest",
     "@vitejs/plugin-react": "latest",
     "concurrently": "latest",
+    "jszip": "latest",
     "tsx": "latest",
     "tsup": "latest",
     "typescript": "latest",
