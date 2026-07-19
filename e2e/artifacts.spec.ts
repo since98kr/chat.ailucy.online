@@ -112,7 +112,7 @@ test('v1.5 copies a message and exports sanitized JSON evidence', async ({ page,
   await expect(userMessage.getByRole('button', { name: '메시지 복사됨' })).toBeVisible();
   expect(await page.evaluate(() => navigator.clipboard.readText())).toBe(message);
 
-  await page.getByRole('button', { name: '대화 메뉴' }).click();
+  await page.locator('summary[aria-label="대화 메뉴"]').click();
   const downloadPromise = page.waitForEvent('download');
   await page.getByRole('button', { name: /JSON 증거 내보내기/ }).click();
   const payload = JSON.parse((await readDownload(await downloadPromise)).toString('utf8')) as {
