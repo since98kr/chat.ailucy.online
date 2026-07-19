@@ -5,7 +5,15 @@ import { isInlineImageMime } from '../shared/artifact-mime';
 import { artifactContentUrl, artifactDownloadUrl } from './api';
 import { renderMessageContent } from './message-content';
 
-const sourceBadgeStyle = { flex: '0 0 auto', whiteSpace: 'nowrap' } as const;
+const sourceBadgeStyle = {
+  display: 'inline-block',
+  flex: '0 0 auto',
+  width: 'auto',
+  height: 'auto',
+  visibility: 'visible',
+  opacity: 1,
+  whiteSpace: 'nowrap',
+} as const;
 
 export default function MessageStream({
   conversation,
