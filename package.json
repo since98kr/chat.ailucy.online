@@ -15,6 +15,7 @@
     "test:bridge": "node --test ops/letta-bridge/letta-bridge.nodecheck.mjs",
     "test:e2e": "playwright test",
     "test:e2e:auth": "playwright test --config playwright.auth.config.ts",
+    "test:e2e:staging": "playwright test --config playwright.staging.config.ts",
     "backup": "node dist-server/backup.js create",
     "backup:verify": "node dist-server/backup.js verify",
     "preflight": "node dist-server/preflight.js",

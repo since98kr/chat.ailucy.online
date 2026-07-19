@@ -6,9 +6,12 @@ export default defineConfig({
       ...configDefaults.exclude,
       'e2e/**',
       'e2e-auth/**',
+      'e2e-staging/**',
       'playwright-report/**',
       'playwright-auth-report/**',
+      'playwright-staging-report/**',
       'test-results/**',
+      'test-results-staging-browser/**',
     ],
   },
 });
