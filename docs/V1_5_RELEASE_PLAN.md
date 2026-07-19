@@ -19,10 +19,16 @@ Tracked by Issue #47 and its dedicated implementation PR.
 
 ### 2. Message operations — P1
 
+Implemented in the current v1.5 branch:
+
 - copy user or assistant message content;
-- retry a failed run without duplicating the user message;
-- regenerate a selected assistant response while preserving lineage;
-- make failed and cancelled states understandable and recoverable.
+- retry a failed or cancelled direct response without duplicating the user message;
+- regenerate a completed assistant response while preserving the original response;
+- run only the original response agent against history ending at the source user message;
+- persist original response, source message, new output, mode, status, error, and idempotency key;
+- replay a completed retry for the same idempotency key without creating another response;
+- block direct-message retry inside a federated Conversation and retain workflow resume as the only recovery path;
+- expose the response action and persistent `재생성 N` lineage label on desktop and mobile.
 
 ### 3. Evidence export — P1
 
@@ -31,7 +37,7 @@ v1.5 provides two complementary exports:
 - Markdown for human-readable sharing;
 - sanitized JSON for machine-readable evidence and later migration.
 
-The JSON export contains Conversation metadata, messages, public artifact metadata, participants, activity, routing, federation configuration, Capsules, workflow runs, and available workflow events. Server storage paths and secrets are excluded.
+The authenticated server-generated JSON export contains Conversation metadata, messages, public artifact metadata, participants, activity, retry/regeneration lineage, federation configuration, Capsules, every workflow run, and every persisted workflow event. Server storage paths and secrets are excluded.
 
 ### 4. File-aware UX — P1
 
@@ -40,9 +46,12 @@ Attachment state must be visible as a lifecycle rather than one generic papercli
 1. uploading;
 2. uploaded and waiting for the next message;
 3. attached to the sent message;
-4. delivered to the selected backend;
-5. unsupported or rejected;
-6. returned by AI.
+4. delivering to each selected backend;
+5. delivered to the backend, without claiming model understanding;
+6. unsupported or failed;
+7. returned by AI.
+
+The backend-neutral `artifacts.delivery` contract is being implemented and verified in the multimodal branch. The next v1.5 slice will consume that contract in the message UI after the two branches are integrated, avoiding duplicate or contradictory delivery logic.
 
 ### 5. Release quality — P0
 
@@ -59,16 +68,34 @@ Attachment state must be visible as a lifecycle rather than one generic papercli
 
 | Lane | Main files | Conflict policy |
 |---|---|---|
-| Multimodal core | server adapters, artifact service, runners | owns backend artifact contract |
-| v1.5 UX/export | message stream, header, browser tests | avoids adapter and runner files |
-| Release E2E | staging and external Playwright tests | begins after contracts stabilize |
+| Multimodal core | server adapters, artifact service, runners, delivery contract | owns backend artifact semantics |
+| v1.5 UX/export | message stream, retry route, evidence export, browser tests | avoids duplicating multimodal delivery logic |
+| Release E2E | staging and external Playwright tests | requires exact-head backend and UI evidence |
 
-## Current first slice
+## Completed v1.5 slices
+
+### Slice A — Message actions and evidence
 
 - message copy action;
 - visible AI-generated file provenance;
-- sanitized JSON evidence export;
+- authenticated JSON evidence export;
 - existing Markdown export retained.
+
+### Slice B — Retry and regeneration
+
+- direct response retry and regeneration;
+- original transcript preservation;
+- source-message deduplication;
+- idempotent replay;
+- retry audit table and JSON evidence;
+- desktop and mobile browser coverage;
+- complete type, API, browser, authentication, build, container, and recovery CI pass.
+
+## Next v1.5 slice
+
+- consume per-agent `artifacts.delivery` events from the multimodal branch;
+- show attached, delivering, delivered, unsupported/failed, and AI-returned states without equating delivery with understanding;
+- add local, authenticated, staging, and Cloudflare browser evidence after branch integration.
 
 ## Out of scope
 
