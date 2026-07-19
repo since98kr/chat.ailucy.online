@@ -15,6 +15,26 @@ const sourceBadgeStyle = {
   whiteSpace: 'nowrap',
 } as const;
 
+const deliveryListStyle = {
+  marginTop: 10,
+  display: 'flex',
+  flexWrap: 'wrap',
+  gap: 6,
+} as const;
+
+const deliveryBadgeStyle = {
+  display: 'inline-flex',
+  alignItems: 'center',
+  minHeight: 25,
+  padding: '4px 8px',
+  border: '1px solid rgba(148, 163, 184, .22)',
+  borderRadius: 999,
+  background: 'rgba(148, 163, 184, .07)',
+  color: '#9aa7ba',
+  fontSize: 9,
+  lineHeight: 1.35,
+} as const;
+
 export default function MessageStream({
   conversation,
   selectedSystem,
@@ -62,12 +82,17 @@ export default function MessageStream({
                 && candidate.parentMessageId === message.parentMessageId
                 && candidate.authorId === message.authorId,
               );
+          const artifacts = conversation.artifacts.filter((artifact) => artifact.messageId === message.id);
+          const deliveryResponses = message.role === 'user' && artifacts.length > 0
+            ? messages.filter((candidate) => candidate.role === 'assistant' && candidate.parentMessageId === message.id)
+            : [];
           return (
             <MessageItem
               key={message.id}
               message={message}
               system={message.authorId === '[Letta] Lucy' ? 'letta' : selectedSystem}
-              artifacts={conversation.artifacts.filter((artifact) => artifact.messageId === message.id)}
+              artifacts={artifacts}
+              deliveryResponses={deliveryResponses}
               attemptNumber={siblingAttempts.length}
               onBranch={() => onBranch(message.id)}
               onRetry={(mode) => onRetry(message.id, mode)}
@@ -83,10 +108,11 @@ export default function MessageStream({
   );
 }
 
-function MessageItem({ message, system, artifacts, attemptNumber, onBranch, onRetry, retryEnabled, retrying }: {
+function MessageItem({ message, system, artifacts, deliveryResponses, attemptNumber, onBranch, onRetry, retryEnabled, retrying }: {
   message: MessageRecord;
   system: SystemId;
   artifacts: ArtifactRecord[];
+  deliveryResponses: MessageRecord[];
   attemptNumber: number;
   onBranch: () => void;
   onRetry: (mode: 'retry' | 'regenerate') => void;
@@ -142,7 +168,37 @@ function MessageItem({ message, system, artifacts, attemptNumber, onBranch, onRe
       </div>
       <p>{renderMessageContent(message.content || ' ')}{message.state === 'streaming' && <span className="stream-cursor" />}</p>
       {artifacts.map((artifact) => <ArtifactItem key={artifact.id} artifact={artifact} />)}
+      {isUser && artifacts.length > 0 && <DeliveryLifecycle responses={deliveryResponses} />}
     </article>
+  );
+}
+
+function DeliveryLifecycle({ responses }: { responses: MessageRecord[] }) {
+  if (responses.length === 0) {
+    return (
+      <div aria-label="첨부 전달 상태" style={deliveryListStyle}>
+        <span data-state="attached" style={deliveryBadgeStyle}>메시지에 첨부됨 · 백엔드 전달 대기</span>
+      </div>
+    );
+  }
+
+  return (
+    <div aria-label="첨부 전달 상태" style={deliveryListStyle}>
+      {responses.map((response, index) => {
+        const label = response.state === 'streaming'
+          ? '백엔드 전달 중'
+          : response.state === 'complete'
+            ? '백엔드 전달 완료 · 이해 여부는 응답으로 확인'
+            : response.state === 'cancelled'
+              ? '전달 취소됨'
+              : '미지원 또는 전달 실패';
+        return (
+          <span key={response.id} data-state={response.state} style={deliveryBadgeStyle}>
+            {response.authorId} · {label}{index > 0 ? ` · 시도 ${index + 1}` : ''}
+          </span>
+        );
+      })}
+    </div>
   );
 }
 
