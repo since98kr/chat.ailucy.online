@@ -1,4 +1,4 @@
-import { Archive, Bot, FileDown, GitBranch, Menu, MoreHorizontal, Network, Pin, RotateCcw, Sparkles, Trash2, Users } from 'lucide-react';
+import { Archive, Bot, FileDown, FileJson, GitBranch, Menu, MoreHorizontal, Network, Pin, RotateCcw, Sparkles, Trash2, Users } from 'lucide-react';
 import type { ConversationStatus } from '../shared/contracts';
 import { conversationExportUrl } from './api';
 import type { useChat } from './useChat';
@@ -8,6 +8,10 @@ import type { useFederation } from './useFederation';
 type ChatController = ReturnType<typeof useChat>;
 type CollaborationController = ReturnType<typeof useCollaboration>;
 type FederationController = ReturnType<typeof useFederation>;
+
+function conversationJsonExportUrl(id: string) {
+  return conversationExportUrl(id).replace(/\/markdown$/, '/json');
+}
 
 export default function ChatHeader({
   chat,
@@ -37,7 +41,7 @@ export default function ChatHeader({
   return (
     <header className="chat-header">
       <div className="chat-header__identity">
-        <button className="icon-button mobile-menu" onClick={onMobileMenu}><Menu size={20} /></button>
+        <button className="icon-button mobile-menu" aria-label="메뉴 열기" onClick={onMobileMenu}><Menu size={20} /></button>
         <div className={`agent-avatar agent-avatar--${chat.selectedSystem}`}>
           {chat.selectedSystem === 'letta' ? <Sparkles size={18} /> : <Bot size={19} />}
         </div>
@@ -61,6 +65,7 @@ export default function ChatHeader({
               <button onClick={rename}>이름 변경</button>
               <button onClick={() => chat.branchConversation(chat.activeConversation?.messages.at(-1)?.id)}><GitBranch size={14} /> 현재 지점에서 분기</button>
               {chat.activeConversation && <a href={conversationExportUrl(chat.activeConversation.id)}><FileDown size={14} /> Markdown 내보내기</a>}
+              {chat.activeConversation && <a href={conversationJsonExportUrl(chat.activeConversation.id)}><FileJson size={14} /> JSON 증거 내보내기</a>}
               <button onClick={() => move('archived')}><Archive size={14} /> 보관</button>
               <button className="danger" onClick={() => move('trashed')}><Trash2 size={14} /> 휴지통으로 이동</button>
             </>}
