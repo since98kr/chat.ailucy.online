@@ -84,10 +84,10 @@ describe('ArtifactEnvelopeAccumulator', () => {
     expect(text(accumulator.finish())).toBe('사용자에게 보이는 답변');
   });
 
-  it('rejects an envelope that tries to return a local path', () => {
+  it('rejects an envelope that tries to return a local path immediately', () => {
     const accumulator = new ArtifactEnvelopeAccumulator();
-    accumulator.ingest(`${ARTIFACT_ENVELOPE_OPEN}{"filename":"unsafe.txt","mime_type":"text/plain","content_text":"x","path":"/tmp/unsafe.txt"}${ARTIFACT_ENVELOPE_CLOSE}`);
-    expect(() => accumulator.finish()).toThrow('must not contain path');
+    expect(() => accumulator.ingest(`${ARTIFACT_ENVELOPE_OPEN}{"filename":"unsafe.txt","mime_type":"text/plain","content_text":"x","path":"/tmp/unsafe.txt"}${ARTIFACT_ENVELOPE_CLOSE}`))
+      .toThrow('must not contain path');
   });
 
   it('rejects an unfinished envelope instead of leaking partial JSON', () => {
