@@ -105,6 +105,26 @@ describe('artifact AI roundtrip', () => {
     });
     expect(streamed.statusCode).toBe(200);
     const events = streamed.body.trim().split('\n').map((line) => JSON.parse(line) as StreamEvent);
+    const deliveries = events.filter((event) => event.type === 'artifacts.delivery');
+    expect(deliveries.map((event) => event.type === 'artifacts.delivery' ? event.delivery.state : null))
+      .toEqual(['delivering', 'delivered']);
+    expect(deliveries[0]).toMatchObject({
+      type: 'artifacts.delivery',
+      delivery: {
+        messageId: expect.any(String),
+        agentId: '[Hermes] Lucy',
+        systemId: 'hermes',
+        artifactIds: [inputArtifactId],
+      },
+    });
+    expect(deliveries[1]).toMatchObject({
+      type: 'artifacts.delivery',
+      delivery: {
+        state: 'delivered',
+        detail: expect.stringContaining('model understanding is verified separately'),
+      },
+    });
+
     const generatedEvent = events.find((event) => event.type === 'artifact.created');
     expect(generatedEvent?.type).toBe('artifact.created');
     expect(events.some((event) => event.type === 'content.delta' && event.delta.includes('DOCUMENT_MARKER_RECEIVED'))).toBe(true);
