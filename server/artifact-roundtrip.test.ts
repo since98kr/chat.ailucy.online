@@ -9,14 +9,21 @@ import type { StreamEvent } from '../shared/contracts.js';
 
 process.env.NODE_ENV = 'test';
 
+const PNG_1X1 = Buffer.from(
+  'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAusB9Y9Z4GQAAAAASUVORK5CYII=',
+  'base64',
+);
+
 describe('artifact AI roundtrip', () => {
   let directory: string;
   let backend: Server;
   let app: FastifyInstance;
   let receivedRequest: Record<string, unknown> = {};
+  let backendChatRequests = 0;
 
   beforeEach(async () => {
     directory = mkdtempSync(join(tmpdir(), 'chat-v2-artifact-roundtrip-'));
+    backendChatRequests = 0;
     backend = createServer((request, response) => {
       if (request.url === '/health') {
         response.writeHead(200, { 'Content-Type': 'application/json' });
@@ -24,6 +31,7 @@ describe('artifact AI roundtrip', () => {
         return;
       }
 
+      backendChatRequests += 1;
       const chunks: Buffer[] = [];
       request.on('data', (chunk: Buffer) => chunks.push(Buffer.from(chunk)));
       request.on('end', () => {
@@ -35,6 +43,14 @@ describe('artifact AI roundtrip', () => {
             filename: 'ai-result.txt',
             mime_type: 'text/plain',
             content_text: 'AI_GENERATED_FILE_MARKER_49',
+          },
+        })}\n`);
+        response.write(`${JSON.stringify({
+          type: 'artifact.created',
+          artifact: {
+            filename: 'ai-result.png',
+            mime_type: 'image/png',
+            content_base64: PNG_1X1.toString('base64'),
           },
         })}\n`);
         response.end('{"delta":"DOCUMENT_MARKER_RECEIVED"}\n');
@@ -70,20 +86,21 @@ describe('artifact AI roundtrip', () => {
     vi.resetModules();
   });
 
-  it('delivers document-only context and persists an AI-generated file', async () => {
+  async function createConversation(title: string) {
     const created = await app.inject({
       method: 'POST',
       url: '/api/conversations',
-      payload: { systemId: 'hermes', agentId: '[Hermes] Lucy', title: 'Artifact roundtrip' },
+      payload: { systemId: 'hermes', agentId: '[Hermes] Lucy', title },
     });
     expect(created.statusCode).toBe(201);
-    const conversationId = created.json().conversation.id as string;
+    return created.json().conversation.id as string;
+  }
 
-    const boundary = '----chat-v2-artifact-test';
-    const note = Buffer.from('DOCUMENT_ONLY_MARKER_7C11', 'utf8');
+  async function upload(conversationId: string, input: { filename: string; mimeType: string; bytes: Buffer }) {
+    const boundary = `----chat-v2-artifact-${crypto.randomUUID()}`;
     const multipart = Buffer.concat([
-      Buffer.from(`--${boundary}\r\nContent-Disposition: form-data; name="file"; filename="marker.txt"\r\nContent-Type: text/plain\r\n\r\n`, 'utf8'),
-      note,
+      Buffer.from(`--${boundary}\r\nContent-Disposition: form-data; name="file"; filename="${input.filename}"\r\nContent-Type: ${input.mimeType}\r\n\r\n`, 'utf8'),
+      input.bytes,
       Buffer.from(`\r\n--${boundary}--\r\n`, 'utf8'),
     ]);
     const uploaded = await app.inject({
@@ -93,7 +110,16 @@ describe('artifact AI roundtrip', () => {
       payload: multipart,
     });
     expect(uploaded.statusCode).toBe(201);
-    const inputArtifactId = uploaded.json().artifact.id as string;
+    return uploaded.json().artifact.id as string;
+  }
+
+  it('delivers document-only context and persists AI-generated text and PNG files', async () => {
+    const conversationId = await createConversation('Artifact roundtrip');
+    const inputArtifactId = await upload(conversationId, {
+      filename: 'marker.txt',
+      mimeType: 'text/plain',
+      bytes: Buffer.from('DOCUMENT_ONLY_MARKER_7C11', 'utf8'),
+    });
 
     const streamed = await app.inject({
       method: 'POST',
@@ -125,9 +151,10 @@ describe('artifact AI roundtrip', () => {
       },
     });
 
-    const generatedEvent = events.find((event) => event.type === 'artifact.created');
-    expect(generatedEvent?.type).toBe('artifact.created');
+    const generatedEvents = events.filter((event) => event.type === 'artifact.created');
+    expect(generatedEvents).toHaveLength(2);
     expect(events.some((event) => event.type === 'content.delta' && event.delta.includes('DOCUMENT_MARKER_RECEIVED'))).toBe(true);
+    expect(backendChatRequests).toBe(1);
 
     const messages = receivedRequest.messages as Array<{ role: string; content: string | Array<{ type: string; text?: string }> }>;
     const currentContent = messages.at(-1)?.content;
@@ -138,17 +165,57 @@ describe('artifact AI roundtrip', () => {
     expect(detail.statusCode).toBe(200);
     const conversation = detail.json().conversation as {
       messages: Array<{ id: string; role: string }>;
-      artifacts: Array<{ id: string; messageId: string | null; filename: string; sizeBytes: number }>;
+      artifacts: Array<{ id: string; messageId: string | null; filename: string; mimeType: string; sizeBytes: number }>;
     };
     const assistant = conversation.messages.find((message) => message.role === 'assistant');
-    const generated = conversation.artifacts.find((artifact) => artifact.filename === 'ai-result.txt');
-    expect(generated).toMatchObject({
+    const generatedText = conversation.artifacts.find((artifact) => artifact.filename === 'ai-result.txt');
+    const generatedPng = conversation.artifacts.find((artifact) => artifact.filename === 'ai-result.png');
+    expect(generatedText).toMatchObject({
       messageId: assistant?.id,
+      mimeType: 'text/plain',
       sizeBytes: Buffer.byteLength('AI_GENERATED_FILE_MARKER_49'),
     });
+    expect(generatedPng).toMatchObject({
+      messageId: assistant?.id,
+      mimeType: 'image/png',
+      sizeBytes: PNG_1X1.length,
+    });
 
-    const downloaded = await app.inject({ method: 'GET', url: `/api/artifacts/${generated?.id}/download` });
-    expect(downloaded.statusCode).toBe(200);
-    expect(downloaded.rawPayload).toEqual(Buffer.from('AI_GENERATED_FILE_MARKER_49', 'utf8'));
+    const textDownload = await app.inject({ method: 'GET', url: `/api/artifacts/${generatedText?.id}/download` });
+    expect(textDownload.statusCode).toBe(200);
+    expect(textDownload.rawPayload).toEqual(Buffer.from('AI_GENERATED_FILE_MARKER_49', 'utf8'));
+    const pngDownload = await app.inject({ method: 'GET', url: `/api/artifacts/${generatedPng?.id}/download` });
+    expect(pngDownload.statusCode).toBe(200);
+    expect(pngDownload.rawPayload).toEqual(PNG_1X1);
+  });
+
+  it('reports an unsupported binary without calling the AI backend', async () => {
+    const conversationId = await createConversation('Unsupported artifact');
+    const artifactId = await upload(conversationId, {
+      filename: 'archive.zip',
+      mimeType: 'application/zip',
+      bytes: Buffer.from('PK fake zip content', 'utf8'),
+    });
+    const streamed = await app.inject({
+      method: 'POST',
+      url: `/api/conversations/${conversationId}/messages/stream`,
+      payload: { content: '이 압축파일을 읽어주세요.', artifactIds: [artifactId] },
+    });
+    expect(streamed.statusCode).toBe(200);
+    const events = streamed.body.trim().split('\n').map((line) => JSON.parse(line) as StreamEvent);
+    const deliveries = events.filter((event) => event.type === 'artifacts.delivery');
+    expect(deliveries.map((event) => event.type === 'artifacts.delivery' ? event.delivery.state : null))
+      .toEqual(['delivering', 'unsupported']);
+    expect(deliveries[1]).toMatchObject({
+      type: 'artifacts.delivery',
+      delivery: {
+        agentId: '[Hermes] Lucy',
+        artifactIds: [artifactId],
+        state: 'unsupported',
+        detail: expect.stringContaining('does not support attachment type: application/zip'),
+      },
+    });
+    expect(events.some((event) => event.type === 'run.failed')).toBe(true);
+    expect(backendChatRequests).toBe(0);
   });
 });
