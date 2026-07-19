@@ -1,4 +1,5 @@
-import { Bot, Download, FileText, GitBranch, Image, LoaderCircle } from 'lucide-react';
+import { useState } from 'react';
+import { Bot, Check, Copy, Download, FileText, GitBranch, Image, LoaderCircle } from 'lucide-react';
 import type { ArtifactRecord, ConversationDetail, MessageRecord, SystemId } from '../shared/contracts';
 import { isInlineImageMime } from '../shared/artifact-mime';
 import { artifactContentUrl, artifactDownloadUrl } from './api';
@@ -59,8 +60,17 @@ function MessageItem({ message, system, artifacts, onBranch }: {
   artifacts: ArtifactRecord[];
   onBranch: () => void;
 }) {
+  const [copied, setCopied] = useState(false);
   const isUser = message.role === 'user';
   const agentClass = !isUser ? ` message--${message.authorId.toLowerCase().replace(/[^a-z0-9]+/g, '-')}` : '';
+
+  const copyMessage = async () => {
+    if (!message.content) return;
+    await navigator.clipboard.writeText(message.content);
+    setCopied(true);
+    window.setTimeout(() => setCopied(false), 1_500);
+  };
+
   return (
     <article className={`message ${isUser ? 'message--user' : 'message--assistant'}${agentClass}`}>
       <div className="message__meta">
@@ -69,7 +79,18 @@ function MessageItem({ message, system, artifacts, onBranch }: {
         <span>{formatTime(message.createdAt)}</span>
         {message.state !== 'complete' && <em>{message.state}</em>}
         {!isUser && message.authorId !== '[Hermes] Lucy' && <small className="source-output">원문</small>}
-        <button className="message-branch" onClick={onBranch} title="이 메시지까지 새 Conversation으로 분기"><GitBranch size={13} /></button>
+        {!isUser && artifacts.length > 0 && <small className="source-output">AI 생성 파일 {artifacts.length}</small>}
+        {message.content && (
+          <button
+            className="message-branch"
+            onClick={() => void copyMessage()}
+            title={copied ? '복사됨' : '메시지 복사'}
+            aria-label={copied ? '메시지 복사됨' : '메시지 복사'}
+          >
+            {copied ? <Check size={13} /> : <Copy size={13} />}
+          </button>
+        )}
+        <button className="message-branch" onClick={onBranch} title="이 메시지까지 새 Conversation으로 분기" aria-label="이 메시지에서 분기"><GitBranch size={13} /></button>
       </div>
       <p>{renderMessageContent(message.content || ' ')}{message.state === 'streaming' && <span className="stream-cursor" />}</p>
       {artifacts.map((artifact) => <ArtifactItem key={artifact.id} artifact={artifact} />)}
