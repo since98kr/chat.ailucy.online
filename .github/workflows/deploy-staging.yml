@@ -25,7 +25,7 @@ jobs:
     name: Deploy and verify isolated staging
     runs-on: [self-hosted, linux, x64, chat-staging]
     environment: staging
-    timeout-minutes: 60
+    timeout-minutes: 70
 
     steps:
       - name: Checkout approved revision
@@ -113,6 +113,20 @@ jobs:
           CHAT_STAGING_EMAIL: ${{ vars.CHAT_ALLOWED_EMAILS }}
         run: bash scripts/ops/staging-browser-smoke.sh
 
+      - name: Verify public Cloudflare Access and artifact transport
+        env:
+          CHAT_EXTERNAL_QA_REQUIRED: ${{ vars.CHAT_EXTERNAL_QA_REQUIRED }}
+          CHAT_STAGING_BASE_URL: ${{ vars.CHAT_PUBLIC_ORIGIN }}
+          CF_ACCESS_CLIENT_ID: ${{ vars.CF_ACCESS_CLIENT_ID }}
+          CF_ACCESS_CLIENT_SECRET: ${{ secrets.CF_ACCESS_CLIENT_SECRET }}
+        run: |
+          set -euo pipefail
+          if [[ "${CHAT_EXTERNAL_QA_REQUIRED,,}" != 'true' ]]; then
+            echo '[chat-v2-external-smoke] SKIP: external QA is not activated.'
+            exit 0
+          fi
+          bash scripts/ops/external-staging-browser-smoke.sh
+
       - name: Publish deployment summary
         if: always()
         shell: bash
@@ -122,7 +136,9 @@ jobs:
             echo
             echo "- Requested revision: \`$(git rev-parse HEAD)\`"
             echo '- Local endpoint: `http://127.0.0.1:14174`'
-            echo '- Required gates: deploy, Hermes, Letta, Chromium links and artifacts'
+            echo "- Public endpoint: \`${{ vars.CHAT_PUBLIC_ORIGIN }}\`"
+            echo "- External QA required: \`${{ vars.CHAT_EXTERNAL_QA_REQUIRED || 'false' }}\`"
+            echo '- Required gates: deploy, Hermes, Letta, local Chromium, optional public Cloudflare Chromium'
             for item in last-deployment.json last-preflight.json last-backup.json last-backup-verify.json last-health.json last-ops-status.json; do
               path="/opt/chat-v2/staging/state/${item}"
               if [[ -f "${path}" ]]; then
@@ -151,6 +167,8 @@ jobs:
             /opt/chat-v2/staging/state/last-ops-status.json
             test-results-staging-browser
             playwright-staging-report
+            test-results-external-staging-browser
+            playwright-external-staging-report
           if-no-files-found: warn
           retention-days: 30
 
@@ -170,7 +188,7 @@ jobs:
               state: success ? 'success' : 'failure',
               context: 'chat-v2/staging',
               description: success
-                ? 'Staging deploy and full QA passed'
+                ? 'Staging deploy and configured QA gates passed'
                 : 'Staging deploy or QA failed',
               target_url: `${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`,
             });

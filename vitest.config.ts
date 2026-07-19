@@ -10,8 +10,10 @@ export default defineConfig({
       'playwright-report/**',
       'playwright-auth-report/**',
       'playwright-staging-report/**',
+      'playwright-external-staging-report/**',
       'test-results/**',
       'test-results-staging-browser/**',
+      'test-results-external-staging-browser/**',
     ],
   },
 });

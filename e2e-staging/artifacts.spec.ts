@@ -10,6 +10,28 @@ const SVG = Buffer.from('<svg xmlns="http://www.w3.org/2000/svg"><text>staging-d
 
 type ApiContext = Awaited<ReturnType<typeof apiRequest.newContext>>;
 
+function authenticationHeaders() {
+  const clientId = process.env.CF_ACCESS_CLIENT_ID?.trim();
+  const clientSecret = process.env.CF_ACCESS_CLIENT_SECRET?.trim();
+  if (clientId || clientSecret) {
+    if (!clientId || !clientSecret) throw new Error('Both CF_ACCESS_CLIENT_ID and CF_ACCESS_CLIENT_SECRET are required');
+    return {
+      headers: {
+        'CF-Access-Client-Id': clientId,
+        'CF-Access-Client-Secret': clientSecret,
+      },
+      expectedIdentity: `service:${clientId.toLowerCase()}`,
+    };
+  }
+
+  const email = process.env.CHAT_STAGING_EMAIL?.trim().toLowerCase();
+  if (!email) throw new Error('CHAT_STAGING_EMAIL or Cloudflare Access service credentials are required');
+  return {
+    headers: { 'Cf-Access-Authenticated-User-Email': email },
+    expectedIdentity: email,
+  };
+}
+
 async function readDownload(download: import('@playwright/test').Download) {
   const stream = await download.createReadStream();
   if (!stream) throw new Error('Download stream is unavailable');
@@ -49,13 +71,11 @@ test('real staging supports chat links and durable artifact transport', async ({
   test.setTimeout(180_000);
 
   const baseURL = process.env.CHAT_STAGING_BASE_URL?.trim() || 'http://127.0.0.1:14174';
-  const email = process.env.CHAT_STAGING_EMAIL?.trim();
-  if (!email) throw new Error('CHAT_STAGING_EMAIL is required');
-
+  const auth = authenticationHeaders();
   const api = await apiRequest.newContext({
     baseURL,
     extraHTTPHeaders: {
-      'Cf-Access-Authenticated-User-Email': email,
+      ...auth.headers,
       Origin: new URL(baseURL).origin,
     },
   });
@@ -64,6 +84,14 @@ test('real staging supports chat links and durable artifact transport', async ({
   let conversationId = '';
 
   try {
+    const session = await api.get('/api/auth/session');
+    expect(session.ok()).toBe(true);
+    expect(await session.json()).toMatchObject({
+      authenticated: true,
+      mode: 'cloudflare',
+      identity: auth.expectedIdentity,
+    });
+
     await cleanStaleQaConversations(api);
     await page.goto('/');
     await expect(page.getByText('ailucy.online', { exact: true })).toBeVisible();
