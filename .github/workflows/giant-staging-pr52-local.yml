@@ -23,7 +23,7 @@ jobs:
       - name: Checkout approved giant-step revision
         uses: actions/checkout@v4
         with:
-          ref: c7800667c6c5e7451c37d5b7e49a0de8b20fbcf3
+          ref: 7327a8a512a7d64da5a21be9e81063ef45e0f890
           clean: true
 
       - name: Setup Node.js
@@ -35,7 +35,7 @@ jobs:
         id: source
         run: |
           set -euo pipefail
-          test "$(git rev-parse HEAD)" = "c7800667c6c5e7451c37d5b7e49a0de8b20fbcf3"
+          test "$(git rev-parse HEAD)" = "7327a8a512a7d64da5a21be9e81063ef45e0f890"
           echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
 
       - name: Mark staging pending
