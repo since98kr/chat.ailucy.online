@@ -2,6 +2,7 @@ import type { AdapterHealthRecord, SystemId } from '../../shared/contracts.js';
 import type { AdapterRequest, ChatBackendAdapter } from './types.js';
 import { MockAdapter } from './mock.js';
 import { HttpAgentAdapter, httpAdapterConfig } from './http.js';
+import { augmentNativeArtifactContext } from './native-artifacts.js';
 
 export function resolveNativeTargetAgentId(
   requestedAgentId: string,
@@ -29,9 +30,9 @@ function wrapNativeAgentMapping(
         configuredAgentId,
         modelMap,
       );
-      yield* adapter.streamReply(
-        targetAgentId === request.targetAgentId ? request : { ...request, targetAgentId },
-      );
+      const mapped = targetAgentId === request.targetAgentId ? request : { ...request, targetAgentId };
+      const withArtifacts = await augmentNativeArtifactContext(adapter.systemId, mapped);
+      yield* adapter.streamReply(withArtifacts);
     },
   };
 }
