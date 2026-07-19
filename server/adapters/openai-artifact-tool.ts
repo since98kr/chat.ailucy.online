@@ -24,6 +24,7 @@ export const RETURN_ARTIFACT_TOOL = {
 type ToolState = {
   name: string;
   arguments: string;
+  argumentBytes: number;
 };
 
 const DEFAULT_INLINE_GENERATED_ARTIFACT_PAYLOAD_BYTES = 10 * 1024 * 1024;
@@ -136,14 +137,23 @@ export class OpenAiArtifactToolAccumulator {
 
   ingest(payload: unknown) {
     for (const call of toolCalls(payload)) {
-      const state = this.states.get(call.index) ?? { name: '', arguments: '' };
-      if (call.name) state.name = call.name;
+      let state = this.states.get(call.index);
+      if (!state) {
+        if (call.name !== RETURN_ARTIFACT_TOOL_NAME) continue;
+        state = { name: RETURN_ARTIFACT_TOOL_NAME, arguments: '', argumentBytes: 0 };
+      } else if (call.name && call.name !== RETURN_ARTIFACT_TOOL_NAME) {
+        this.states.delete(call.index);
+        continue;
+      }
+
       if (call.arguments) {
-        const nextArguments = state.arguments + call.arguments;
-        if (Buffer.byteLength(nextArguments, 'utf8') > this.maxArgumentBytes) {
+        const fragmentBytes = Buffer.byteLength(call.arguments, 'utf8');
+        const nextBytes = state.argumentBytes + fragmentBytes;
+        if (nextBytes > this.maxArgumentBytes) {
           throw new Error(`return_artifact tool arguments exceed ${this.maxArgumentBytes} bytes`);
         }
-        state.arguments = nextArguments;
+        state.arguments += call.arguments;
+        state.argumentBytes = nextBytes;
       }
       this.states.set(call.index, state);
     }
