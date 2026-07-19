@@ -25,6 +25,20 @@ jobs:
     timeout-minutes: 90
 
     steps:
+      - name: Mark giant step pending
+        uses: actions/github-script@v7
+        with:
+          script: |
+            await github.rest.repos.createCommitStatus({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              sha: context.sha,
+              state: 'pending',
+              context: 'chat-v2/cloudflare-giant-step',
+              description: 'Access bootstrap and public staging QA are running',
+              target_url: `${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`,
+            });
+
       - name: Checkout bootstrap controller
         uses: actions/checkout@v4
         with:
@@ -201,7 +215,7 @@ jobs:
               state_reason: 'completed',
             });
 
-      - name: Publish public staging status
+      - name: Publish giant-step result
         if: always()
         uses: actions/github-script@v7
         env:
@@ -209,14 +223,25 @@ jobs:
           DEPLOY_RESULT: ${{ job.status }}
         with:
           script: |
-            if (!process.env.DEPLOY_SHA) return;
             const success = process.env.DEPLOY_RESULT === 'success';
+            const targetUrl = `${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`;
             await github.rest.repos.createCommitStatus({
               owner: context.repo.owner,
               repo: context.repo.repo,
-              sha: process.env.DEPLOY_SHA,
+              sha: context.sha,
               state: success ? 'success' : 'failure',
-              context: 'chat-v2/cloudflare-e2e',
-              description: success ? 'Access and public staging QA passed' : 'Access bootstrap or public QA failed',
-              target_url: `${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`,
+              context: 'chat-v2/cloudflare-giant-step',
+              description: success ? 'Access bootstrap and public staging QA passed' : 'Access bootstrap or public QA failed',
+              target_url: targetUrl,
             });
+            if (process.env.DEPLOY_SHA) {
+              await github.rest.repos.createCommitStatus({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                sha: process.env.DEPLOY_SHA,
+                state: success ? 'success' : 'failure',
+                context: 'chat-v2/cloudflare-e2e',
+                description: success ? 'Access and public staging QA passed' : 'Access bootstrap or public QA failed',
+                target_url: targetUrl,
+              });
+            }
