@@ -41,7 +41,7 @@ export default function ChatHeader({
   return (
     <header className="chat-header">
       <div className="chat-header__identity">
-        <button className="icon-button mobile-menu" onClick={onMobileMenu}><Menu size={20} /></button>
+        <button className="icon-button mobile-menu" aria-label="메뉴 열기" onClick={onMobileMenu}><Menu size={20} /></button>
         <div className={`agent-avatar agent-avatar--${chat.selectedSystem}`}>
           {chat.selectedSystem === 'letta' ? <Sparkles size={18} /> : <Bot size={19} />}
         </div>
