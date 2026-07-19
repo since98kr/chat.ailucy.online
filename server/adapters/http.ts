@@ -1,11 +1,12 @@
 import { readFile } from 'node:fs/promises';
-import type { AdapterHealthRecord, ArtifactRecord, MessageRecord, SystemId } from '../../shared/contracts.js';
+import type { AdapterHealthRecord, MessageRecord, SystemId } from '../../shared/contracts.js';
 import type {
   AdapterGeneratedArtifact,
   AdapterRequest,
   AdapterStreamItem,
   ChatBackendAdapter,
 } from './types.js';
+import { OpenAiArtifactToolAccumulator, RETURN_ARTIFACT_TOOL } from './openai-artifact-tool.js';
 
 type HttpAdapterProtocol = 'native' | 'openai';
 
@@ -20,6 +21,7 @@ type HttpAdapterConfig = {
   modelMap?: Record<string, string>;
   maxArtifactBytes?: number;
   maxArtifactTotalBytes?: number;
+  artifactToolEnabled?: boolean;
 };
 
 type SerializedArtifact = {
@@ -253,6 +255,25 @@ function parseModelMap(value: string | undefined): Record<string, string> | unde
   return map;
 }
 
+function parseBoolean(value: string | undefined) {
+  return (value ?? '').trim().toLowerCase() === 'true';
+}
+
+function processPayload(
+  payload: unknown,
+  toolAccumulator: OpenAiArtifactToolAccumulator,
+): AdapterStreamItem[] {
+  toolAccumulator.ingest(payload);
+  const items: AdapterStreamItem[] = [];
+  const artifact = extractArtifact(payload);
+  if (artifact) items.push({ type: 'artifact', artifact });
+  const status = extractStatus(payload);
+  if (status) items.push({ type: 'status', status });
+  const delta = extractDelta(payload);
+  if (delta) items.push({ type: 'delta', delta });
+  return items;
+}
+
 export class HttpAgentAdapter implements ChatBackendAdapter {
   readonly systemId: SystemId;
   readonly config: HttpAdapterConfig;
@@ -283,6 +304,10 @@ export class HttpAgentAdapter implements ChatBackendAdapter {
         model,
         messages: toOpenAiMessages(request, artifacts),
         stream: true,
+        ...(this.config.artifactToolEnabled ? {
+          tools: [RETURN_ARTIFACT_TOOL],
+          tool_choice: 'auto',
+        } : {}),
       };
     }
 
@@ -377,14 +402,11 @@ export class HttpAgentAdapter implements ChatBackendAdapter {
       throw new Error(`${this.systemId} backend ${response.status}: ${detail.slice(0, 500)}`);
     }
 
+    const toolAccumulator = new OpenAiArtifactToolAccumulator();
     if (!response.body) {
       const payload = await response.json().catch(() => null);
-      const artifact = extractArtifact(payload);
-      if (artifact) yield { type: 'artifact', artifact };
-      const status = extractStatus(payload);
-      if (status) yield { type: 'status', status };
-      const delta = extractDelta(payload);
-      if (delta) yield { type: 'delta', delta };
+      for (const item of processPayload(payload, toolAccumulator)) yield item;
+      for (const artifact of toolAccumulator.finish()) yield { type: 'artifact', artifact };
       return;
     }
 
@@ -410,12 +432,7 @@ export class HttpAgentAdapter implements ChatBackendAdapter {
           yield { type: 'delta', delta: line };
           continue;
         }
-        const artifact = extractArtifact(payload);
-        if (artifact) yield { type: 'artifact', artifact };
-        const status = extractStatus(payload);
-        if (status) yield { type: 'status', status };
-        const delta = extractDelta(payload);
-        if (delta) yield { type: 'delta', delta };
+        for (const item of processPayload(payload, toolAccumulator)) yield item;
       }
       if (done) break;
     }
@@ -424,17 +441,13 @@ export class HttpAgentAdapter implements ChatBackendAdapter {
     if (trailing && trailing !== '[DONE]') {
       try {
         const payload = JSON.parse(trailing) as unknown;
-        const artifact = extractArtifact(payload);
-        if (artifact) yield { type: 'artifact', artifact };
-        const status = extractStatus(payload);
-        if (status) yield { type: 'status', status };
-        const delta = extractDelta(payload);
-        if (delta) yield { type: 'delta', delta };
+        for (const item of processPayload(payload, toolAccumulator)) yield item;
       } catch (error) {
         if (error instanceof SyntaxError) yield { type: 'delta', delta: trailing };
         else throw error;
       }
     }
+    for (const artifact of toolAccumulator.finish()) yield { type: 'artifact', artifact };
   }
 }
 
@@ -453,5 +466,6 @@ export function httpAdapterConfig(systemId: SystemId): HttpAdapterConfig | null 
     modelMap: parseModelMap(process.env[`${prefix}_MODEL_MAP_JSON`]),
     maxArtifactBytes: Number(process.env[`${prefix}_MAX_ARTIFACT_BYTES`] ?? 10 * 1024 * 1024),
     maxArtifactTotalBytes: Number(process.env[`${prefix}_MAX_ARTIFACT_TOTAL_BYTES`] ?? 20 * 1024 * 1024),
+    artifactToolEnabled: parseBoolean(process.env[`${prefix}_ARTIFACT_TOOL_ENABLED`]),
   };
 }
