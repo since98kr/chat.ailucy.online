@@ -8,6 +8,7 @@ export type ParticipantState = 'active' | 'idle' | 'working' | 'reviewing' | 'bl
 export type TeamActivityType = 'joined' | 'left' | 'assigned' | 'status' | 'output' | 'completed' | 'failed';
 export type RoutingMode = 'direct' | 'lead' | 'team';
 export type MemoryCapsuleStatus = 'draft' | 'approved' | 'revoked';
+export type ArtifactDeliveryState = 'delivering' | 'delivered' | 'unsupported' | 'failed';
 export type WorkflowRunStatus = 'queued' | 'running' | 'paused' | 'completed' | 'failed' | 'cancelled';
 export type WorkflowStepStatus = 'pending' | 'running' | 'completed' | 'failed' | 'skipped' | 'cancelled';
 export type WorkflowEventType =
@@ -112,6 +113,16 @@ export interface ArtifactRecord {
   createdAt: string;
 }
 
+export interface ArtifactDeliveryRecord {
+  runId: string;
+  messageId: string;
+  agentId: string;
+  systemId: SystemId;
+  artifactIds: string[];
+  state: ArtifactDeliveryState;
+  detail: string | null;
+}
+
 export interface ConversationDetail extends ConversationRecord {
   messages: MessageRecord[];
   artifacts: ArtifactRecord[];
@@ -209,6 +220,7 @@ export type StreamEvent =
   | { type: 'message.accepted'; message: MessageRecord }
   | { type: 'message.created'; message: MessageRecord }
   | { type: 'artifacts.attached'; messageId: string; artifacts: ArtifactRecord[] }
+  | { type: 'artifacts.delivery'; delivery: ArtifactDeliveryRecord }
   | { type: 'routing.resolved'; routing: RoutingPlanRecord }
   | { type: 'team.activity'; activity: TeamActivityRecord }
   | { type: 'participants.updated'; participants: ConversationParticipantRecord[] }
