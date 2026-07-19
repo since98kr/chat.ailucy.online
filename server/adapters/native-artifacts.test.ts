@@ -93,10 +93,10 @@ describe('augmentNativeArtifactContext', () => {
       .rejects.toThrow('letta native backend does not support attachment type: image/png');
   });
 
-  it('enforces the native text context byte limit', async () => {
+  it('enforces the native document extraction input limit', async () => {
     process.env.LETTA_MAX_TEXT_ARTIFACT_BYTES = '4';
     const input = await artifact('large.txt', 'text/plain', Buffer.from('12345', 'utf8'));
     await expect(augmentNativeArtifactContext('letta', request([input])))
-      .rejects.toThrow('text attachments exceed the 4-byte context limit');
+      .rejects.toThrow('document attachments exceed the 4-byte extraction input limit');
   });
 });
