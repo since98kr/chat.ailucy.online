@@ -2,12 +2,17 @@
 
 import { chmod, mkdir, readFile, rename, writeFile } from 'node:fs/promises';
 import { dirname } from 'node:path';
+import { pathToFileURL } from 'node:url';
 
-const API_ROOT = 'https://api.cloudflare.com/client/v4';
+const DEFAULT_API_ROOT = 'https://api.cloudflare.com/client/v4';
 const APP_NAME = 'Chat V2 isolated staging';
 const HUMAN_POLICY_NAME = 'Chat V2 staging human access';
 const SERVICE_POLICY_NAME = 'Chat V2 staging automated E2E';
 const SERVICE_TOKEN_NAME = 'chat-v2-staging-e2e';
+
+function apiRoot() {
+  return (process.env.CLOUDFLARE_API_ROOT?.trim() || DEFAULT_API_ROOT).replace(/\/$/, '');
+}
 
 function required(name) {
   const value = process.env[name]?.trim();
@@ -30,7 +35,7 @@ function secretFilePath() {
 }
 
 async function cloudflare(path, options = {}) {
-  const response = await fetch(`${API_ROOT}${path}`, {
+  const response = await fetch(`${apiRoot()}${path}`, {
     ...options,
     headers: {
       Authorization: `Bearer ${required('CLOUDFLARE_API_TOKEN')}`,
@@ -187,11 +192,11 @@ async function ensureServicePolicy(accountId, application, serviceTokenId) {
   console.log('[cloudflare-bootstrap] Created the Service Auth policy.');
 }
 
-async function main() {
+export async function main() {
   const accountId = required('CLOUDFLARE_ACCOUNT_ID');
   const origin = new URL(process.env.CHAT_PUBLIC_ORIGIN?.trim() || 'https://chat-staging.ailucy.online');
-  if (origin.protocol !== 'https:' || origin.pathname !== '/') {
-    throw new Error('CHAT_PUBLIC_ORIGIN must be an HTTPS origin without a path');
+  if (origin.protocol !== 'https:' || origin.pathname !== '/' || origin.search || origin.hash) {
+    throw new Error('CHAT_PUBLIC_ORIGIN must be an HTTPS origin without a path, query, or fragment');
   }
   const emails = allowedEmails();
   const path = secretFilePath();
@@ -222,14 +227,18 @@ async function main() {
   };
   await writeState(path, state);
 
-  console.log(`[cloudflare-bootstrap] Access application, human policy, service policy, and local credential state are ready.`);
+  console.log('[cloudflare-bootstrap] Access application, human policy, service policy, and local credential state are ready.');
   console.log(`[cloudflare-bootstrap] State written with mode 0600 to ${path}.`);
   console.log(`[cloudflare-bootstrap] client-id=${state.clientId}`);
   console.log(`[cloudflare-bootstrap] issuer=${state.issuer}`);
   console.log(`[cloudflare-bootstrap] audience=${state.audience}`);
+  return state;
 }
 
-main().catch((error) => {
-  console.error(`[cloudflare-bootstrap] ERROR: ${error instanceof Error ? error.message : String(error)}`);
-  process.exitCode = 1;
-});
+const invokedDirectly = process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href;
+if (invokedDirectly) {
+  main().catch((error) => {
+    console.error(`[cloudflare-bootstrap] ERROR: ${error instanceof Error ? error.message : String(error)}`);
+    process.exitCode = 1;
+  });
+}
