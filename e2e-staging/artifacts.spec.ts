@@ -1,11 +1,14 @@
 import { expect, request as apiRequest, test } from '@playwright/test';
 
+const QA_TITLE_PREFIX = 'STAGING_BROWSER_ARTIFACT_QA_';
 const PNG_1X1 = Buffer.from(
   'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAusB9Y9Z4GQAAAAASUVORK5CYII=',
   'base64',
 );
 const NOTE = Buffer.from('CHAT_V2_STAGING_ARTIFACT_BYTE_MATCH\n한글 실제 staging 검증\n', 'utf8');
 const SVG = Buffer.from('<svg xmlns="http://www.w3.org/2000/svg"><text>staging-download-only</text></svg>', 'utf8');
+
+type ApiContext = Awaited<ReturnType<typeof apiRequest.newContext>>;
 
 async function readDownload(download: import('@playwright/test').Download) {
   const stream = await download.createReadStream();
@@ -19,6 +22,27 @@ async function requireStatus(response: import('@playwright/test').Response, expe
   if (response.status() === expected) return;
   const detail = await response.text().catch(() => '');
   throw new Error(`${operation} returned ${response.status()}: ${detail.slice(0, 500)}`);
+}
+
+async function deleteQaConversation(api: ApiContext, conversationId: string, alreadyTrashed = false) {
+  if (!alreadyTrashed) {
+    const trashed = await api.patch(`/api/conversations/${conversationId}`, { data: { status: 'trashed' } });
+    if (!trashed.ok()) return false;
+  }
+  const deleted = await api.delete(`/api/conversations/${conversationId}`);
+  return deleted.ok();
+}
+
+async function cleanStaleQaConversations(api: ApiContext) {
+  for (const status of ['active', 'archived', 'trashed'] as const) {
+    const response = await api.get(`/api/conversations?status=${status}`);
+    if (!response.ok()) continue;
+    const payload = await response.json() as { conversations?: Array<{ id?: string; title?: string }> };
+    for (const conversation of payload.conversations ?? []) {
+      if (!conversation.id || !conversation.title?.startsWith(QA_TITLE_PREFIX)) continue;
+      await deleteQaConversation(api, conversation.id, status === 'trashed');
+    }
+  }
 }
 
 test('real staging supports chat links and durable artifact transport', async ({ page }, testInfo) => {
@@ -36,10 +60,11 @@ test('real staging supports chat links and durable artifact transport', async ({
     },
   });
 
-  const marker = `STAGING_BROWSER_ARTIFACT_QA_${Date.now()}`;
+  const marker = `${QA_TITLE_PREFIX}${Date.now()}`;
   let conversationId = '';
 
   try {
+    await cleanStaleQaConversations(api);
     await page.goto('/');
     await expect(page.getByText('ailucy.online', { exact: true })).toBeVisible();
 
@@ -114,6 +139,9 @@ test('real staging supports chat links and durable artifact transport', async ({
     await svgCard.getByRole('link', { name: '파일 다운로드' }).click();
     expect(await readDownload(await svgDownloadPromise)).toEqual(SVG);
 
+    const retitled = await api.patch(`/api/conversations/${conversationId}`, { data: { title: marker } });
+    expect(retitled.ok()).toBe(true);
+
     await page.reload();
     await page.locator('.conversation-row').filter({ hasText: marker }).first().click();
     const restored = page.locator('.message--user').filter({ hasText: marker }).last();
@@ -124,13 +152,8 @@ test('real staging supports chat links and durable artifact transport', async ({
     await page.screenshot({ path: testInfo.outputPath('real-staging-artifacts-and-links.png'), fullPage: false });
   } finally {
     if (conversationId) {
-      const trashed = await api.patch(`/api/conversations/${conversationId}`, { data: { status: 'trashed' } });
-      if (trashed.ok()) {
-        const deleted = await api.delete(`/api/conversations/${conversationId}`);
-        if (!deleted.ok()) console.warn(`QA cleanup delete failed: ${deleted.status()}`);
-      } else {
-        console.warn(`QA cleanup trash failed: ${trashed.status()}`);
-      }
+      const deleted = await deleteQaConversation(api, conversationId);
+      if (!deleted) console.warn(`QA cleanup failed for Conversation ${conversationId}`);
     }
     await api.dispose();
   }
