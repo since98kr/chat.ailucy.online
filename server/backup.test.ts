@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it } from 'vitest';
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { chmodSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { ChatDatabase } from './database.js';
@@ -37,6 +37,18 @@ describe('backup engine', () => {
     const created = await createBackup({ databasePath, artifactRoot, backupRoot, retention: 3 });
     expect(created.manifest.artifactCount).toBe(1);
     expect(created.manifest.database.sizeBytes).toBeGreaterThan(0);
+
+    const backedUpDatabase = join(created.directory, 'chat-v2.sqlite');
+    chmodSync(backedUpDatabase, 0o444);
+    chmodSync(created.directory, 0o555);
+    try {
+      const readOnlyValid = verifyBackup(created.directory);
+      expect(readOnlyValid.ok).toBe(true);
+      expect(readOnlyValid.errors).toEqual([]);
+    } finally {
+      chmodSync(created.directory, 0o755);
+      chmodSync(backedUpDatabase, 0o644);
+    }
 
     const valid = verifyBackup(created.directory);
     expect(valid.ok).toBe(true);
