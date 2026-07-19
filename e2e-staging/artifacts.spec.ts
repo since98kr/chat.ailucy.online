@@ -15,6 +15,12 @@ async function readDownload(download: import('@playwright/test').Download) {
   return Buffer.concat(chunks);
 }
 
+async function requireStatus(response: import('@playwright/test').Response, expected: number, operation: string) {
+  if (response.status() === expected) return;
+  const detail = await response.text().catch(() => '');
+  throw new Error(`${operation} returned ${response.status()}: ${detail.slice(0, 500)}`);
+}
+
 test('real staging supports chat links and durable artifact transport', async ({ page }, testInfo) => {
   test.setTimeout(180_000);
 
@@ -22,17 +28,6 @@ test('real staging supports chat links and durable artifact transport', async ({
   const email = process.env.CHAT_STAGING_EMAIL?.trim();
   const origin = process.env.CHAT_STAGING_ORIGIN?.trim() || 'https://chat-staging.ailucy.online';
   if (!email) throw new Error('CHAT_STAGING_EMAIL is required');
-
-  await page.route('**/api/**', async (route) => {
-    const method = route.request().method();
-    await route.continue({
-      headers: {
-        ...route.request().headers(),
-        'cf-access-authenticated-user-email': email,
-        ...(['POST', 'PATCH', 'PUT', 'DELETE'].includes(method) ? { origin } : {}),
-      },
-    });
-  });
 
   const api = await apiRequest.newContext({
     baseURL,
@@ -54,7 +49,7 @@ test('real staging supports chat links and durable artifact transport', async ({
     );
     await page.locator('.conversations-title button[aria-label="새 대화"]').click();
     const createResponse = await createResponsePromise;
-    expect(createResponse.status()).toBe(201);
+    await requireStatus(createResponse, 201, 'create Conversation');
     const created = await createResponse.json() as { conversation?: { id?: string } };
     conversationId = created.conversation?.id ?? '';
     expect(conversationId).not.toBe('');
@@ -93,7 +88,7 @@ test('real staging supports chat links and durable artifact transport', async ({
     );
     await page.locator('button[aria-label="전송"]').click();
     const streamResponse = await streamResponsePromise;
-    expect(streamResponse.ok()).toBe(true);
+    await requireStatus(streamResponse, 200, 'stream message');
     await streamResponse.finished();
 
     const userMessage = page.locator('.message--user').filter({ hasText: marker }).last();
