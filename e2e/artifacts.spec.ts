@@ -114,12 +114,19 @@ test('v1.5 copies a message and exports sanitized JSON evidence', async ({ page,
 
   await page.locator('summary[aria-label="대화 메뉴"]').click();
   const downloadPromise = page.waitForEvent('download');
-  await page.getByRole('button', { name: /JSON 증거 내보내기/ }).click();
+  await page.getByRole('link', { name: /JSON 증거 내보내기/ }).click();
   const payload = JSON.parse((await readDownload(await downloadPromise)).toString('utf8')) as {
     schema: string;
     conversation: {
       messages: Array<{ content: string }>;
       artifacts: Array<Record<string, unknown>>;
+    };
+    collaboration: {
+      participants: unknown[];
+      activities: unknown[];
+    };
+    federation: {
+      workflows: Array<{ run: unknown; events: unknown[] }>;
     };
   };
   expect(payload.schema).toBe('chat.ailucy.online/conversation-export-v1');
@@ -129,4 +136,7 @@ test('v1.5 copies a message and exports sanitized JSON evidence', async ({ page,
     mimeType: 'text/plain',
   });
   expect(payload.conversation.artifacts[0]).not.toHaveProperty('storagePath');
+  expect(Array.isArray(payload.collaboration.participants)).toBe(true);
+  expect(Array.isArray(payload.collaboration.activities)).toBe(true);
+  expect(Array.isArray(payload.federation.workflows)).toBe(true);
 });
