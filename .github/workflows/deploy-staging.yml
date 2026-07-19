@@ -72,7 +72,7 @@ jobs:
           CHAT_PREFLIGHT_MIN_FREE_BYTES: ${{ vars.CHAT_PREFLIGHT_MIN_FREE_BYTES }}
           CHAT_BACKUP_RETENTION: ${{ vars.CHAT_BACKUP_RETENTION }}
           CHAT_PUBLIC_ORIGIN: ${{ vars.CHAT_PUBLIC_ORIGIN }}
-          CHAT_ALLOWED_ORIGIN: ${{ vars.CHAT_ALLOWED_ORIGIN }}
+          CHAT_ALLOWED_ORIGIN: ${{ vars.CHAT_ALLOWED_ORIGIN }},http://127.0.0.1:14174
           CHAT_AUTH_MODE: ${{ vars.CHAT_AUTH_MODE }}
           CHAT_ALLOWED_EMAILS: ${{ vars.CHAT_ALLOWED_EMAILS }}
           CHAT_ACCESS_TOKEN: ${{ secrets.CHAT_ACCESS_TOKEN }}
@@ -108,7 +108,6 @@ jobs:
         env:
           CHAT_STAGING_BASE_URL: http://127.0.0.1:14174
           CHAT_STAGING_EMAIL: ${{ vars.CHAT_ALLOWED_EMAILS }}
-          CHAT_STAGING_ORIGIN: ${{ vars.CHAT_PUBLIC_ORIGIN }}
         run: bash scripts/ops/staging-browser-smoke.sh
 
       - name: Publish deployment summary
