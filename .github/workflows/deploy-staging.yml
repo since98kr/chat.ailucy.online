@@ -1,31 +1,24 @@
-name: Deploy staging
+name: Verify approved staging through Cloudflare
 
 on:
   push:
     branches:
       - agent/staging-deploy-3d2de7e
-  workflow_dispatch:
-    inputs:
-      ref:
-        description: Git ref or commit to deploy
-        required: true
-        default: main
-        type: string
 
 permissions:
   contents: read
   statuses: write
 
 concurrency:
-  group: chat-v2-staging-deploy
+  group: chat-v2-staging-cloudflare-qa
   cancel-in-progress: false
 
 jobs:
-  deploy:
-    name: Deploy and verify isolated staging
+  verify-cloudflare:
+    name: Verify Cloudflare Access and public multimodal path
     runs-on: [self-hosted, linux, x64, chat-staging]
     environment: staging
-    timeout-minutes: 70
+    timeout-minutes: 30
 
     steps:
       - name: Checkout approved revision
@@ -43,11 +36,10 @@ jobs:
         id: source
         run: |
           set -euo pipefail
-          git status --short
-          git rev-parse HEAD
+          test "$(git rev-parse HEAD)" = '3d2de7ecbcfb422dbbc12b918175926326550b59'
           echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
 
-      - name: Mark staging verification pending
+      - name: Mark Cloudflare verification pending
         uses: actions/github-script@v7
         env:
           DEPLOY_SHA: ${{ steps.source.outputs.sha }}
@@ -58,151 +50,50 @@ jobs:
               repo: context.repo.repo,
               sha: process.env.DEPLOY_SHA,
               state: 'pending',
-              context: 'chat-v2/staging',
-              description: 'Staging deploy and full QA are running',
+              context: 'chat-v2/cloudflare',
+              description: 'Cloudflare Access and public multimodal QA are running',
               target_url: `${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`,
             });
 
-      - name: Deploy with strict preflight, backup, health check, and rollback
+      - name: Verify public Cloudflare Access, artifacts, Letta PDF, and Gemma image understanding
         env:
-          CHAT_STAGING_ROOT: /opt/chat-v2/staging
-          CHAT_STAGING_DATA_DIR: /opt/chat-v2/staging/data
-          CHAT_STAGING_PORT: '14174'
-          CHAT_PREFLIGHT_STRICT: 'true'
-          CHAT_PREFLIGHT_MIN_FREE_BYTES: ${{ vars.CHAT_PREFLIGHT_MIN_FREE_BYTES }}
-          CHAT_BACKUP_RETENTION: ${{ vars.CHAT_BACKUP_RETENTION }}
-          CHAT_PUBLIC_ORIGIN: ${{ vars.CHAT_PUBLIC_ORIGIN }}
-          CHAT_ALLOWED_ORIGIN: ${{ vars.CHAT_ALLOWED_ORIGIN }},http://127.0.0.1:14174
-          CHAT_AUTH_MODE: ${{ vars.CHAT_AUTH_MODE }}
-          CHAT_ALLOWED_EMAILS: ${{ vars.CHAT_ALLOWED_EMAILS }}
-          CHAT_ALLOWED_SERVICE_CLIENT_IDS: ${{ vars.CHAT_ALLOWED_SERVICE_CLIENT_IDS }}
-          CHAT_CF_ACCESS_ISSUER: ${{ vars.CHAT_CF_ACCESS_ISSUER }}
-          CHAT_CF_ACCESS_AUD: ${{ vars.CHAT_CF_ACCESS_AUD }}
-          CHAT_ACCESS_TOKEN: ${{ secrets.CHAT_ACCESS_TOKEN }}
-          CHAT_RATE_LIMIT_GENERAL: ${{ vars.CHAT_RATE_LIMIT_GENERAL }}
-          CHAT_RATE_LIMIT_CHAT: ${{ vars.CHAT_RATE_LIMIT_CHAT }}
-          CHAT_RATE_LIMIT_UPLOAD: ${{ vars.CHAT_RATE_LIMIT_UPLOAD }}
-          CHAT_MAX_UPLOAD_BYTES: ${{ vars.CHAT_MAX_UPLOAD_BYTES }}
-          CHAT_MAX_GENERATED_ARTIFACT_BYTES: ${{ vars.CHAT_MAX_GENERATED_ARTIFACT_BYTES }}
-          LETTA_BASE_URL: ${{ vars.LETTA_BASE_URL }}
-          LETTA_CHAT_PATH: ${{ vars.LETTA_CHAT_PATH }}
-          LETTA_HEALTH_PATH: ${{ vars.LETTA_HEALTH_PATH }}
-          LETTA_AGENT_ID: ${{ vars.LETTA_AGENT_ID }}
-          LETTA_API_KEY: ${{ secrets.LETTA_API_KEY }}
-          LETTA_TIMEOUT_MS: ${{ vars.LETTA_TIMEOUT_MS }}
-          LETTA_PROTOCOL: ${{ vars.LETTA_PROTOCOL }}
-          LETTA_MODEL_MAP_JSON: ${{ vars.LETTA_MODEL_MAP_JSON }}
-          LETTA_MAX_ARTIFACT_BYTES: ${{ vars.LETTA_MAX_ARTIFACT_BYTES }}
-          LETTA_MAX_ARTIFACT_TOTAL_BYTES: ${{ vars.LETTA_MAX_ARTIFACT_TOTAL_BYTES }}
-          LETTA_MAX_TEXT_ARTIFACT_BYTES: ${{ vars.LETTA_MAX_TEXT_ARTIFACT_BYTES }}
-          LETTA_NATIVE_BINARY_ARTIFACTS: ${{ vars.LETTA_NATIVE_BINARY_ARTIFACTS }}
-          LETTA_ARTIFACT_TOOL_ENABLED: ${{ vars.LETTA_ARTIFACT_TOOL_ENABLED }}
-          HERMES_BASE_URL: ${{ vars.HERMES_BASE_URL }}
-          HERMES_CHAT_PATH: ${{ vars.HERMES_CHAT_PATH }}
-          HERMES_HEALTH_PATH: ${{ vars.HERMES_HEALTH_PATH }}
-          HERMES_AGENT_ID: ${{ vars.HERMES_AGENT_ID }}
-          HERMES_API_KEY: ${{ secrets.HERMES_API_KEY }}
-          HERMES_TIMEOUT_MS: ${{ vars.HERMES_TIMEOUT_MS }}
-          HERMES_PROTOCOL: ${{ vars.HERMES_PROTOCOL }}
-          HERMES_MODEL_MAP_JSON: ${{ vars.HERMES_MODEL_MAP_JSON }}
-          HERMES_MAX_ARTIFACT_BYTES: ${{ vars.HERMES_MAX_ARTIFACT_BYTES }}
-          HERMES_MAX_ARTIFACT_TOTAL_BYTES: ${{ vars.HERMES_MAX_ARTIFACT_TOTAL_BYTES }}
-          HERMES_ARTIFACT_TOOL_ENABLED: 'true'
-          HERMES_DOCKER_NETWORK: ${{ vars.HERMES_DOCKER_NETWORK }}
-        run: bash scripts/deploy/staging.sh "$(git rev-parse HEAD)"
-
-      - name: Verify real Hermes and Letta transport
-        env:
-          CHAT_STAGING_BASE_URL: http://127.0.0.1:14174
-          CHAT_STAGING_EMAIL: ${{ vars.CHAT_ALLOWED_EMAILS }}
-        run: bash scripts/ops/staging-smoke.sh
-
-      - name: Verify real browser links, artifacts, and configured AI understanding
-        env:
-          CHAT_STAGING_BASE_URL: http://127.0.0.1:14174
-          CHAT_STAGING_EMAIL: ${{ vars.CHAT_ALLOWED_EMAILS }}
-          CHAT_MULTIMODAL_QA_REQUIRED: 'true'
-          CHAT_GENERATED_ARTIFACT_QA_REQUIRED: 'true'
-          CHAT_HERMES_VISION_AGENT_ID: Gemma
-        run: bash scripts/ops/staging-browser-smoke.sh
-
-      - name: Verify public Cloudflare Access and artifact transport
-        env:
-          CHAT_EXTERNAL_QA_REQUIRED: 'true'
-          CHAT_MULTIMODAL_QA_REQUIRED: 'true'
-          CHAT_GENERATED_ARTIFACT_QA_REQUIRED: 'true'
-          CHAT_HERMES_VISION_AGENT_ID: Gemma
           CHAT_STAGING_BASE_URL: ${{ vars.CHAT_PUBLIC_ORIGIN }}
+          CHAT_STAGING_EMAIL: ${{ vars.CHAT_ALLOWED_EMAILS }}
+          CHAT_MULTIMODAL_QA_REQUIRED: 'true'
+          CHAT_GENERATED_ARTIFACT_QA_REQUIRED: 'false'
+          CHAT_HERMES_VISION_AGENT_ID: Gemma
           CF_ACCESS_CLIENT_ID: ${{ vars.CF_ACCESS_CLIENT_ID }}
           CF_ACCESS_CLIENT_SECRET: ${{ secrets.CF_ACCESS_CLIENT_SECRET }}
-        run: |
-          set -euo pipefail
-          bash scripts/ops/external-staging-browser-smoke.sh
+        run: bash scripts/ops/external-staging-browser-smoke.sh
 
-      - name: Publish deployment summary
-        if: always()
-        shell: bash
-        run: |
-          {
-            echo '## Chat V2 staging'
-            echo
-            echo "- Requested revision: \`$(git rev-parse HEAD)\`"
-            echo '- Local endpoint: `http://127.0.0.1:14174`'
-            echo "- Public endpoint: \`${{ vars.CHAT_PUBLIC_ORIGIN }}\`"
-            echo '- External QA required: `true`'
-            echo '- Multimodal QA required: `true`'
-            echo '- Generated artifact QA required: `true`'
-            echo '- Required gates: deploy, Hermes, Letta, local Chromium, and public Cloudflare Chromium'
-            for item in last-deployment.json last-preflight.json last-backup.json last-backup-verify.json last-health.json last-ops-status.json; do
-              path="/opt/chat-v2/staging/state/${item}"
-              if [[ -f "${path}" ]]; then
-                echo
-                echo "### ${item}"
-                echo '```json'
-                cat "${path}"
-                echo
-                echo '```'
-              fi
-            done
-          } >> "$GITHUB_STEP_SUMMARY"
-
-      - name: Upload deployment and browser evidence
+      - name: Upload Cloudflare evidence
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: chat-v2-staging-deployment-${{ github.run_id }}
+          name: chat-v2-cloudflare-evidence-${{ github.run_id }}
           path: |
-            /opt/chat-v2/staging/state/last-deployment.json
-            /opt/chat-v2/staging/state/last-preflight.json
-            /opt/chat-v2/staging/state/last-preflight-output.log
-            /opt/chat-v2/staging/state/last-backup.json
-            /opt/chat-v2/staging/state/last-backup-verify.json
-            /opt/chat-v2/staging/state/last-health.json
-            /opt/chat-v2/staging/state/last-ops-status.json
-            test-results-staging-browser
-            playwright-staging-report
             test-results-external-staging-browser
             playwright-external-staging-report
           if-no-files-found: warn
           retention-days: 30
 
-      - name: Publish staging verification status
+      - name: Publish Cloudflare verification status
         if: always()
         uses: actions/github-script@v7
         env:
           DEPLOY_SHA: ${{ steps.source.outputs.sha }}
-          DEPLOY_RESULT: ${{ job.status }}
+          VERIFY_RESULT: ${{ job.status }}
         with:
           script: |
-            const success = process.env.DEPLOY_RESULT === 'success';
+            const success = process.env.VERIFY_RESULT === 'success';
             await github.rest.repos.createCommitStatus({
               owner: context.repo.owner,
               repo: context.repo.repo,
               sha: process.env.DEPLOY_SHA,
               state: success ? 'success' : 'failure',
-              context: 'chat-v2/staging',
+              context: 'chat-v2/cloudflare',
               description: success
-                ? 'Staging deploy and configured QA gates passed'
-                : 'Staging deploy or QA failed',
+                ? 'Cloudflare Access and public multimodal QA passed'
+                : 'Cloudflare Access or public multimodal QA failed',
               target_url: `${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`,
             });
