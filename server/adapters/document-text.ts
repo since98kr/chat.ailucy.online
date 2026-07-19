@@ -56,7 +56,6 @@ async function extractPdf(bytes: Buffer, filename: string) {
   const task = getDocument({
     data: new Uint8Array(bytes),
     disableFontFace: true,
-    isEvalSupported: false,
     useSystemFonts: false,
   });
   const document = await task.promise;
@@ -78,7 +77,7 @@ async function extractPdf(bytes: Buffer, filename: string) {
     }
     return normalizeExtractedText(pages.join('\n\n'), filename);
   } finally {
-    await document.destroy();
+    await task.destroy();
   }
 }
 
