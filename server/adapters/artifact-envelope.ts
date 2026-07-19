@@ -1,5 +1,8 @@
 import type { MessageRecord } from '../../shared/contracts.js';
-import { parseGeneratedArtifactArguments } from './openai-artifact-tool.js';
+import {
+  inlineGeneratedArtifactPayloadLimit,
+  parseGeneratedArtifactArguments,
+} from './openai-artifact-tool.js';
 import type { AdapterRequest, AdapterStreamItem, ChatBackendAdapter } from './types.js';
 
 export const ARTIFACT_ENVELOPE_OPEN = '<CHAT_V2_ARTIFACT>';
@@ -14,13 +17,20 @@ export const ARTIFACT_ENVELOPE_SYSTEM_MESSAGE = [
   '- If return_artifact is unavailable, do not write a local file and do not return a filesystem path or remote URL.',
   `- Instead emit one ${ARTIFACT_ENVELOPE_OPEN}...${ARTIFACT_ENVELOPE_CLOSE} block per file.`,
   '- The block body must be one JSON object with only filename, mime_type, and exactly one of content_text or content_base64.',
-  '- Do not use Markdown fences around the block. Text outside the block is shown as the assistant response.',
+  '- Keep each inline block within the Chat V2 payload limit. Do not use Markdown fences around the block.',
+  '- Text outside the block is shown as the assistant response.',
   `Example: ${ARTIFACT_ENVELOPE_OPEN}{"filename":"result.txt","mime_type":"text/plain","content_text":"hello"}${ARTIFACT_ENVELOPE_CLOSE}`,
 ].join('\n');
 
 export class ArtifactEnvelopeAccumulator {
   private buffer = '';
   private insideEnvelope = false;
+
+  constructor(private readonly maxPayloadBytes = inlineGeneratedArtifactPayloadLimit()) {
+    if (!Number.isFinite(maxPayloadBytes) || maxPayloadBytes < 1 || !Number.isInteger(maxPayloadBytes)) {
+      throw new Error('Generated artifact envelope limit must be a positive integer');
+    }
+  }
 
   ingest(delta: string): AdapterStreamItem[] {
     if (delta.trim() === INTERNAL_HERMES_PROGRESS) return [];
@@ -32,6 +42,12 @@ export class ArtifactEnvelopeAccumulator {
     return this.drain(true);
   }
 
+  private assertPayloadLimit(value: string) {
+    if (Buffer.byteLength(value, 'utf8') > this.maxPayloadBytes) {
+      throw new Error(`Generated artifact envelope exceeds ${this.maxPayloadBytes} bytes`);
+    }
+  }
+
   private drain(final: boolean): AdapterStreamItem[] {
     const items: AdapterStreamItem[] = [];
 
@@ -39,11 +55,13 @@ export class ArtifactEnvelopeAccumulator {
       if (this.insideEnvelope) {
         const closeIndex = this.buffer.indexOf(ARTIFACT_ENVELOPE_CLOSE);
         if (closeIndex < 0) {
+          this.assertPayloadLimit(this.buffer);
           if (final) throw new Error('Generated artifact envelope is missing its closing marker');
           return items;
         }
         const payload = this.buffer.slice(0, closeIndex).trim();
         if (!payload) throw new Error('Generated artifact envelope is empty');
+        this.assertPayloadLimit(payload);
         items.push({ type: 'artifact', artifact: parseGeneratedArtifactArguments(payload) });
         this.buffer = this.buffer.slice(closeIndex + ARTIFACT_ENVELOPE_CLOSE.length);
         this.insideEnvelope = false;
