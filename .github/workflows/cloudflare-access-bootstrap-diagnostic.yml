@@ -11,15 +11,27 @@ permissions:
 
 jobs:
   diagnose:
-    name: Diagnose staging Access automation inputs
+    name: Diagnose and test staging Access automation
     runs-on: [self-hosted, linux, x64, chat-staging]
     environment: staging
     timeout-minutes: 10
     steps:
+      - name: Checkout bootstrap controller
+        uses: actions/checkout@v4
+        with:
+          ref: ops/cloudflare-access-bootstrap
+          clean: true
+
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
           node-version: '22'
+
+      - name: Validate and test the idempotent bootstrap
+        run: |
+          set -euo pipefail
+          node --check scripts/ops/bootstrap-cloudflare-staging-access.mjs
+          node --test scripts/ops/bootstrap-cloudflare-staging-access.test.mjs
 
       - name: Inspect public hostname and Access endpoints
         env:
@@ -56,6 +68,7 @@ jobs:
           set -euo pipefail
           local_service_file=false
           for candidate in \
+            /opt/chat-v2/staging/secrets/cloudflare-access-staging.json \
             /opt/chat-v2/staging/secrets/cloudflare-service-token.env \
             /opt/chat-v2/staging/.cloudflare-service-token.env \
             /etc/cloudflared/chat-v2-staging-service-token.env; do
@@ -65,7 +78,6 @@ jobs:
           printf 'service-token-local-file=%s\n' "${local_service_file}"
           printf 'admin-api-token-environment=%s\n' "$([[ -n "${CLOUDFLARE_API_TOKEN_VALUE}" ]] && echo true || echo false)"
           printf 'account-id-environment=%s\n' "$([[ -n "${CLOUDFLARE_ACCOUNT_ID_VALUE}" ]] && echo true || echo false)"
-          env | cut -d= -f1 | grep -E '^(CF_|CLOUDFLARE_)' | sed 's/^/runner-cloudflare-variable=/' || true
 
       - name: Inventory credential references in restricted configuration paths
         if: always()
@@ -99,6 +111,6 @@ jobs:
               sha: context.sha,
               state: success ? 'success' : 'failure',
               context: 'chat-v2/cloudflare-bootstrap',
-              description: success ? 'Cloudflare bootstrap inputs diagnosed' : 'Cloudflare bootstrap diagnostic failed',
+              description: success ? 'Access bootstrap tested and inputs diagnosed' : 'Access bootstrap test or diagnostic failed',
               target_url: `${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`,
             });
