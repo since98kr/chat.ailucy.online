@@ -11,7 +11,7 @@ test('attachment delivery status remains understandable after reload', async ({ 
   await page.goto('/');
   await openMobileMenu();
   await page.locator('.conversations-title button[aria-label="새 대화"]').click();
-  if (mobile) await expect(page.getByRole('button', { name: '메뉴 닫기' })).toBeHidden();
+  if (mobile) await expect(page.locator('.drawer-scrim')).toHaveCount(0);
   await page.locator('input[type="file"]').setInputFiles({
     name: 'lifecycle-note.txt',
     mimeType: 'text/plain',
