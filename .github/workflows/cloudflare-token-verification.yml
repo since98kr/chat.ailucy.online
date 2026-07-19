@@ -1,0 +1,118 @@
+name: Verify Cloudflare staging control-plane token
+
+on:
+  push:
+    branches:
+      - ops/cloudflare-access-bootstrap
+    paths:
+      - .ops-trigger/cloudflare-token-verification
+
+permissions:
+  contents: read
+  statuses: write
+
+jobs:
+  verify:
+    name: Verify token activity and account scope
+    runs-on: [self-hosted, linux, x64, chat-staging]
+    environment: staging
+    timeout-minutes: 10
+    steps:
+      - name: Mark verification pending
+        uses: actions/github-script@v7
+        with:
+          script: |
+            await github.rest.repos.createCommitStatus({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              sha: context.sha,
+              state: 'pending',
+              context: 'chat-v2/cloudflare-token-verify',
+              description: 'Cloudflare token verification is running',
+              target_url: `${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`,
+            });
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Verify token and account scope without exposing credentials
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ vars.CLOUDFLARE_ACCOUNT_ID || secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: |
+          set -euo pipefail
+          mkdir -p /opt/chat-v2/staging/state
+          node <<'NODE'
+          const fs = require('fs');
+          const token = (process.env.CLOUDFLARE_API_TOKEN || '').trim();
+          const accountId = (process.env.CLOUDFLARE_ACCOUNT_ID || '').trim();
+          const output = {
+            generatedAt: new Date().toISOString(),
+            tokenPresent: Boolean(token),
+            tokenLength: token.length,
+            tokenLooksLikeAccountId: /^[a-f0-9]{32}$/i.test(token),
+            accountIdPresent: Boolean(accountId),
+            accountIdLooksValid: /^[a-f0-9]{32}$/i.test(accountId),
+            tokenVerify: null,
+            accessAppsRead: null,
+          };
+          async function check(url) {
+            try {
+              const response = await fetch(url, { headers: { Authorization: `Bearer ${token}`, Accept: 'application/json' } });
+              const payload = await response.json().catch(() => null);
+              return {
+                httpStatus: response.status,
+                success: Boolean(payload?.success),
+                resultStatus: typeof payload?.result?.status === 'string' ? payload.result.status : null,
+                errorCodes: Array.isArray(payload?.errors) ? payload.errors.map((item) => item?.code).filter(Boolean) : [],
+                errorMessages: Array.isArray(payload?.errors) ? payload.errors.map((item) => item?.message).filter(Boolean) : [],
+              };
+            } catch (error) {
+              return { transportError: error instanceof Error ? error.message : String(error) };
+            }
+          }
+          output.tokenVerify = await check('https://api.cloudflare.com/client/v4/user/tokens/verify');
+          if (accountId) {
+            output.accessAppsRead = await check(`https://api.cloudflare.com/client/v4/accounts/${accountId}/access/apps?per_page=1`);
+          }
+          fs.writeFileSync('/opt/chat-v2/staging/state/cloudflare-token-verification.json', `${JSON.stringify(output, null, 2)}\n`, { mode: 0o600 });
+          console.log(`token-present=${output.tokenPresent}`);
+          console.log(`token-length=${output.tokenLength}`);
+          console.log(`token-looks-like-account-id=${output.tokenLooksLikeAccountId}`);
+          console.log(`account-id-present=${output.accountIdPresent}`);
+          console.log(`account-id-looks-valid=${output.accountIdLooksValid}`);
+          console.log(`verify-http=${output.tokenVerify?.httpStatus ?? 'transport-error'}`);
+          console.log(`verify-success=${output.tokenVerify?.success ?? false}`);
+          console.log(`verify-status=${output.tokenVerify?.resultStatus ?? 'none'}`);
+          console.log(`access-apps-http=${output.accessAppsRead?.httpStatus ?? 'not-run'}`);
+          console.log(`access-apps-success=${output.accessAppsRead?.success ?? false}`);
+          NODE
+
+      - name: Upload safe verification evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: cloudflare-token-verification-${{ github.run_id }}
+          path: /opt/chat-v2/staging/state/cloudflare-token-verification.json
+          if-no-files-found: error
+          retention-days: 7
+
+      - name: Publish verification result
+        if: always()
+        uses: actions/github-script@v7
+        env:
+          RESULT: ${{ job.status }}
+        with:
+          script: |
+            const success = process.env.RESULT === 'success';
+            await github.rest.repos.createCommitStatus({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              sha: context.sha,
+              state: success ? 'success' : 'failure',
+              context: 'chat-v2/cloudflare-token-verify',
+              description: success ? 'Cloudflare token verification completed' : 'Cloudflare token verification failed',
+              target_url: `${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`,
+            });
