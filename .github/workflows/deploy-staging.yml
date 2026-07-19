@@ -1,4 +1,4 @@
-name: Verify approved staging through Cloudflare
+name: Diagnose Cloudflare staging authentication
 
 on:
   push:
@@ -9,16 +9,12 @@ permissions:
   contents: read
   statuses: write
 
-concurrency:
-  group: chat-v2-staging-cloudflare-qa
-  cancel-in-progress: false
-
 jobs:
-  verify-cloudflare:
-    name: Verify Cloudflare Access and public multimodal path
+  diagnose-cloudflare:
+    name: Diagnose Cloudflare staging authentication
     runs-on: [self-hosted, linux, x64, chat-staging]
     environment: staging
-    timeout-minutes: 30
+    timeout-minutes: 10
 
     steps:
       - name: Checkout approved revision
@@ -27,73 +23,42 @@ jobs:
           ref: 3d2de7ecbcfb422dbbc12b918175926326550b59
           clean: true
 
-      - name: Setup Node.js
-        uses: actions/setup-node@v4
-        with:
-          node-version: '22'
-
-      - name: Verify source revision
-        id: source
-        run: |
-          set -euo pipefail
-          test "$(git rev-parse HEAD)" = '3d2de7ecbcfb422dbbc12b918175926326550b59'
-          echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
-
-      - name: Mark Cloudflare verification pending
-        uses: actions/github-script@v7
-        env:
-          DEPLOY_SHA: ${{ steps.source.outputs.sha }}
-        with:
-          script: |
-            await github.rest.repos.createCommitStatus({
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              sha: process.env.DEPLOY_SHA,
-              state: 'pending',
-              context: 'chat-v2/cloudflare',
-              description: 'Cloudflare Access and public multimodal QA are running',
-              target_url: `${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`,
-            });
-
-      - name: Verify public Cloudflare Access, artifacts, Letta PDF, and Gemma image understanding
+      - name: Collect safe Cloudflare diagnostics
         env:
           CHAT_STAGING_BASE_URL: ${{ vars.CHAT_PUBLIC_ORIGIN }}
-          CHAT_STAGING_EMAIL: ${{ vars.CHAT_ALLOWED_EMAILS }}
-          CHAT_MULTIMODAL_QA_REQUIRED: 'true'
-          CHAT_GENERATED_ARTIFACT_QA_REQUIRED: 'false'
-          CHAT_HERMES_VISION_AGENT_ID: Gemma
           CF_ACCESS_CLIENT_ID: ${{ vars.CF_ACCESS_CLIENT_ID }}
           CF_ACCESS_CLIENT_SECRET: ${{ secrets.CF_ACCESS_CLIENT_SECRET }}
-        run: bash scripts/ops/external-staging-browser-smoke.sh
+        run: |
+          set -u
+          : > cloudflare-diagnostic.txt
+          bool() { if [[ -n "$1" ]]; then echo true; else echo false; fi; }
+          echo "public_origin_set=$(bool "${CHAT_STAGING_BASE_URL:-}")" | tee -a cloudflare-diagnostic.txt
+          echo "client_id_set=$(bool "${CF_ACCESS_CLIENT_ID:-}")" | tee -a cloudflare-diagnostic.txt
+          echo "client_secret_set=$(bool "${CF_ACCESS_CLIENT_SECRET:-}")" | tee -a cloudflare-diagnostic.txt
+          if [[ -z "${CHAT_STAGING_BASE_URL:-}" ]]; then
+            echo 'dns_resolves=false' | tee -a cloudflare-diagnostic.txt
+            echo 'unauthenticated_http=not_run' | tee -a cloudflare-diagnostic.txt
+            echo 'service_authenticated_http=not_run' | tee -a cloudflare-diagnostic.txt
+            exit 0
+          fi
+          host="$(node -e "console.log(new URL(process.argv[1]).hostname)" "${CHAT_STAGING_BASE_URL}")"
+          if getent ahosts "${host}" >/dev/null 2>&1; then
+            echo 'dns_resolves=true' | tee -a cloudflare-diagnostic.txt
+          else
+            echo 'dns_resolves=false' | tee -a cloudflare-diagnostic.txt
+          fi
+          unauth="$(curl --silent --show-error --max-time 30 --output /dev/null --write-out '%{http_code}' "${CHAT_STAGING_BASE_URL%/}/api/auth/config" || echo curl_error)"
+          echo "unauthenticated_http=${unauth}" | tee -a cloudflare-diagnostic.txt
+          if [[ -n "${CF_ACCESS_CLIENT_ID:-}" && -n "${CF_ACCESS_CLIENT_SECRET:-}" ]]; then
+            service="$(curl --silent --show-error --max-time 30 --output /tmp/chat-v2-cloudflare-service-response --write-out '%{http_code}' --header "CF-Access-Client-Id: ${CF_ACCESS_CLIENT_ID}" --header "CF-Access-Client-Secret: ${CF_ACCESS_CLIENT_SECRET}" "${CHAT_STAGING_BASE_URL%/}/api/auth/config" || echo curl_error)"
+            echo "service_authenticated_http=${service}" | tee -a cloudflare-diagnostic.txt
+          else
+            echo 'service_authenticated_http=not_run' | tee -a cloudflare-diagnostic.txt
+          fi
 
-      - name: Upload Cloudflare evidence
-        if: always()
+      - name: Upload safe Cloudflare diagnostics
         uses: actions/upload-artifact@v4
         with:
-          name: chat-v2-cloudflare-evidence-${{ github.run_id }}
-          path: |
-            test-results-external-staging-browser
-            playwright-external-staging-report
-          if-no-files-found: warn
+          name: chat-v2-cloudflare-diagnostic-${{ github.run_id }}
+          path: cloudflare-diagnostic.txt
           retention-days: 30
-
-      - name: Publish Cloudflare verification status
-        if: always()
-        uses: actions/github-script@v7
-        env:
-          DEPLOY_SHA: ${{ steps.source.outputs.sha }}
-          VERIFY_RESULT: ${{ job.status }}
-        with:
-          script: |
-            const success = process.env.VERIFY_RESULT === 'success';
-            await github.rest.repos.createCommitStatus({
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              sha: process.env.DEPLOY_SHA,
-              state: success ? 'success' : 'failure',
-              context: 'chat-v2/cloudflare',
-              description: success
-                ? 'Cloudflare Access and public multimodal QA passed'
-                : 'Cloudflare Access or public multimodal QA failed',
-              target_url: `${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`,
-            });
