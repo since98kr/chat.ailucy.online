@@ -1,0 +1,59 @@
+name: Cloudflare Access staging bootstrap diagnostic
+
+on:
+  push:
+    branches:
+      - ops/cloudflare-access-bootstrap
+
+permissions:
+  contents: read
+
+jobs:
+  diagnose:
+    name: Diagnose staging Access automation inputs
+    runs-on: [self-hosted, linux, x64, chat-staging]
+    environment: staging
+    timeout-minutes: 10
+    steps:
+      - name: Derive Access issuer and application audience
+        env:
+          CHAT_PUBLIC_ORIGIN: https://chat-staging.ailucy.online
+        run: |
+          set -euo pipefail
+          headers="$(mktemp)"
+          curl --silent --show-error --max-time 30 --max-redirs 0 \
+            --dump-header "${headers}" --output /dev/null \
+            "${CHAT_PUBLIC_ORIGIN}/api/auth/session" || true
+          location="$(awk 'BEGIN{IGNORECASE=1} /^location:/ {sub(/^[^:]+:[[:space:]]*/,""); sub(/\r$/,""); print; exit}' "${headers}")"
+          rm -f "${headers}"
+          node - "${location}" <<'NODE'
+          const value = process.argv[2] || '';
+          if (!value) {
+            console.error('Access redirect did not expose a login location.');
+            process.exit(41);
+          }
+          const url = new URL(value);
+          const audience = url.searchParams.get('aud') || url.searchParams.get('kid') || '';
+          console.log(`issuer=${url.origin}`);
+          console.log(`audience-present=${Boolean(audience)}`);
+          if (!url.hostname.endsWith('.cloudflareaccess.com') || !audience) process.exit(42);
+          NODE
+
+      - name: Report credential-source readiness without revealing values
+        env:
+          CF_ACCESS_CLIENT_SECRET_VALUE: ${{ secrets.CF_ACCESS_CLIENT_SECRET }}
+          CLOUDFLARE_API_TOKEN_VALUE: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID_VALUE: ${{ vars.CLOUDFLARE_ACCOUNT_ID }}
+        run: |
+          set -euo pipefail
+          local_service_file=false
+          for candidate in \
+            /opt/chat-v2/staging/secrets/cloudflare-service-token.env \
+            /opt/chat-v2/staging/.cloudflare-service-token.env \
+            /etc/cloudflared/chat-v2-staging-service-token.env; do
+            [[ -s "${candidate}" ]] && local_service_file=true
+          done
+          printf 'service-secret-environment=%s\n' "$([[ -n "${CF_ACCESS_CLIENT_SECRET_VALUE}" ]] && echo true || echo false)"
+          printf 'service-token-local-file=%s\n' "${local_service_file}"
+          printf 'admin-api-token-environment=%s\n' "$([[ -n "${CLOUDFLARE_API_TOKEN_VALUE}" ]] && echo true || echo false)"
+          printf 'account-id-environment=%s\n' "$([[ -n "${CLOUDFLARE_ACCOUNT_ID_VALUE}" ]] && echo true || echo false)"
