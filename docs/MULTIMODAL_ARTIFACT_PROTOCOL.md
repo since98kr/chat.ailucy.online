@@ -29,11 +29,11 @@ The internal adapter request contains the persisted `ArtifactRecord[]` associate
   "artifacts": [
     {
       "artifact_id": "uuid",
-      "filename": "report.txt",
-      "mime_type": "text/plain",
+      "filename": "report.pdf",
+      "mime_type": "application/pdf",
       "size_bytes": 128,
       "content_base64": "...",
-      "text": "optional UTF-8 text representation"
+      "text": "optional bounded text extracted by Chat V2"
     }
   ],
   "metadata": {
@@ -42,13 +42,26 @@ The internal adapter request contains the persisted `ArtifactRecord[]` associate
 }
 ```
 
-Native backends may use `text` directly for supported textual formats or decode `content_base64` for model-native multimodal processing. They must not request or rely on the Chat V2 filesystem path.
+Native backends may use the extracted `text` directly or decode `content_base64` for backend-native multimodal processing. They must not request or rely on a Chat V2 filesystem path.
 
-For the current Letta native bridge, supported text attachments are also injected into the current user turn inside a delimited `<ATTACHMENTS>` block. Unsupported binary input fails unless the native binary capability is explicitly enabled.
+For the current Letta native bridge, supported document text is injected into the current user turn inside a delimited `<ATTACHMENTS>` block. Unsupported binary input fails unless the native binary capability is explicitly implemented and enabled.
+
+### Document extraction
+
+Chat V2 extracts bounded text before calling the AI backend from:
+
+- plain text, Markdown, CSV, and other `text/*` files;
+- JSON, XML, YAML, and related textual application types;
+- text-based PDF files through PDF.js;
+- DOCX files through Mammoth raw-text extraction.
+
+The original uploaded file remains unchanged and downloadable. Only extracted text is inserted into model context.
+
+Chat V2 does not perform OCR. An image-only or scanned PDF with no extractable text fails explicitly instead of being reported as understood.
 
 ### OpenAI-compatible payload
 
-Text attachments are appended to the current user turn inside a delimited attachment block. Supported image formats are sent as `image_url` data URIs in the current user content array.
+Extracted document text is appended to the current user turn inside a delimited attachment block. Supported image formats are sent as `image_url` data URIs in the current user content array.
 
 Supported image MIME types for the OpenAI-compatible path:
 
@@ -111,14 +124,19 @@ Backends cannot return a local path or remote URL as a trusted file reference.
 
 Default limits:
 
-- uploaded file: 50 MiB (`CHAT_MAX_UPLOAD_BYTES=52428800`)
-- one file transferred to a backend: 10 MiB
-- aggregate files transferred in one turn: 20 MiB
-- Letta text inserted into one model turn: 2 MiB
-- one generated artifact: 50 MiB
+- uploaded file: 50 MiB (`CHAT_MAX_UPLOAD_BYTES=52428800`);
+- one file transferred to a backend: 10 MiB;
+- aggregate files transferred in one turn: 20 MiB;
+- source document bytes accepted for one Letta extraction turn: 10 MiB;
+- extracted document text: 2,000,000 characters;
+- PDF pages: 200;
+- one generated artifact: 50 MiB.
 
 Runtime variables:
 
+- `CHAT_MAX_EXTRACTED_TEXT_CHARACTERS`
+- `CHAT_MAX_PDF_PAGES`
+- `CHAT_MAX_GENERATED_ARTIFACT_BYTES`
 - `LETTA_MAX_ARTIFACT_BYTES`
 - `LETTA_MAX_ARTIFACT_TOTAL_BYTES`
 - `LETTA_MAX_TEXT_ARTIFACT_BYTES`
@@ -127,24 +145,23 @@ Runtime variables:
 - `HERMES_MAX_ARTIFACT_BYTES`
 - `HERMES_MAX_ARTIFACT_TOTAL_BYTES`
 - `HERMES_ARTIFACT_TOOL_ENABLED`
-- `CHAT_MAX_GENERATED_ARTIFACT_BYTES`
 
 ## Backend capability matrix
 
-| Backend path | Text document | Image | Other binary | Generated file |
-|---|---:|---:|---:|---:|
-| Hermes OpenAI-compatible | yes | model-dependent | explicit failure | native event or optional function tool |
-| Letta native bridge | current-turn context | explicit failure by default | explicit failure by default | native event required |
-| Generic native adapter | backend-defined | capability flag required | capability flag required | artifact event |
+| Backend path | TXT/MD/JSON/XML/YAML | Text PDF | DOCX | Image | Other binary | Generated file |
+|---|---:|---:|---:|---:|---:|---:|
+| Hermes OpenAI-compatible | yes | extracted text | extracted text | model-dependent | explicit failure | native event or optional function tool |
+| Letta native bridge | current-turn context | extracted text | extracted text | explicit failure by default | explicit failure by default | native event required |
+| Generic native adapter | extracted text plus bytes | extracted text plus bytes | extracted text plus bytes | capability flag required | capability flag required | artifact event |
 
 A green transport test is not evidence of AI understanding. Release E2E must place a marker only inside the attachment and require the backend response to reproduce it.
 
 ## Required release evidence
 
-1. TXT or Markdown marker understood by Letta.
-2. TXT or Markdown marker understood by Hermes.
-3. PNG marker understood by a multimodal Hermes lane.
-4. AI-generated TXT returned, persisted, reloaded, and downloaded byte-for-byte.
-5. AI-generated PNG returned, rendered, reloaded, and downloaded byte-for-byte.
-6. Unsupported MIME and oversize failures are visible to the user.
-7. The same cases pass through the public Cloudflare Access hostname when the external gate is required.
+1. A marker contained only in a PDF is reproduced by real Letta.
+2. A marker contained only in a PNG is reproduced by a multimodal Hermes lane.
+3. PDF and DOCX extractors pass deterministic unit tests.
+4. An AI-generated TXT file is returned, persisted, reloaded, and downloaded byte-for-byte.
+5. A generated image path is validated before claiming image-generation output support.
+6. Unsupported MIME, image-only PDF, oversize input, and extraction-limit failures are visible and explicit.
+7. The same required cases pass through the public Cloudflare Access hostname when the external gate is enabled.
