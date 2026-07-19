@@ -1,0 +1,56 @@
+name: Cancel stuck Cloudflare giant-step attempt
+
+on:
+  push:
+    branches:
+      - ops/cloudflare-access-bootstrap
+    paths:
+      - .ops-trigger/cancel-stuck-cloudflare-run
+
+permissions:
+  actions: write
+  contents: read
+  statuses: write
+
+jobs:
+  cancel:
+    name: Cancel pending superseded staging attempt
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Cancel only the known pending staging run
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const owner = context.repo.owner;
+            const repo = context.repo.repo;
+            const runId = 29701158803;
+            const run = await github.rest.actions.getWorkflowRun({ owner, repo, run_id: runId });
+            const allowedStatuses = new Set(['queued', 'in_progress', 'pending', 'waiting', 'requested']);
+            if (!allowedStatuses.has(run.data.status)) {
+              core.info(`Run ${runId} is ${run.data.status}; cancellation is not required.`);
+              return;
+            }
+            if (run.data.head_sha !== 'bce41a924a8e5d1cbda06c26a86afc4887d59e55') {
+              throw new Error(`Refusing to cancel unexpected SHA ${run.data.head_sha}`);
+            }
+            await github.rest.actions.cancelWorkflowRun({ owner, repo, run_id: runId });
+            core.info(`Cancellation requested for superseded isolated-staging run ${runId}.`);
+
+      - name: Publish cancellation status
+        if: always()
+        uses: actions/github-script@v7
+        env:
+          RESULT: ${{ job.status }}
+        with:
+          script: |
+            const success = process.env.RESULT === 'success';
+            await github.rest.repos.createCommitStatus({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              sha: context.sha,
+              state: success ? 'success' : 'failure',
+              context: 'chat-v2/cloudflare-stuck-run-cancel',
+              description: success ? 'Superseded pending staging attempt cancelled or already stopped' : 'Stuck-run cancellation failed',
+              target_url: `${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`,
+            });
