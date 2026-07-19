@@ -1,5 +1,11 @@
-import type { AdapterHealthRecord, MessageRecord, SystemId } from '../../shared/contracts.js';
-import type { AdapterRequest, AdapterStreamItem, ChatBackendAdapter } from './types.js';
+import { readFile } from 'node:fs/promises';
+import type { AdapterHealthRecord, ArtifactRecord, MessageRecord, SystemId } from '../../shared/contracts.js';
+import type {
+  AdapterGeneratedArtifact,
+  AdapterRequest,
+  AdapterStreamItem,
+  ChatBackendAdapter,
+} from './types.js';
 
 type HttpAdapterProtocol = 'native' | 'openai';
 
@@ -12,7 +18,36 @@ type HttpAdapterConfig = {
   timeoutMs: number;
   protocol?: HttpAdapterProtocol;
   modelMap?: Record<string, string>;
+  maxArtifactBytes?: number;
+  maxArtifactTotalBytes?: number;
 };
+
+type SerializedArtifact = {
+  artifactId: string;
+  filename: string;
+  mimeType: string;
+  sizeBytes: number;
+  contentBase64: string;
+  text?: string;
+};
+
+type OpenAiContentPart =
+  | { type: 'text'; text: string }
+  | { type: 'image_url'; image_url: { url: string; detail: 'auto' } };
+
+type OpenAiMessage = {
+  role: MessageRecord['role'];
+  content: string | OpenAiContentPart[];
+};
+
+const TEXT_ATTACHMENT_TYPES = new Set([
+  'application/json',
+  'application/ld+json',
+  'application/xml',
+  'application/x-yaml',
+  'application/yaml',
+  'application/javascript',
+]);
 
 function trimSlash(value: string) {
   return value.replace(/\/+$/, '');
@@ -22,11 +57,62 @@ function normalizePath(value: string) {
   return value.startsWith('/') ? value : `/${value}`;
 }
 
+function isTextAttachment(mimeType: string) {
+  const normalized = mimeType.trim().toLowerCase();
+  return normalized.startsWith('text/') || normalized.endsWith('+json') || normalized.endsWith('+xml')
+    || TEXT_ATTACHMENT_TYPES.has(normalized);
+}
+
+function isOpenAiImage(mimeType: string) {
+  return ['image/gif', 'image/jpeg', 'image/png', 'image/webp'].includes(mimeType.trim().toLowerCase());
+}
+
+function positiveLimit(value: number | undefined, fallback: number, label: string) {
+  const resolved = value ?? fallback;
+  if (!Number.isFinite(resolved) || resolved < 1) throw new Error(`${label} must be a positive number`);
+  return Math.floor(resolved);
+}
+
+async function serializeArtifacts(request: AdapterRequest, config: HttpAdapterConfig) {
+  const artifacts = request.artifacts ?? [];
+  const maxArtifactBytes = positiveLimit(config.maxArtifactBytes, 10 * 1024 * 1024, 'maxArtifactBytes');
+  const maxArtifactTotalBytes = positiveLimit(config.maxArtifactTotalBytes, 20 * 1024 * 1024, 'maxArtifactTotalBytes');
+  let totalBytes = 0;
+  const serialized: SerializedArtifact[] = [];
+
+  for (const artifact of artifacts) {
+    if (artifact.sizeBytes > maxArtifactBytes) {
+      throw new Error(`Attachment ${artifact.filename} exceeds the backend transfer limit`);
+    }
+    totalBytes += artifact.sizeBytes;
+    if (totalBytes > maxArtifactTotalBytes) {
+      throw new Error('Attachments exceed the aggregate backend transfer limit');
+    }
+
+    const bytes = await readFile(artifact.storagePath);
+    if (bytes.length !== artifact.sizeBytes) {
+      throw new Error(`Attachment ${artifact.filename} changed after upload`);
+    }
+    serialized.push({
+      artifactId: artifact.id,
+      filename: artifact.filename,
+      mimeType: artifact.mimeType,
+      sizeBytes: bytes.length,
+      contentBase64: bytes.toString('base64'),
+      ...(isTextAttachment(artifact.mimeType) ? { text: bytes.toString('utf8') } : {}),
+    });
+  }
+
+  return serialized;
+}
+
 function extractDelta(payload: unknown): string | null {
   if (!payload || typeof payload !== 'object') return null;
   const object = payload as Record<string, unknown>;
   if (typeof object.delta === 'string') return object.delta;
-  if (typeof object.content === 'string') return object.content;
+  if (typeof object.content === 'string' && object.type !== 'artifact' && object.type !== 'artifact.created') {
+    return object.content;
+  }
   if (object.message && typeof object.message === 'object') {
     const content = (object.message as Record<string, unknown>).content;
     if (typeof content === 'string') return content;
@@ -49,6 +135,28 @@ function extractStatus(payload: unknown): string | null {
   return null;
 }
 
+function extractArtifact(payload: unknown): AdapterGeneratedArtifact | null {
+  if (!payload || typeof payload !== 'object') return null;
+  const object = payload as Record<string, unknown>;
+  if (object.type !== 'artifact' && object.type !== 'artifact.created') return null;
+  const source = object.artifact && typeof object.artifact === 'object'
+    ? object.artifact as Record<string, unknown>
+    : object;
+  const filename = typeof source.filename === 'string' ? source.filename.trim()
+    : typeof source.name === 'string' ? source.name.trim() : '';
+  const mimeType = typeof source.mimeType === 'string' ? source.mimeType.trim()
+    : typeof source.mime_type === 'string' ? source.mime_type.trim() : '';
+  const encoded = typeof source.contentBase64 === 'string' ? source.contentBase64
+    : typeof source.content_base64 === 'string' ? source.content_base64 : '';
+  const text = typeof source.contentText === 'string' ? source.contentText
+    : typeof source.content_text === 'string' ? source.content_text : '';
+  const contentBase64 = encoded.trim() || (text ? Buffer.from(text, 'utf8').toString('base64') : '');
+  if (!filename || !mimeType || !contentBase64) {
+    throw new Error('Generated artifact event requires filename, mime type, and inline content');
+  }
+  return { filename, mimeType, contentBase64 };
+}
+
 function toBackendMessages(history: MessageRecord[]) {
   return history
     .filter((message) => message.role !== 'system' || message.content.trim())
@@ -60,8 +168,19 @@ function toBackendMessages(history: MessageRecord[]) {
     }));
 }
 
-function toOpenAiMessages(request: AdapterRequest) {
-  const messages: Array<{ role: MessageRecord['role']; content: string }> = [];
+function attachmentText(artifacts: SerializedArtifact[]) {
+  const sections = artifacts
+    .filter((artifact) => artifact.text !== undefined)
+    .map((artifact) => [
+      `Attachment: ${artifact.filename}`,
+      `MIME: ${artifact.mimeType}`,
+      artifact.text,
+    ].join('\n'));
+  return sections.length ? `\n\n<ATTACHMENTS>\n${sections.join('\n\n')}\n</ATTACHMENTS>` : '';
+}
+
+function toOpenAiMessages(request: AdapterRequest, artifacts: SerializedArtifact[]) {
+  const messages: OpenAiMessage[] = [];
   const capsules = request.memoryCapsules ?? [];
 
   if (capsules.length > 0) {
@@ -78,9 +197,35 @@ function toOpenAiMessages(request: AdapterRequest) {
     });
   }
 
+  const unsupported = artifacts.filter((artifact) => !artifact.text && !isOpenAiImage(artifact.mimeType));
+  if (unsupported.length) {
+    throw new Error(`OpenAI-compatible chat transport does not support attachment type: ${unsupported[0].mimeType}`);
+  }
+  const textSuffix = attachmentText(artifacts);
+  const images = artifacts.filter((artifact) => isOpenAiImage(artifact.mimeType));
+
   messages.push(...request.history
     .filter((message) => message.role !== 'system' || message.content.trim())
-    .map((message) => ({ role: message.role, content: message.content })));
+    .map((message): OpenAiMessage => {
+      if (message.id !== request.userMessage.id || artifacts.length === 0) {
+        return { role: message.role, content: message.content };
+      }
+      const prompt = `${message.content}${textSuffix}`;
+      if (images.length === 0) return { role: message.role, content: prompt };
+      return {
+        role: message.role,
+        content: [
+          { type: 'text', text: prompt },
+          ...images.map((artifact): OpenAiContentPart => ({
+            type: 'image_url',
+            image_url: {
+              url: `data:${artifact.mimeType};base64,${artifact.contentBase64}`,
+              detail: 'auto',
+            },
+          })),
+        ],
+      };
+    }));
 
   return messages;
 }
@@ -125,7 +270,8 @@ export class HttpAgentAdapter implements ChatBackendAdapter {
     };
   }
 
-  private requestBody(request: AdapterRequest) {
+  private async requestBody(request: AdapterRequest) {
+    const artifacts = await serializeArtifacts(request, this.config);
     if (this.config.protocol === 'openai') {
       const requestedAgentId = request.targetAgentId || request.conversation.agentId;
       const model = this.config.modelMap?.[requestedAgentId]
@@ -135,7 +281,7 @@ export class HttpAgentAdapter implements ChatBackendAdapter {
 
       return {
         model,
-        messages: toOpenAiMessages(request),
+        messages: toOpenAiMessages(request, artifacts),
         stream: true,
       };
     }
@@ -147,6 +293,14 @@ export class HttpAgentAdapter implements ChatBackendAdapter {
       configured_agent_id: this.config.agentId,
       conversation_id: request.conversation.id,
       messages: toBackendMessages(request.history),
+      artifacts: artifacts.map((artifact) => ({
+        artifact_id: artifact.artifactId,
+        filename: artifact.filename,
+        mime_type: artifact.mimeType,
+        size_bytes: artifact.sizeBytes,
+        content_base64: artifact.contentBase64,
+        text: artifact.text,
+      })),
       participants: request.participants.map((participant) => ({
         agent_id: participant.agentId,
         role: participant.role,
@@ -175,6 +329,7 @@ export class HttpAgentAdapter implements ChatBackendAdapter {
         target_agent_id: request.targetAgentId,
         workflow_run_id: request.workflowRunId,
         memory_policy: request.memoryCapsules ? 'explicit-capsules-only' : undefined,
+        artifact_count: artifacts.length,
       },
     };
   }
@@ -213,7 +368,7 @@ export class HttpAgentAdapter implements ChatBackendAdapter {
         method: 'POST',
         headers: this.headers(),
         signal: request.signal,
-        body: JSON.stringify(this.requestBody(request)),
+        body: JSON.stringify(await this.requestBody(request)),
       },
     );
 
@@ -224,6 +379,10 @@ export class HttpAgentAdapter implements ChatBackendAdapter {
 
     if (!response.body) {
       const payload = await response.json().catch(() => null);
+      const artifact = extractArtifact(payload);
+      if (artifact) yield { type: 'artifact', artifact };
+      const status = extractStatus(payload);
+      if (status) yield { type: 'status', status };
       const delta = extractDelta(payload);
       if (delta) yield { type: 'delta', delta };
       return;
@@ -251,6 +410,8 @@ export class HttpAgentAdapter implements ChatBackendAdapter {
           yield { type: 'delta', delta: line };
           continue;
         }
+        const artifact = extractArtifact(payload);
+        if (artifact) yield { type: 'artifact', artifact };
         const status = extractStatus(payload);
         if (status) yield { type: 'status', status };
         const delta = extractDelta(payload);
@@ -263,12 +424,15 @@ export class HttpAgentAdapter implements ChatBackendAdapter {
     if (trailing && trailing !== '[DONE]') {
       try {
         const payload = JSON.parse(trailing) as unknown;
+        const artifact = extractArtifact(payload);
+        if (artifact) yield { type: 'artifact', artifact };
         const status = extractStatus(payload);
         if (status) yield { type: 'status', status };
         const delta = extractDelta(payload);
         if (delta) yield { type: 'delta', delta };
-      } catch {
-        yield { type: 'delta', delta: trailing };
+      } catch (error) {
+        if (error instanceof SyntaxError) yield { type: 'delta', delta: trailing };
+        else throw error;
       }
     }
   }
@@ -287,5 +451,7 @@ export function httpAdapterConfig(systemId: SystemId): HttpAdapterConfig | null 
     timeoutMs: Number(process.env[`${prefix}_TIMEOUT_MS`] ?? 10_000),
     protocol: parseProtocol(process.env[`${prefix}_PROTOCOL`]),
     modelMap: parseModelMap(process.env[`${prefix}_MODEL_MAP_JSON`]),
+    maxArtifactBytes: Number(process.env[`${prefix}_MAX_ARTIFACT_BYTES`] ?? 10 * 1024 * 1024),
+    maxArtifactTotalBytes: Number(process.env[`${prefix}_MAX_ARTIFACT_TOTAL_BYTES`] ?? 20 * 1024 * 1024),
   };
 }
