@@ -1,4 +1,4 @@
-triggered_at=2026-07-20T08:05:00+09:00
+triggered_at=2026-07-20T08:30:00+09:00
 requested_by=Tei
 scope=isolated-staging-only
 production=false
@@ -6,4 +6,4 @@ merge=false
 tracking=enabled
 diagnostics=enabled
 account_id_fallback=enabled
-attempt=after-cloudflare-edit-token-update
+attempt=edit-token-update-self-trigger-active
