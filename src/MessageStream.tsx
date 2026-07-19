@@ -5,6 +5,8 @@ import { isInlineImageMime } from '../shared/artifact-mime';
 import { artifactContentUrl, artifactDownloadUrl } from './api';
 import { renderMessageContent } from './message-content';
 
+const sourceBadgeStyle = { flex: '0 0 auto', whiteSpace: 'nowrap' } as const;
+
 export default function MessageStream({
   conversation,
   selectedSystem,
@@ -104,9 +106,9 @@ function MessageItem({ message, system, artifacts, attemptNumber, onBranch, onRe
         <strong>{isUser ? 'Tei' : message.authorId}</strong>
         <span>{formatTime(message.createdAt)}</span>
         {message.state !== 'complete' && <em>{message.state}</em>}
-        {!isUser && message.authorId !== '[Hermes] Lucy' && <small className="source-output">원문</small>}
-        {!isUser && attemptNumber > 0 && <small className="source-output">재생성 {attemptNumber}</small>}
-        {!isUser && artifacts.length > 0 && <small className="source-output">AI 생성 파일 {artifacts.length}</small>}
+        {!isUser && message.authorId !== '[Hermes] Lucy' && <small className="source-output" style={sourceBadgeStyle}>원문</small>}
+        {!isUser && attemptNumber > 0 && <small className="source-output" style={sourceBadgeStyle}>재생성 {attemptNumber}</small>}
+        {!isUser && artifacts.length > 0 && <small className="source-output" style={sourceBadgeStyle}>AI 생성 파일 {artifacts.length}</small>}
         {message.content && (
           <button
             className="message-branch"
