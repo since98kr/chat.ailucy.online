@@ -11,6 +11,7 @@ test('attachment delivery status remains understandable after reload', async ({ 
   await page.goto('/');
   await openMobileMenu();
   await page.locator('.conversations-title button[aria-label="새 대화"]').click();
+  if (mobile) await expect(page.getByRole('button', { name: '메뉴 닫기' })).toBeHidden();
   await page.locator('input[type="file"]').setInputFiles({
     name: 'lifecycle-note.txt',
     mimeType: 'text/plain',
@@ -26,6 +27,7 @@ test('attachment delivery status remains understandable after reload', async ({ 
   const lifecycle = userMessage.getByLabel('첨부 전달 상태');
   await expect(lifecycle).toContainText('백엔드 전달 완료');
   await expect(lifecycle).toContainText('이해 여부는 응답으로 확인');
+  await expect(page.locator('.composer textarea')).toBeEnabled();
 
   await page.reload();
   await openMobileMenu();
