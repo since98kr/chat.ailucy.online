@@ -6,6 +6,7 @@ import ChatHeader from './ChatHeader';
 import ConversationComposer from './ConversationComposer';
 import FederationPanel from './FederationPanel';
 import MessageStream from './MessageStream';
+import { retryAssistantResponse } from './retry-api';
 import TeamPanel from './TeamPanel';
 import { useChat } from './useChat';
 import { useCollaboration } from './useCollaboration';
@@ -25,8 +26,11 @@ function App() {
   const [federatedTargets, setFederatedTargets] = useState<string[]>([]);
   const [search, setSearch] = useState('');
   const [dragActive, setDragActive] = useState(false);
+  const [retryingMessageId, setRetryingMessageId] = useState<string | null>(null);
+  const [retryError, setRetryError] = useState<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const streamEndRef = useRef<HTMLDivElement>(null);
+  const retryAbortRef = useRef<AbortController | null>(null);
 
   useEffect(() => {
     chat.searchConversations(search);
@@ -34,14 +38,20 @@ function App() {
 
   useEffect(() => {
     streamEndRef.current?.scrollIntoView({ block: 'end' });
-  }, [chat.activeConversation?.messages, chat.runStatus]);
+  }, [chat.activeConversation?.messages, chat.runStatus, retryingMessageId]);
 
   useEffect(() => {
     setFederatedTargets([]);
+    retryAbortRef.current?.abort();
+    retryAbortRef.current = null;
+    setRetryingMessageId(null);
+    setRetryError(null);
   }, [chat.activeConversation?.id]);
 
+  useEffect(() => () => retryAbortRef.current?.abort(), []);
+
   const handleFiles = async (files: File[]) => {
-    if (!files.length || chat.selectedStatus !== 'active') return;
+    if (!files.length || chat.selectedStatus !== 'active' || retryingMessageId) return;
     try {
       await chat.uploadFiles(files);
     } finally {
@@ -63,7 +73,38 @@ function App() {
     setFederationPanelOpen(true);
   };
 
-  const error = chat.error ?? collaboration.error ?? federation.error;
+  const retryResponse = async (messageId: string, mode: 'retry' | 'regenerate') => {
+    const conversationId = chat.activeConversation?.id;
+    if (!conversationId || retryingMessageId || chat.isStreaming || federation.active) return;
+    const controller = new AbortController();
+    retryAbortRef.current = controller;
+    setRetryingMessageId(messageId);
+    setRetryError(null);
+    try {
+      await retryAssistantResponse(
+        messageId,
+        mode,
+        `retry:${messageId}:${crypto.randomUUID()}`,
+        chat.ingestStreamEvent,
+        controller.signal,
+      );
+    } catch (reason) {
+      if (!controller.signal.aborted) {
+        setRetryError(reason instanceof Error ? reason.message : '응답을 다시 실행하지 못했습니다.');
+      }
+    } finally {
+      retryAbortRef.current = null;
+      setRetryingMessageId(null);
+      try {
+        await chat.selectConversation(conversationId);
+      } catch {
+        // Keep streamed messages visible when the refresh fails.
+      }
+    }
+  };
+
+  const error = retryError ?? chat.error ?? collaboration.error ?? federation.error;
+  const retryBusy = Boolean(retryingMessageId);
 
   return (
     <div className="page-shell">
@@ -81,7 +122,7 @@ function App() {
 
         <section
           className="chat-column"
-          onDragEnter={(event) => { event.preventDefault(); if (chat.selectedStatus === 'active') setDragActive(true); }}
+          onDragEnter={(event) => { event.preventDefault(); if (chat.selectedStatus === 'active' && !retryBusy) setDragActive(true); }}
           onDragOver={(event) => event.preventDefault()}
           onDragLeave={(event) => { if (event.currentTarget === event.target) setDragActive(false); }}
           onDrop={(event) => {
@@ -102,7 +143,7 @@ function App() {
           {error && (
             <div className="error-banner">
               <span>{error}</span>
-              <button onClick={() => { chat.clearError(); collaboration.clearError(); federation.clearError(); }}><X size={15} /></button>
+              <button onClick={() => { setRetryError(null); chat.clearError(); collaboration.clearError(); federation.clearError(); }}><X size={15} /></button>
             </div>
           )}
 
@@ -110,10 +151,13 @@ function App() {
             conversation={chat.activeConversation}
             selectedSystem={chat.selectedSystem}
             loading={chat.loading}
-            runStatus={chat.runStatus}
+            runStatus={retryBusy ? '기존 응답을 보존하고 새 응답을 생성하는 중' : chat.runStatus}
             streamEndRef={streamEndRef}
             onCreate={() => void chat.createConversation()}
             onBranch={(messageId) => void chat.branchConversation(messageId)}
+            onRetry={(messageId, mode) => void retryResponse(messageId, mode)}
+            retryEnabled={!federation.active && !chat.isStreaming && chat.selectedStatus === 'active'}
+            retryingMessageId={retryingMessageId}
           />
 
           <ConversationComposer
@@ -124,6 +168,7 @@ function App() {
             setTargets={setFederatedTargets}
             fileInputRef={fileInputRef}
             onFiles={(files) => void handleFiles(files)}
+            externalBusy={retryBusy}
           />
 
           {dragActive && <div className="drop-overlay"><Upload size={28} /><strong>파일을 여기에 놓으세요</strong></div>}
