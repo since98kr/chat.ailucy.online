@@ -48,7 +48,18 @@ describe('OpenAiArtifactToolAccumulator', () => {
     }]);
   });
 
-  it('rejects streamed tool arguments before they can grow beyond the transport limit', () => {
+  it('ignores unrelated backend tool calls instead of applying artifact limits to them', () => {
+    const accumulator = new OpenAiArtifactToolAccumulator(64);
+    expect(() => accumulator.ingest({
+      choices: [{ delta: { tool_calls: [{ index: 0, function: {
+        name: 'backend_internal_tool',
+        arguments: 'x'.repeat(10_000),
+      } }] } }],
+    })).not.toThrow();
+    expect(accumulator.finish()).toEqual([]);
+  });
+
+  it('rejects streamed artifact tool arguments before they can grow beyond the transport limit', () => {
     const accumulator = new OpenAiArtifactToolAccumulator(64);
     expect(() => accumulator.ingest({
       choices: [{ delta: { tool_calls: [{ index: 0, function: {
