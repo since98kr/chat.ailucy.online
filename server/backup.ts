@@ -1,8 +1,10 @@
 import Database from 'better-sqlite3';
 import {
+  copyFileSync,
   cpSync,
   existsSync,
   mkdirSync,
+  mkdtempSync,
   readFileSync,
   readdirSync,
   renameSync,
@@ -11,6 +13,7 @@ import {
   writeFileSync,
 } from 'node:fs';
 import { createHash } from 'node:crypto';
+import { tmpdir } from 'node:os';
 import { basename, join, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
 
@@ -122,13 +125,23 @@ export function verifyBackup(directory: string) {
   else {
     if (statSync(databasePath).size !== manifest.database.sizeBytes) errors.push('database size mismatch');
     if (sha256(databasePath) !== manifest.database.sha256) errors.push('database checksum mismatch');
+
+    let verificationDirectory: string | null = null;
     try {
-      const database = new Database(databasePath, { readonly: true, fileMustExist: true });
-      const integrity = database.pragma('integrity_check', { simple: true });
-      database.close();
-      if (integrity !== 'ok') errors.push(`SQLite integrity check failed: ${String(integrity)}`);
+      verificationDirectory = mkdtempSync(join(tmpdir(), 'chat-v2-backup-verify-'));
+      const verificationDatabasePath = join(verificationDirectory, 'chat-v2.sqlite');
+      copyFileSync(databasePath, verificationDatabasePath);
+      const database = new Database(verificationDatabasePath, { readonly: true, fileMustExist: true });
+      try {
+        const integrity = database.pragma('integrity_check', { simple: true });
+        if (integrity !== 'ok') errors.push(`SQLite integrity check failed: ${String(integrity)}`);
+      } finally {
+        database.close();
+      }
     } catch (error) {
       errors.push(error instanceof Error ? error.message : 'SQLite validation failed');
+    } finally {
+      if (verificationDirectory) rmSync(verificationDirectory, { recursive: true, force: true });
     }
   }
 
