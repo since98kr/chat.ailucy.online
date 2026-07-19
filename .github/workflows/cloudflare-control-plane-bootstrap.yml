@@ -1,0 +1,101 @@
+name: Bootstrap Cloudflare staging control plane
+
+on:
+  push:
+    branches:
+      - ops/cloudflare-access-bootstrap
+    paths:
+      - .ops-trigger/cloudflare-control-plane-bootstrap
+
+permissions:
+  contents: read
+  statuses: write
+
+jobs:
+  bootstrap:
+    name: Configure Access app and policies
+    runs-on: ubuntu-latest
+    environment: staging
+    timeout-minutes: 20
+    steps:
+      - name: Mark control-plane bootstrap pending
+        uses: actions/github-script@v7
+        with:
+          script: |
+            await github.rest.repos.createCommitStatus({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              sha: context.sha,
+              state: 'pending',
+              context: 'chat-v2/cloudflare-control-plane',
+              description: 'Cloudflare staging Access control-plane bootstrap is running',
+              target_url: `${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`,
+            });
+
+      - name: Checkout bootstrap controller
+        uses: actions/checkout@v4
+        with:
+          ref: ops/cloudflare-access-bootstrap
+          clean: true
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Validate controller and idempotency tests
+        run: |
+          set -euo pipefail
+          node --check scripts/ops/bootstrap-cloudflare-staging-access.mjs
+          node --test scripts/ops/bootstrap-cloudflare-staging-access.test.mjs
+
+      - name: Configure Access application human policy service identity and service policy
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ vars.CLOUDFLARE_ACCOUNT_ID || secrets.CLOUDFLARE_ACCOUNT_ID }}
+          CHAT_PUBLIC_ORIGIN: https://chat-staging.ailucy.online
+          CHAT_ALLOWED_EMAILS: ${{ vars.CHAT_ALLOWED_EMAILS }}
+          CHAT_CLOUDFLARE_ACCESS_STATE_FILE: ${{ runner.temp }}/cloudflare-access-discard-after-bootstrap.json
+        run: |
+          set -euo pipefail
+          node scripts/ops/bootstrap-cloudflare-staging-access.mjs \
+            2>&1 | tee "${RUNNER_TEMP}/cloudflare-control-plane-bootstrap.log"
+
+      - name: Destroy the one-time service secret returned to this ephemeral runner
+        if: always()
+        run: |
+          set -euo pipefail
+          state="${RUNNER_TEMP}/cloudflare-access-discard-after-bootstrap.json"
+          if [[ -f "${state}" ]]; then
+            size="$(stat -c '%s' "${state}")"
+            dd if=/dev/zero of="${state}" bs=1 count="${size}" conv=notrunc status=none
+            rm -f "${state}"
+          fi
+          test ! -e "${state}"
+
+      - name: Upload safe control-plane evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: cloudflare-control-plane-bootstrap-${{ github.run_id }}
+          path: ${{ runner.temp }}/cloudflare-control-plane-bootstrap.log
+          if-no-files-found: warn
+          retention-days: 7
+
+      - name: Publish control-plane result
+        if: always()
+        uses: actions/github-script@v7
+        env:
+          RESULT: ${{ job.status }}
+        with:
+          script: |
+            const success = process.env.RESULT === 'success';
+            await github.rest.repos.createCommitStatus({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              sha: context.sha,
+              state: success ? 'success' : 'failure',
+              context: 'chat-v2/cloudflare-control-plane',
+              description: success ? 'Access app and policies are configured' : 'Cloudflare control-plane bootstrap failed',
+              target_url: `${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`,
+            });
