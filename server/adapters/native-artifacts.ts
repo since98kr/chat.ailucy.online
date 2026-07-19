@@ -1,25 +1,14 @@
-import { readFile } from 'node:fs/promises';
 import type { ArtifactRecord, SystemId } from '../../shared/contracts.js';
 import type { AdapterRequest } from './types.js';
-
-const TEXT_ATTACHMENT_TYPES = new Set([
-  'application/json',
-  'application/ld+json',
-  'application/xml',
-  'application/x-yaml',
-  'application/yaml',
-  'application/javascript',
-]);
+import { artifactTextKind, extractArtifactText } from './document-text.js';
 
 export function isNativeTextArtifact(artifact: ArtifactRecord) {
-  const mimeType = artifact.mimeType.trim().toLowerCase();
-  return mimeType.startsWith('text/') || mimeType.endsWith('+json') || mimeType.endsWith('+xml')
-    || TEXT_ATTACHMENT_TYPES.has(mimeType);
+  return artifactTextKind(artifact) !== null;
 }
 
 function textContextLimit(systemId: SystemId) {
   const key = `${systemId.toUpperCase()}_MAX_TEXT_ARTIFACT_BYTES`;
-  const value = Number(process.env[key] ?? 2 * 1024 * 1024);
+  const value = Number(process.env[key] ?? 10 * 1024 * 1024);
   if (!Number.isFinite(value) || value < 1) throw new Error(`${key} must be a positive number`);
   return Math.floor(value);
 }
@@ -63,13 +52,10 @@ export async function augmentNativeArtifactContext(
   for (const artifact of textArtifacts) {
     totalBytes += artifact.sizeBytes;
     if (totalBytes > maxBytes) {
-      throw new Error(`${systemId} text attachments exceed the ${maxBytes}-byte context limit`);
+      throw new Error(`${systemId} document attachments exceed the ${maxBytes}-byte extraction input limit`);
     }
-    const bytes = await readFile(artifact.storagePath);
-    if (bytes.length !== artifact.sizeBytes) {
-      throw new Error(`Attachment ${artifact.filename} changed after upload`);
-    }
-    entries.push({ artifact, text: bytes.toString('utf8') });
+    const text = await extractArtifactText(artifact);
+    if (text) entries.push({ artifact, text });
   }
 
   const block = attachmentBlock(entries);
