@@ -26,6 +26,7 @@ type ToolState = {
   arguments: string;
 };
 
+const DEFAULT_INLINE_GENERATED_ARTIFACT_PAYLOAD_BYTES = 10 * 1024 * 1024;
 const GENERATED_ARTIFACT_KEYS = new Set([
   'filename',
   'mime_type',
@@ -67,6 +68,25 @@ function toolCalls(payload: unknown) {
   return calls;
 }
 
+function hasOwn(object: Record<string, unknown>, key: string) {
+  return Object.prototype.hasOwnProperty.call(object, key);
+}
+
+function rejectAliasPair(object: Record<string, unknown>, first: string, second: string) {
+  if (hasOwn(object, first) && hasOwn(object, second)) {
+    throw new Error(`Generated artifact arguments must not supply both ${first} and ${second}`);
+  }
+}
+
+export function inlineGeneratedArtifactPayloadLimit() {
+  const raw = process.env.CHAT_MAX_INLINE_GENERATED_ARTIFACT_PAYLOAD_BYTES;
+  const value = raw?.trim() ? Number(raw) : DEFAULT_INLINE_GENERATED_ARTIFACT_PAYLOAD_BYTES;
+  if (!Number.isFinite(value) || value < 1 || !Number.isInteger(value)) {
+    throw new Error('Inline generated artifact payload limit must be a positive integer');
+  }
+  return value;
+}
+
 export function parseGeneratedArtifactArguments(value: string): AdapterGeneratedArtifact {
   let input: unknown;
   try {
@@ -82,6 +102,10 @@ export function parseGeneratedArtifactArguments(value: string): AdapterGenerated
   if (unsupportedKey) {
     throw new Error(`Generated artifact arguments must not contain ${unsupportedKey}`);
   }
+  rejectAliasPair(object, 'mime_type', 'mimeType');
+  rejectAliasPair(object, 'content_text', 'contentText');
+  rejectAliasPair(object, 'content_base64', 'contentBase64');
+
   const filename = typeof object.filename === 'string' ? object.filename.trim() : '';
   const mimeType = typeof object.mime_type === 'string' ? object.mime_type.trim()
     : typeof object.mimeType === 'string' ? object.mimeType.trim() : '';
@@ -90,6 +114,8 @@ export function parseGeneratedArtifactArguments(value: string): AdapterGenerated
   const contentText = typeof object.content_text === 'string' ? object.content_text
     : typeof object.contentText === 'string' ? object.contentText : '';
   if (!filename || !mimeType) throw new Error('Generated artifact requires filename and mime_type');
+  if (filename.length > 160) throw new Error('Generated artifact filename exceeds 160 characters');
+  if (mimeType.length > 200) throw new Error('Generated artifact mime type exceeds 200 characters');
   if (!contentBase64 && !contentText) throw new Error('Generated artifact requires content_text or content_base64');
   if (contentBase64 && contentText) throw new Error('Generated artifact must not supply both text and base64 content');
   return {
@@ -102,11 +128,23 @@ export function parseGeneratedArtifactArguments(value: string): AdapterGenerated
 export class OpenAiArtifactToolAccumulator {
   private readonly states = new Map<number, ToolState>();
 
+  constructor(private readonly maxArgumentBytes = inlineGeneratedArtifactPayloadLimit()) {
+    if (!Number.isFinite(maxArgumentBytes) || maxArgumentBytes < 1 || !Number.isInteger(maxArgumentBytes)) {
+      throw new Error('return_artifact argument limit must be a positive integer');
+    }
+  }
+
   ingest(payload: unknown) {
     for (const call of toolCalls(payload)) {
       const state = this.states.get(call.index) ?? { name: '', arguments: '' };
       if (call.name) state.name = call.name;
-      if (call.arguments) state.arguments += call.arguments;
+      if (call.arguments) {
+        const nextArguments = state.arguments + call.arguments;
+        if (Buffer.byteLength(nextArguments, 'utf8') > this.maxArgumentBytes) {
+          throw new Error(`return_artifact tool arguments exceed ${this.maxArgumentBytes} bytes`);
+        }
+        state.arguments = nextArguments;
+      }
       this.states.set(call.index, state);
     }
   }
