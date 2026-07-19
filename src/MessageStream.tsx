@@ -187,7 +187,7 @@ function DeliveryLifecycle({ deliveries, responses }: {
   if (deliveries.length > 0) {
     return (
       <div aria-label="첨부 전달 상태" style={deliveryListStyle}>
-        {deliveries.map((delivery, index) => {
+        {deliveries.map((delivery) => {
           const label = delivery.state === 'delivering'
             ? '백엔드 전달 중'
             : delivery.state === 'delivered'
@@ -202,7 +202,7 @@ function DeliveryLifecycle({ deliveries, responses }: {
               style={deliveryBadgeStyle}
               title={delivery.detail ?? undefined}
             >
-              {delivery.agentId} · {label}{index > 0 ? ` · 시도 ${index + 1}` : ''}
+              {delivery.agentId} · {label}
             </span>
           );
         })}
@@ -220,7 +220,7 @@ function DeliveryLifecycle({ deliveries, responses }: {
 
   return (
     <div aria-label="첨부 전달 상태" style={deliveryListStyle}>
-      {responses.map((response, index) => {
+      {responses.map((response) => {
         const label = response.state === 'streaming'
           ? '백엔드 전달 중'
           : response.state === 'complete'
@@ -230,7 +230,7 @@ function DeliveryLifecycle({ deliveries, responses }: {
               : '미지원 또는 전달 실패';
         return (
           <span key={response.id} data-state={response.state} style={deliveryBadgeStyle}>
-            {response.authorId} · {label}{index > 0 ? ` · 시도 ${index + 1}` : ''}
+            {response.authorId} · {label}
           </span>
         );
       })}
