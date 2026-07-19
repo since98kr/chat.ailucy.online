@@ -91,10 +91,10 @@ async function extractDocx(bytes: Buffer, filename: string) {
   return normalizeExtractedText(result.value, filename);
 }
 
-export async function extractArtifactText(artifact: ArtifactRecord) {
+export async function extractArtifactText(artifact: ArtifactRecord, validatedBytes?: Buffer) {
   const kind = artifactTextKind(artifact);
   if (!kind) return null;
-  const bytes = await readFile(artifact.storagePath);
+  const bytes = validatedBytes ?? await readFile(artifact.storagePath);
   if (bytes.length !== artifact.sizeBytes) {
     throw new Error(`Attachment ${artifact.filename} changed after upload`);
   }
