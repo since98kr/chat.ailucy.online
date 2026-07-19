@@ -34,6 +34,45 @@ export function registerFederationRoutes(
   collaboration: CollaborationService,
   federation: FederationService,
 ) {
+  app.get('/api/conversations/:id/export/json', async (request, reply) => {
+    const { id } = z.object({ id: z.string().min(1) }).parse(request.params);
+    const conversation = database.getConversation(id);
+    if (!conversation) return reply.status(404).send({ error: 'CONVERSATION_NOT_FOUND' });
+    const { artifacts, ...conversationWithoutArtifacts } = conversation;
+    const publicArtifacts = artifacts.map(({ storagePath: _storagePath, ...artifact }) => artifact);
+    const participants = collaboration.listParticipants(id);
+    const activities = collaboration.listActivities(id, 500);
+    const snapshot = federation.snapshot(id);
+    const payload = {
+      schema: 'chat.ailucy.online/conversation-export-v1',
+      exportedAt: new Date().toISOString(),
+      conversation: {
+        ...conversationWithoutArtifacts,
+        artifacts: publicArtifacts,
+      },
+      collaboration: {
+        participants,
+        activities,
+        activityLimit: 500,
+        activityLimitReached: activities.length === 500,
+      },
+      federation: {
+        config: snapshot.config,
+        capsules: snapshot.capsules,
+        workflows: snapshot.runs.map((run) => ({
+          run,
+          events: federation.listEvents(run.id),
+        })),
+      },
+    };
+    reply.header('Content-Type', 'application/json; charset=utf-8');
+    reply.header(
+      'Content-Disposition',
+      `attachment; filename*=UTF-8''${encodeURIComponent(`${conversation.title}.json`)}`,
+    );
+    return reply.send(`${JSON.stringify(payload, null, 2)}\n`);
+  });
+
   app.get('/api/conversations/:id/federation', async (request, reply) => {
     const { id } = z.object({ id: z.string().min(1) }).parse(request.params);
     if (!database.getConversation(id)) return reply.status(404).send({ error: 'CONVERSATION_NOT_FOUND' });
