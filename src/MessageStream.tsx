@@ -1,6 +1,7 @@
 import { Bot, Download, FileText, GitBranch, Image, LoaderCircle } from 'lucide-react';
 import type { ArtifactRecord, ConversationDetail, MessageRecord, SystemId } from '../shared/contracts';
 import { artifactContentUrl, artifactDownloadUrl } from './api';
+import { renderMessageContent } from './message-content';
 
 export default function MessageStream({
   conversation,
@@ -69,7 +70,7 @@ function MessageItem({ message, system, artifacts, onBranch }: {
         {!isUser && message.authorId !== '[Hermes] Lucy' && <small className="source-output">원문</small>}
         <button className="message-branch" onClick={onBranch} title="이 메시지까지 새 Conversation으로 분기"><GitBranch size={13} /></button>
       </div>
-      <p>{message.content || ' '}{message.state === 'streaming' && <span className="stream-cursor" />}</p>
+      <p>{renderMessageContent(message.content || ' ')}{message.state === 'streaming' && <span className="stream-cursor" />}</p>
       {artifacts.map((artifact) => <ArtifactItem key={artifact.id} artifact={artifact} />)}
     </article>
   );
