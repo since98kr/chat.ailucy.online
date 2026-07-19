@@ -38,6 +38,9 @@ jobs:
           set -euo pipefail
           bash -n scripts/deploy/staging.sh
           bash -n scripts/ops/staging-preflight.sh
+          bash -n scripts/ops/staging-smoke.sh
+          bash -n scripts/ops/staging-browser-smoke.sh
+          bash -n scripts/ops/staging-redeploy-smoke.sh
           bash -n scripts/runner/install-chat-staging-runner.sh
           bash -n scripts/backup/restore-staging.sh
           bash -n scripts/ci/container-smoke.sh
