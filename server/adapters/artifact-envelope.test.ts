@@ -99,14 +99,14 @@ describe('ArtifactEnvelopeAccumulator', () => {
 
 describe('wrapArtifactEnvelopeFallback', () => {
   it('injects the fallback contract and returns inline artifacts without trusting paths', async () => {
-    let received: AdapterRequest | null = null;
+    const captured: { request?: AdapterRequest } = {};
     const inner: ChatBackendAdapter = {
       systemId: 'hermes',
       async health() {
         return { ok: true, mode: 'mock', detail: 'ready' };
       },
       async *streamReply(input) {
-        received = input;
+        captured.request = input;
         yield { type: 'status', status: 'running' };
         yield { type: 'delta', delta: `${ARTIFACT_ENVELOPE_OPEN}{"filename":"result.md",` };
         yield { type: 'delta', delta: '"mime_type":"text/markdown","content_text":"# Result"}' };
@@ -118,7 +118,7 @@ describe('wrapArtifactEnvelopeFallback', () => {
     const items: AdapterStreamItem[] = [];
     for await (const item of wrapArtifactEnvelopeFallback(inner).streamReply(request())) items.push(item);
 
-    expect(received?.history[0]).toMatchObject({
+    expect(captured.request?.history[0]).toMatchObject({
       role: 'system',
       authorId: 'chat-v2',
       content: ARTIFACT_ENVELOPE_SYSTEM_MESSAGE,
