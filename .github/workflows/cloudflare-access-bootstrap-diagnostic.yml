@@ -65,6 +65,25 @@ jobs:
           printf 'service-token-local-file=%s\n' "${local_service_file}"
           printf 'admin-api-token-environment=%s\n' "$([[ -n "${CLOUDFLARE_API_TOKEN_VALUE}" ]] && echo true || echo false)"
           printf 'account-id-environment=%s\n' "$([[ -n "${CLOUDFLARE_ACCOUNT_ID_VALUE}" ]] && echo true || echo false)"
+          env | cut -d= -f1 | grep -E '^(CF_|CLOUDFLARE_)' | sed 's/^/runner-cloudflare-variable=/' || true
+
+      - name: Inventory credential references in restricted configuration paths
+        if: always()
+        run: |
+          set -euo pipefail
+          found=false
+          for root in /opt/chat-v2/staging /etc/cloudflared /home/since98kr /home/node; do
+            [[ -d "${root}" ]] || continue
+            while IFS= read -r -d '' file; do
+              if grep -IlE 'CF_ACCESS_CLIENT_SECRET|CLOUDFLARE_API_TOKEN|CF_API_TOKEN|a12fba8e18fb4e9540782d70d3cf4fee\.access' "${file}" >/dev/null 2>&1; then
+                printf 'credential-reference-file=%s\n' "${file}"
+                found=true
+              fi
+            done < <(find "${root}" -xdev -type f -readable -size -1048576c \
+              ! -path '*/node_modules/*' ! -path '*/.git/*' ! -path '*/data/artifacts/*' \
+              -print0 2>/dev/null)
+          done
+          printf 'credential-reference-found=%s\n' "${found}"
 
       - name: Publish diagnostic status
         if: always()
