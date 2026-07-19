@@ -5,7 +5,6 @@ REPO="${CHAT_REPO:-since98kr/chat.ailucy.online}"
 ENVIRONMENT="${GITHUB_ENVIRONMENT:-staging}"
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 BASE_URL="${CHAT_STAGING_BASE_URL:-http://127.0.0.1:14174}"
-ORIGIN="${CHAT_STAGING_ORIGIN:-https://chat-staging.ailucy.online}"
 
 log() {
   printf '[chat-v2-browser-smoke] %s\n' "$*"
@@ -51,7 +50,6 @@ npx playwright install chromium
 log 'Running Chromium against the real localhost staging container.'
 CHAT_STAGING_BASE_URL="${BASE_URL}" \
 CHAT_STAGING_EMAIL="${EMAIL}" \
-CHAT_STAGING_ORIGIN="${ORIGIN}" \
 npm run test:e2e:staging
 
 log 'PASS: real staging chat, links, uploads, downloads, persistence, drag-and-drop, and paste are healthy.'
