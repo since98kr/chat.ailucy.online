@@ -10,6 +10,7 @@ import type {
   WorkflowStepRecord,
 } from '../shared/contracts.js';
 import { getAdapter } from './adapters/index.js';
+import { storeGeneratedArtifact } from './artifacts.js';
 import type { CollaborationService } from './collaboration.js';
 import type { ChatDatabase } from './database.js';
 import type { FederationService } from './federation.js';
@@ -145,13 +146,25 @@ async function executeStep(input: {
   federation: FederationService;
   conversation: ConversationRecord;
   userMessage: MessageRecord;
+  attachedArtifacts: ArtifactRecord[];
   step: WorkflowStepRecord;
   run: WorkflowRunRecord;
   allAgents: AgentRecord[];
   queue: AsyncEventQueue<StreamEvent>;
   signal: AbortSignal;
 }): Promise<StepResult> {
-  const { database, collaboration, federation, conversation, userMessage, run, allAgents, queue, signal } = input;
+  const {
+    database,
+    collaboration,
+    federation,
+    conversation,
+    userMessage,
+    attachedArtifacts,
+    run,
+    allAgents,
+    queue,
+    signal,
+  } = input;
   let step = federation.updateStep(input.step.id, {
     status: 'running',
     error: null,
@@ -191,6 +204,7 @@ async function executeStep(input: {
       conversation,
       userMessage,
       history,
+      artifacts: attachedArtifacts,
       targetAgentId: step.agentId,
       routingMode: 'team',
       participants: collaboration.listParticipants(conversation.id),
@@ -204,19 +218,32 @@ async function executeStep(input: {
         const event: StreamEvent = { type: 'run.status', runId: run.id, status: item.status, agentId: step.agentId };
         persistStreamEvent(federation, run.id, 'step.status', event);
         queue.push(event);
-      } else {
-        content += item.delta;
-        database.updateMessage(assistantMessage.id, { content, state: 'streaming' });
-        const event: StreamEvent = {
-          type: 'content.delta',
-          runId: run.id,
+        continue;
+      }
+      if (item.type === 'artifact') {
+        const stored = await storeGeneratedArtifact(conversation.id, item.artifact);
+        const artifact = database.addArtifact({
+          conversationId: conversation.id,
           messageId: assistantMessage.id,
-          delta: item.delta,
-          authorId: step.agentId,
-        };
+          ...stored,
+        });
+        const event: StreamEvent = { type: 'artifact.created', runId: run.id, artifact };
         persistStreamEvent(federation, run.id, 'step.delta', event);
         queue.push(event);
+        continue;
       }
+
+      content += item.delta;
+      database.updateMessage(assistantMessage.id, { content, state: 'streaming' });
+      const event: StreamEvent = {
+        type: 'content.delta',
+        runId: run.id,
+        messageId: assistantMessage.id,
+        delta: item.delta,
+        authorId: step.agentId,
+      };
+      persistStreamEvent(federation, run.id, 'step.delta', event);
+      queue.push(event);
     }
 
     if (signal.aborted) {
@@ -330,6 +357,7 @@ export async function* runFederatedWorkflow(input: FederatedRunInput): AsyncGene
       federation,
       conversation,
       userMessage,
+      attachedArtifacts,
       step,
       run: currentRun,
       allAgents: resolved.allAgents,
@@ -353,6 +381,7 @@ export async function* runFederatedWorkflow(input: FederatedRunInput): AsyncGene
         federation,
         conversation,
         userMessage,
+        attachedArtifacts,
         step: coordinatorStep,
         run: federation.getRun(run.id)!,
         allAgents: resolved.allAgents,
