@@ -9,6 +9,7 @@ test('response regeneration preserves the source message and original response',
   await page.goto('/');
   await openMobileMenu();
   await page.locator('.conversations-title button[aria-label="새 대화"]').click();
+  if (mobile) await expect(page.getByRole('button', { name: '메뉴 닫기' })).toBeHidden();
 
   const source = 'V1_5_REGENERATION_MARKER';
   await page.locator('.composer textarea').fill(source);
