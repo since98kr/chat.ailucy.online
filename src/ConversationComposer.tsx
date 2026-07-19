@@ -16,6 +16,7 @@ export default function ConversationComposer({
   setTargets,
   fileInputRef,
   onFiles,
+  externalBusy = false,
 }: {
   chat: ChatController;
   collaboration: CollaborationController;
@@ -24,17 +25,21 @@ export default function ConversationComposer({
   setTargets: (targets: string[]) => void;
   fileInputRef: React.RefObject<HTMLInputElement | null>;
   onFiles: (files: File[]) => void;
+  externalBusy?: boolean;
 }) {
   const hasUploading = chat.uploads.some((item) => item.state === 'uploading');
   const pendingArtifacts = chat.activeConversation?.artifacts.filter((artifact) => chat.pendingArtifactIds.includes(artifact.id)) ?? [];
   const hermesMentionAgents = collaboration.agents.filter((agent) => agent.systemId === 'hermes' && !agent.isLead && agent.enabled);
   const federatedChoices = collaboration.agents.filter((agent) => agent.enabled && agent.directChatEnabled && agent.id !== '[Hermes] Lucy');
+  const busy = chat.isStreaming || externalBusy;
 
   const toggleFederatedTarget = (agent: AgentRecord) => {
+    if (busy) return;
     setTargets(targets.includes(agent.id) ? targets.filter((id) => id !== agent.id) : [...targets, agent.id]);
   };
 
   const addMention = (agent: AgentRecord) => {
+    if (busy) return;
     const current = chat.activeConversation?.draft ?? '';
     const prefix = current && !current.endsWith(' ') ? ' ' : '';
     chat.saveDraft(`${current}${prefix}@${agent.shortName} `);
@@ -43,7 +48,7 @@ export default function ConversationComposer({
   const submit = async (event: React.FormEvent) => {
     event.preventDefault();
     const content = chat.activeConversation?.draft ?? '';
-    if (!content.trim() || hasUploading) return;
+    if (!content.trim() || hasUploading || busy) return;
     if (!federation.active && chat.selectedSystem === 'hermes') await collaboration.preview(content);
     chat.saveDraft('');
     await chat.sendMessage(content, targets, federation.active ? 'federated' : 'chat');
@@ -65,7 +70,7 @@ export default function ConversationComposer({
         <div className="mention-toolbar mention-toolbar--federated" aria-label="교차 시스템 대상 선택">
           <span>병렬 실행:</span>
           {federatedChoices.map((agent) => (
-            <button type="button" key={agent.id} className={targets.includes(agent.id) ? 'is-participant' : ''} onClick={() => toggleFederatedTarget(agent)} title={`${agent.systemId} · ${agent.role}`}>
+            <button type="button" key={agent.id} disabled={busy} className={targets.includes(agent.id) ? 'is-participant' : ''} onClick={() => toggleFederatedTarget(agent)} title={`${agent.systemId} · ${agent.role}`}>
               {agent.id === '[Letta] Lucy' ? '@Letta' : `@${agent.shortName}`}
             </button>
           ))}
@@ -74,7 +79,7 @@ export default function ConversationComposer({
       ) : chat.selectedSystem === 'hermes' && chat.activeAgent === '[Hermes] Lucy' && hermesMentionAgents.length > 0 ? (
         <div className="mention-toolbar" aria-label="Hermes 에이전트 멘션">
           <span>호출:</span>
-          {hermesMentionAgents.map((agent) => <button type="button" key={agent.id} className={collaboration.participantIds.has(agent.id) ? 'is-participant' : ''} onClick={() => addMention(agent)}>@{agent.shortName}</button>)}
+          {hermesMentionAgents.map((agent) => <button type="button" disabled={busy} key={agent.id} className={collaboration.participantIds.has(agent.id) ? 'is-participant' : ''} onClick={() => addMention(agent)}>@{agent.shortName}</button>)}
           {collaboration.routing && <em>{collaboration.routing.mode} · {collaboration.routing.targetAgentIds.join(' → ')}</em>}
         </div>
       ) : null}
@@ -96,22 +101,24 @@ export default function ConversationComposer({
       )}
 
       <div className="drop-hint">
-        {hasUploading ? <><LoaderCircle size={15} className="spin" /> 파일을 업로드하고 있습니다.</>
-          : pendingArtifacts.length ? <><Paperclip size={15} /> 첨부파일 {pendingArtifacts.length}개가 다음 메시지에 포함됩니다.</>
-            : <><Upload size={15} /> 파일을 끌어놓거나 이미지를 붙여넣을 수 있습니다.</>}
+        {externalBusy ? <><LoaderCircle size={15} className="spin" /> 기존 응답을 보존하고 새 응답을 생성하고 있습니다.</>
+          : hasUploading ? <><LoaderCircle size={15} className="spin" /> 파일을 업로드하고 있습니다.</>
+            : pendingArtifacts.length ? <><Paperclip size={15} /> 첨부파일 {pendingArtifacts.length}개가 다음 메시지에 포함됩니다.</>
+              : <><Upload size={15} /> 파일을 끌어놓거나 이미지를 붙여넣을 수 있습니다.</>}
       </div>
 
       <form className="composer" onSubmit={submit}>
         <div className="composer__tools">
-          <button type="button" className="icon-button" onClick={() => fileInputRef.current?.click()}><Plus size={18} /></button>
-          <button type="button" className="icon-button" onClick={() => fileInputRef.current?.click()}><Paperclip size={17} /></button>
-          <button type="button" className="icon-button" onClick={() => fileInputRef.current?.click()}><Image size={17} /></button>
-          <input ref={fileInputRef} type="file" multiple hidden onChange={(event) => onFiles(Array.from(event.target.files ?? []))} />
+          <button type="button" disabled={busy} className="icon-button" onClick={() => fileInputRef.current?.click()}><Plus size={18} /></button>
+          <button type="button" disabled={busy} className="icon-button" onClick={() => fileInputRef.current?.click()}><Paperclip size={17} /></button>
+          <button type="button" disabled={busy} className="icon-button" onClick={() => fileInputRef.current?.click()}><Image size={17} /></button>
+          <input ref={fileInputRef} type="file" multiple hidden disabled={busy} onChange={(event) => onFiles(Array.from(event.target.files ?? []))} />
         </div>
         <textarea
           value={chat.activeConversation?.draft ?? ''}
           onChange={(event) => chat.saveDraft(event.target.value)}
           onPaste={(event) => {
+            if (busy) return;
             const images = Array.from(event.clipboardData.files).filter((file) => file.type.startsWith('image/'));
             if (images.length) { event.preventDefault(); onFiles(images); }
           }}
@@ -123,10 +130,12 @@ export default function ConversationComposer({
           }}
           placeholder={federation.active ? '교차 시스템 요청… 실행 대상은 위에서 선택' : chat.selectedSystem === 'hermes' && chat.activeAgent === '[Hermes] Lucy' ? 'Lucy에게 메시지… 필요하면 @Xixi @Lynn @Gemma' : `Message ${chat.activeAgent}...`}
           rows={1}
-          disabled={chat.isStreaming}
+          disabled={busy}
         />
         <div className="composer__send">
-          {chat.isStreaming ? <button type="button" className="stop-button" onClick={chat.stopStreaming} aria-label="응답 중단"><Square size={15} /></button> : <><button type="button" className="icon-button"><Mic size={18} /></button><button type="submit" className="send-button" aria-label="전송" disabled={hasUploading}><Send size={18} /></button></>}
+          {chat.isStreaming ? <button type="button" className="stop-button" onClick={chat.stopStreaming} aria-label="응답 중단"><Square size={15} /></button>
+            : externalBusy ? <button type="button" className="stop-button" disabled aria-label="응답 재생성 중"><LoaderCircle size={15} className="spin" /></button>
+              : <><button type="button" className="icon-button"><Mic size={18} /></button><button type="submit" className="send-button" aria-label="전송" disabled={hasUploading}><Send size={18} /></button></>}
         </div>
       </form>
       <p className="composer-footnote">
