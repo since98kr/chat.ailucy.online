@@ -7,6 +7,15 @@ type StreamEvent = {
   type: string;
   delta?: string;
   artifact?: { id: string; filename: string; mimeType: string; sizeBytes: number };
+  delivery?: {
+    runId: string;
+    messageId: string;
+    agentId: string;
+    systemId: 'letta' | 'hermes';
+    artifactIds: string[];
+    state: 'delivering' | 'delivered' | 'unsupported' | 'failed';
+    detail: string | null;
+  };
 };
 
 function enabled(name: string) {
@@ -89,6 +98,22 @@ function responseText(events: StreamEvent[]) {
   return events.filter((event) => event.type === 'content.delta').map((event) => event.delta ?? '').join('');
 }
 
+function expectDelivery(events: StreamEvent[], input: {
+  agentId: string;
+  systemId: 'letta' | 'hermes';
+  artifactId: string;
+}) {
+  const deliveries = events.filter((event) => event.type === 'artifacts.delivery' && event.delivery);
+  expect(deliveries.map((event) => event.delivery?.state)).toEqual(['delivering', 'delivered']);
+  expect(deliveries[1]?.delivery).toMatchObject({
+    agentId: input.agentId,
+    systemId: input.systemId,
+    artifactIds: [input.artifactId],
+    state: 'delivered',
+  });
+  expect(deliveries[1]?.delivery?.detail).toContain('model understanding is verified separately');
+}
+
 test('real Letta and Hermes understand markers contained only in PDF and image attachments', async ({ page }) => {
   test.skip(!enabled('CHAT_MULTIMODAL_QA_REQUIRED'), 'Real multimodal QA is not activated.');
   test.setTimeout(300_000);
@@ -119,6 +144,11 @@ test('real Letta and Hermes understand markers contained only in PDF and image a
       'Read the attached PDF. Return the exact verification token verbatim and no other token.',
       [lettaArtifactId],
     );
+    expectDelivery(lettaEvents, {
+      agentId: '[Letta] Lucy',
+      systemId: 'letta',
+      artifactId: lettaArtifactId,
+    });
     expect(responseText(lettaEvents)).toContain(lettaMarker);
 
     await page.goto('/');
@@ -137,9 +167,10 @@ test('real Letta and Hermes understand markers contained only in PDF and image a
       return canvas.toDataURL('image/png').split(',')[1];
     }, visionMarker);
 
+    const visionAgentId = process.env.CHAT_HERMES_VISION_AGENT_ID?.trim() || 'Gemma';
     const hermesId = await createConversation(api, {
       systemId: 'hermes',
-      agentId: process.env.CHAT_HERMES_VISION_AGENT_ID?.trim() || 'Gemma',
+      agentId: visionAgentId,
       title: `${QA_TITLE_PREFIX}VISION_${Date.now()}`,
     });
     conversations.push(hermesId);
@@ -154,6 +185,11 @@ test('real Letta and Hermes understand markers contained only in PDF and image a
       'Read the text in the attached image. Return the exact verification token verbatim.',
       [imageArtifactId],
     );
+    expectDelivery(hermesEvents, {
+      agentId: visionAgentId,
+      systemId: 'hermes',
+      artifactId: imageArtifactId,
+    });
     expect(responseText(hermesEvents)).toContain(visionMarker);
   } finally {
     for (const conversationId of conversations.reverse()) await deleteConversation(api, conversationId);
