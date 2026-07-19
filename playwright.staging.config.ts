@@ -2,7 +2,6 @@ import { defineConfig } from '@playwright/test';
 
 const baseURL = process.env.CHAT_STAGING_BASE_URL?.trim() || 'http://127.0.0.1:14174';
 const email = process.env.CHAT_STAGING_EMAIL?.trim();
-const origin = process.env.CHAT_STAGING_ORIGIN?.trim() || 'https://chat-staging.ailucy.online';
 
 export default defineConfig({
   testDir: './e2e-staging',
@@ -23,7 +22,6 @@ export default defineConfig({
     serviceWorkers: 'block',
     extraHTTPHeaders: {
       ...(email ? { 'Cf-Access-Authenticated-User-Email': email } : {}),
-      Origin: origin,
     },
     trace: 'retain-on-failure',
     screenshot: 'only-on-failure',
