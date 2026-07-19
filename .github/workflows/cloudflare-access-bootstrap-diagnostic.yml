@@ -16,6 +16,11 @@ jobs:
     environment: staging
     timeout-minutes: 10
     steps:
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
       - name: Derive Access issuer and application audience
         env:
           CHAT_PUBLIC_ORIGIN: https://chat-staging.ailucy.online
