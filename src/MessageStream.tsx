@@ -1,5 +1,6 @@
 import { Bot, Download, FileText, GitBranch, Image, LoaderCircle } from 'lucide-react';
 import type { ArtifactRecord, ConversationDetail, MessageRecord, SystemId } from '../shared/contracts';
+import { isInlineImageMime } from '../shared/artifact-mime';
 import { artifactContentUrl, artifactDownloadUrl } from './api';
 import { renderMessageContent } from './message-content';
 
@@ -77,13 +78,13 @@ function MessageItem({ message, system, artifacts, onBranch }: {
 }
 
 function ArtifactItem({ artifact }: { artifact: ArtifactRecord }) {
-  if (artifact.mimeType.startsWith('image/')) {
+  if (isInlineImageMime(artifact.mimeType)) {
     return (
       <div className="inline-image-card">
         <img src={artifactContentUrl(artifact.id)} alt={artifact.filename} />
         <div className="image-toolbar">
           <a href={artifactDownloadUrl(artifact.id)}><Download size={15} /> 다운로드</a>
-          <a href={artifactContentUrl(artifact.id)} target="_blank" rel="noreferrer"><Image size={15} /> 전체 화면</a>
+          <a href={artifactContentUrl(artifact.id)} target="_blank" rel="noopener noreferrer"><Image size={15} /> 전체 화면</a>
         </div>
       </div>
     );
