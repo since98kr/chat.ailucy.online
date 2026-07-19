@@ -107,7 +107,7 @@ jobs:
           HERMES_MODEL_MAP_JSON: ${{ vars.HERMES_MODEL_MAP_JSON }}
           HERMES_MAX_ARTIFACT_BYTES: ${{ vars.HERMES_MAX_ARTIFACT_BYTES }}
           HERMES_MAX_ARTIFACT_TOTAL_BYTES: ${{ vars.HERMES_MAX_ARTIFACT_TOTAL_BYTES }}
-          HERMES_ARTIFACT_TOOL_ENABLED: ${{ vars.HERMES_ARTIFACT_TOOL_ENABLED }}
+          HERMES_ARTIFACT_TOOL_ENABLED: 'true'
           HERMES_DOCKER_NETWORK: ${{ vars.HERMES_DOCKER_NETWORK }}
         run: bash scripts/deploy/staging.sh "$(git rev-parse HEAD)"
 
@@ -121,26 +121,22 @@ jobs:
         env:
           CHAT_STAGING_BASE_URL: http://127.0.0.1:14174
           CHAT_STAGING_EMAIL: ${{ vars.CHAT_ALLOWED_EMAILS }}
-          CHAT_MULTIMODAL_QA_REQUIRED: ${{ vars.CHAT_MULTIMODAL_QA_REQUIRED }}
-          CHAT_GENERATED_ARTIFACT_QA_REQUIRED: ${{ vars.CHAT_GENERATED_ARTIFACT_QA_REQUIRED }}
-          CHAT_HERMES_VISION_AGENT_ID: ${{ vars.CHAT_HERMES_VISION_AGENT_ID }}
+          CHAT_MULTIMODAL_QA_REQUIRED: 'true'
+          CHAT_GENERATED_ARTIFACT_QA_REQUIRED: 'true'
+          CHAT_HERMES_VISION_AGENT_ID: Gemma
         run: bash scripts/ops/staging-browser-smoke.sh
 
       - name: Verify public Cloudflare Access and artifact transport
         env:
-          CHAT_EXTERNAL_QA_REQUIRED: ${{ vars.CHAT_EXTERNAL_QA_REQUIRED }}
-          CHAT_MULTIMODAL_QA_REQUIRED: ${{ vars.CHAT_MULTIMODAL_QA_REQUIRED }}
-          CHAT_GENERATED_ARTIFACT_QA_REQUIRED: ${{ vars.CHAT_GENERATED_ARTIFACT_QA_REQUIRED }}
-          CHAT_HERMES_VISION_AGENT_ID: ${{ vars.CHAT_HERMES_VISION_AGENT_ID }}
+          CHAT_EXTERNAL_QA_REQUIRED: 'true'
+          CHAT_MULTIMODAL_QA_REQUIRED: 'true'
+          CHAT_GENERATED_ARTIFACT_QA_REQUIRED: 'true'
+          CHAT_HERMES_VISION_AGENT_ID: Gemma
           CHAT_STAGING_BASE_URL: ${{ vars.CHAT_PUBLIC_ORIGIN }}
           CF_ACCESS_CLIENT_ID: ${{ vars.CF_ACCESS_CLIENT_ID }}
           CF_ACCESS_CLIENT_SECRET: ${{ secrets.CF_ACCESS_CLIENT_SECRET }}
         run: |
           set -euo pipefail
-          if [[ "${CHAT_EXTERNAL_QA_REQUIRED,,}" != 'true' ]]; then
-            echo '[chat-v2-external-smoke] SKIP: external QA is not activated.'
-            exit 0
-          fi
           bash scripts/ops/external-staging-browser-smoke.sh
 
       - name: Publish deployment summary
@@ -153,10 +149,10 @@ jobs:
             echo "- Requested revision: \`$(git rev-parse HEAD)\`"
             echo '- Local endpoint: `http://127.0.0.1:14174`'
             echo "- Public endpoint: \`${{ vars.CHAT_PUBLIC_ORIGIN }}\`"
-            echo "- External QA required: \`${{ vars.CHAT_EXTERNAL_QA_REQUIRED || 'false' }}\`"
-            echo "- Multimodal QA required: \`${{ vars.CHAT_MULTIMODAL_QA_REQUIRED || 'false' }}\`"
-            echo "- Generated artifact QA required: \`${{ vars.CHAT_GENERATED_ARTIFACT_QA_REQUIRED || 'false' }}\`"
-            echo '- Required gates: deploy, Hermes, Letta, local Chromium, and configured public/multimodal gates'
+            echo '- External QA required: `true`'
+            echo '- Multimodal QA required: `true`'
+            echo '- Generated artifact QA required: `true`'
+            echo '- Required gates: deploy, Hermes, Letta, local Chromium, and public Cloudflare Chromium'
             for item in last-deployment.json last-preflight.json last-backup.json last-backup-verify.json last-health.json last-ops-status.json; do
               path="/opt/chat-v2/staging/state/${item}"
               if [[ -f "${path}" ]]; then
