@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { Bot, Check, Copy, Download, FileText, GitBranch, Image, LoaderCircle, RefreshCw } from 'lucide-react';
-import type { ArtifactRecord, ConversationDetail, MessageRecord, SystemId } from '../shared/contracts';
+import type { ArtifactDeliveryRecord, ArtifactRecord, ConversationDetail, MessageRecord, SystemId } from '../shared/contracts';
 import { isInlineImageMime } from '../shared/artifact-mime';
 import { artifactContentUrl, artifactDownloadUrl } from './api';
 import { renderMessageContent } from './message-content';
@@ -40,6 +40,7 @@ export default function MessageStream({
   selectedSystem,
   loading,
   runStatus,
+  artifactDeliveries,
   streamEndRef,
   onCreate,
   onBranch,
@@ -51,6 +52,7 @@ export default function MessageStream({
   selectedSystem: SystemId;
   loading: boolean;
   runStatus: string | null;
+  artifactDeliveries: ArtifactDeliveryRecord[];
   streamEndRef: React.RefObject<HTMLDivElement | null>;
   onCreate: () => void;
   onBranch: (messageId: string) => void;
@@ -86,12 +88,16 @@ export default function MessageStream({
           const deliveryResponses = message.role === 'user' && artifacts.length > 0
             ? messages.filter((candidate) => candidate.role === 'assistant' && candidate.parentMessageId === message.id)
             : [];
+          const liveDeliveries = message.role === 'user'
+            ? artifactDeliveries.filter((delivery) => delivery.messageId === message.id)
+            : [];
           return (
             <MessageItem
               key={message.id}
               message={message}
               system={message.authorId === '[Letta] Lucy' ? 'letta' : selectedSystem}
               artifacts={artifacts}
+              liveDeliveries={liveDeliveries}
               deliveryResponses={deliveryResponses}
               attemptNumber={siblingAttempts.length}
               onBranch={() => onBranch(message.id)}
@@ -108,10 +114,11 @@ export default function MessageStream({
   );
 }
 
-function MessageItem({ message, system, artifacts, deliveryResponses, attemptNumber, onBranch, onRetry, retryEnabled, retrying }: {
+function MessageItem({ message, system, artifacts, liveDeliveries, deliveryResponses, attemptNumber, onBranch, onRetry, retryEnabled, retrying }: {
   message: MessageRecord;
   system: SystemId;
   artifacts: ArtifactRecord[];
+  liveDeliveries: ArtifactDeliveryRecord[];
   deliveryResponses: MessageRecord[];
   attemptNumber: number;
   onBranch: () => void;
@@ -168,12 +175,41 @@ function MessageItem({ message, system, artifacts, deliveryResponses, attemptNum
       </div>
       <p>{renderMessageContent(message.content || ' ')}{message.state === 'streaming' && <span className="stream-cursor" />}</p>
       {artifacts.map((artifact) => <ArtifactItem key={artifact.id} artifact={artifact} />)}
-      {isUser && artifacts.length > 0 && <DeliveryLifecycle responses={deliveryResponses} />}
+      {isUser && artifacts.length > 0 && <DeliveryLifecycle deliveries={liveDeliveries} responses={deliveryResponses} />}
     </article>
   );
 }
 
-function DeliveryLifecycle({ responses }: { responses: MessageRecord[] }) {
+function DeliveryLifecycle({ deliveries, responses }: {
+  deliveries: ArtifactDeliveryRecord[];
+  responses: MessageRecord[];
+}) {
+  if (deliveries.length > 0) {
+    return (
+      <div aria-label="첨부 전달 상태" style={deliveryListStyle}>
+        {deliveries.map((delivery, index) => {
+          const label = delivery.state === 'delivering'
+            ? '백엔드 전달 중'
+            : delivery.state === 'delivered'
+              ? '백엔드 전달 완료 · 이해 여부는 응답으로 확인'
+              : delivery.state === 'unsupported'
+                ? '선택한 백엔드에서 미지원'
+                : '백엔드 전달 실패';
+          return (
+            <span
+              key={`${delivery.runId}:${delivery.agentId}`}
+              data-state={delivery.state}
+              style={deliveryBadgeStyle}
+              title={delivery.detail ?? undefined}
+            >
+              {delivery.agentId} · {label}{index > 0 ? ` · 시도 ${index + 1}` : ''}
+            </span>
+          );
+        })}
+      </div>
+    );
+  }
+
   if (responses.length === 0) {
     return (
       <div aria-label="첨부 전달 상태" style={deliveryListStyle}>
