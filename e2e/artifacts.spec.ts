@@ -56,6 +56,7 @@ test('desktop attachments, links, downloads, and reload persistence work end to 
   expect(await readDownload(await svgDownloadPromise)).toEqual(SVG);
 
   await page.reload();
+  await page.locator('.conversation-row').filter({ hasText: '첨부파일 검수 링크' }).first().click();
   const restored = page.locator('.message--user').filter({ hasText: '첨부파일 검수 링크' }).last();
   await expect(restored.getByRole('link', { name: 'https://example.com/qa' })).toBeVisible();
   await expect(restored.locator('img[alt="qa-pixel.png"]')).toBeVisible();
