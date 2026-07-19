@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import type {
+  ArtifactDeliveryRecord,
   ArtifactRecord,
   ConversationDetail,
   ConversationRecord,
@@ -37,6 +38,14 @@ function upsertMessage(messages: MessageRecord[], next: MessageRecord) {
   return copy;
 }
 
+function upsertArtifactDelivery(current: ArtifactDeliveryRecord[], next: ArtifactDeliveryRecord) {
+  const index = current.findIndex((item) => item.runId === next.runId && item.agentId === next.agentId);
+  if (index < 0) return [...current, next];
+  const copy = [...current];
+  copy[index] = next;
+  return copy;
+}
+
 export function useChat() {
   const [selectedSystem, setSelectedSystem] = useState<SystemId>('hermes');
   const [selectedStatus, setSelectedStatus] = useState<ConversationStatus>('active');
@@ -47,6 +56,7 @@ export function useChat() {
   const [searching, setSearching] = useState(false);
   const [uploads, setUploads] = useState<UploadProgressRecord[]>([]);
   const [pendingArtifactIds, setPendingArtifactIds] = useState<string[]>([]);
+  const [artifactDeliveries, setArtifactDeliveries] = useState<ArtifactDeliveryRecord[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [runStatus, setRunStatus] = useState<string | null>(null);
@@ -64,6 +74,7 @@ export function useChat() {
     setActiveConversation(detail);
     setActiveAgent(detail.agentId);
     setPendingArtifactIds(detail.artifacts.filter((artifact) => !artifact.messageId).map((artifact) => artifact.id));
+    setArtifactDeliveries([]);
     setUploads([]);
     return detail;
   }, []);
@@ -80,6 +91,7 @@ export function useChat() {
       if (!selectedId) {
         setActiveConversation(null);
         setPendingArtifactIds([]);
+        setArtifactDeliveries([]);
         return;
       }
       await loadConversation(selectedId);
@@ -105,6 +117,7 @@ export function useChat() {
         } else if (!cancelled) {
           setActiveConversation(null);
           setPendingArtifactIds([]);
+          setArtifactDeliveries([]);
         }
       })
       .catch((reason: unknown) => {
@@ -291,6 +304,10 @@ export function useChat() {
       } : current);
       return;
     }
+    if (event.type === 'artifacts.delivery') {
+      setArtifactDeliveries((current) => upsertArtifactDelivery(current, event.delivery));
+      return;
+    }
     if (event.type === 'run.started') {
       setRunStatus(event.agentId ? `${event.agentId} 응답 준비 중` : '응답을 준비하는 중');
       return;
@@ -450,6 +467,7 @@ export function useChat() {
     searching,
     uploads,
     pendingArtifactIds,
+    artifactDeliveries,
     loading,
     error,
     runStatus,
