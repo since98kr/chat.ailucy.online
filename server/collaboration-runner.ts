@@ -7,6 +7,7 @@ import type {
   StreamEvent,
 } from '../shared/contracts.js';
 import { getAdapter } from './adapters/index.js';
+import { artifactDeliveryEvent, classifyArtifactDeliveryFailure } from './artifact-delivery.js';
 import { storeGeneratedArtifact } from './artifacts.js';
 import type { CollaborationService } from './collaboration.js';
 import type { ChatDatabase } from './database.js';
@@ -73,6 +74,19 @@ export async function* runCollaborativeReply(input: CollaborationRunInput): Asyn
     yield { type: 'message.created', message: assistantMessage };
     yield { type: 'run.started', runId, agentId };
 
+    let deliveryConfirmed = attachedArtifacts.length === 0;
+    if (attachedArtifacts.length) {
+      yield artifactDeliveryEvent({
+        runId,
+        messageId: userMessage.id,
+        agentId,
+        systemId: conversation.systemId,
+        artifacts: attachedArtifacts,
+        state: 'delivering',
+        detail: 'Preparing bounded attachment content for the selected backend.',
+      });
+    }
+
     let content = '';
     try {
       const latest = database.getConversation(conversation.id)!;
@@ -87,6 +101,18 @@ export async function* runCollaborativeReply(input: CollaborationRunInput): Asyn
         participants,
         signal,
       })) {
+        if (!deliveryConfirmed) {
+          deliveryConfirmed = true;
+          yield artifactDeliveryEvent({
+            runId,
+            messageId: userMessage.id,
+            agentId,
+            systemId: conversation.systemId,
+            artifacts: attachedArtifacts,
+            state: 'delivered',
+            detail: 'Backend accepted the attachment request; model understanding is verified separately.',
+          });
+        }
         if (signal.aborted) break;
         if (item.type === 'status') {
           const statusActivity = collaboration.addActivity({
@@ -124,6 +150,31 @@ export async function* runCollaborativeReply(input: CollaborationRunInput): Asyn
         };
       }
 
+      if (attachedArtifacts.length && !deliveryConfirmed) {
+        if (signal.aborted) {
+          yield artifactDeliveryEvent({
+            runId,
+            messageId: userMessage.id,
+            agentId,
+            systemId: conversation.systemId,
+            artifacts: attachedArtifacts,
+            state: 'failed',
+            detail: 'The request was cancelled before the backend confirmed attachment delivery.',
+          });
+        } else {
+          deliveryConfirmed = true;
+          yield artifactDeliveryEvent({
+            runId,
+            messageId: userMessage.id,
+            agentId,
+            systemId: conversation.systemId,
+            artifacts: attachedArtifacts,
+            state: 'delivered',
+            detail: 'Backend completed an empty response after accepting the attachment request.',
+          });
+        }
+      }
+
       const finalMessage = database.updateMessage(assistantMessage.id, {
         content,
         state: signal.aborted ? 'cancelled' : 'complete',
@@ -147,6 +198,18 @@ export async function* runCollaborativeReply(input: CollaborationRunInput): Asyn
       if (signal.aborted) return;
     } catch (error) {
       const message = error instanceof Error ? error.message : 'Unknown adapter error';
+      if (attachedArtifacts.length && !deliveryConfirmed) {
+        const failure = classifyArtifactDeliveryFailure(error);
+        yield artifactDeliveryEvent({
+          runId,
+          messageId: userMessage.id,
+          agentId,
+          systemId: conversation.systemId,
+          artifacts: attachedArtifacts,
+          state: failure.state,
+          detail: failure.detail,
+        });
+      }
       database.updateMessage(assistantMessage.id, { content, state: 'failed' });
       const failed = collaboration.addActivity({
         conversationId: conversation.id,
