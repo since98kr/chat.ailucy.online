@@ -1,5 +1,5 @@
-import { Archive, Bot, FileDown, GitBranch, Menu, MoreHorizontal, Network, Pin, RotateCcw, Sparkles, Trash2, Users } from 'lucide-react';
-import type { ConversationStatus } from '../shared/contracts';
+import { Archive, Bot, FileDown, FileJson, GitBranch, Menu, MoreHorizontal, Network, Pin, RotateCcw, Sparkles, Trash2, Users } from 'lucide-react';
+import type { ArtifactRecord, ConversationStatus } from '../shared/contracts';
 import { conversationExportUrl } from './api';
 import type { useChat } from './useChat';
 import type { useCollaboration } from './useCollaboration';
@@ -8,6 +8,23 @@ import type { useFederation } from './useFederation';
 type ChatController = ReturnType<typeof useChat>;
 type CollaborationController = ReturnType<typeof useCollaboration>;
 type FederationController = ReturnType<typeof useFederation>;
+
+function publicArtifact(artifact: ArtifactRecord) {
+  return {
+    id: artifact.id,
+    conversationId: artifact.conversationId,
+    messageId: artifact.messageId,
+    filename: artifact.filename,
+    mimeType: artifact.mimeType,
+    sizeBytes: artifact.sizeBytes,
+    createdAt: artifact.createdAt,
+  };
+}
+
+function safeExportFilename(title: string) {
+  const normalized = title.trim().replace(/[^\p{L}\p{N}._-]+/gu, '-').slice(0, 100);
+  return `${normalized || 'conversation'}.json`;
+}
 
 export default function ChatHeader({
   chat,
@@ -32,6 +49,38 @@ export default function ChatHeader({
 
   const move = async (status: ConversationStatus) => {
     await chat.patchConversation({ status });
+  };
+
+  const exportJson = () => {
+    const conversation = chat.activeConversation;
+    if (!conversation) return;
+    const payload = {
+      schema: 'chat.ailucy.online/conversation-export-v1',
+      exportedAt: new Date().toISOString(),
+      conversation: {
+        ...conversation,
+        artifacts: conversation.artifacts.map(publicArtifact),
+      },
+      collaboration: {
+        participants: collaboration.participants,
+        activities: collaboration.activities,
+        routing: collaboration.routing,
+      },
+      federation: {
+        config: federation.config,
+        capsules: federation.capsules,
+        runs: federation.runs,
+        selectedRunId: federation.selectedRun?.id ?? null,
+        selectedRunEvents: federation.events,
+      },
+    };
+    const blob = new Blob([`${JSON.stringify(payload, null, 2)}\n`], { type: 'application/json;charset=utf-8' });
+    const url = URL.createObjectURL(blob);
+    const anchor = document.createElement('a');
+    anchor.href = url;
+    anchor.download = safeExportFilename(conversation.title);
+    anchor.click();
+    URL.revokeObjectURL(url);
   };
 
   return (
@@ -61,6 +110,7 @@ export default function ChatHeader({
               <button onClick={rename}>이름 변경</button>
               <button onClick={() => chat.branchConversation(chat.activeConversation?.messages.at(-1)?.id)}><GitBranch size={14} /> 현재 지점에서 분기</button>
               {chat.activeConversation && <a href={conversationExportUrl(chat.activeConversation.id)}><FileDown size={14} /> Markdown 내보내기</a>}
+              {chat.activeConversation && <button onClick={exportJson}><FileJson size={14} /> JSON 증거 내보내기</button>}
               <button onClick={() => move('archived')}><Archive size={14} /> 보관</button>
               <button className="danger" onClick={() => move('trashed')}><Trash2 size={14} /> 휴지통으로 이동</button>
             </>}
