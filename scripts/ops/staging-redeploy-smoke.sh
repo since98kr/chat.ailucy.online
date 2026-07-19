@@ -52,7 +52,12 @@ done
 log "Watching deployment run ${RUN_ID}."
 gh run watch "${RUN_ID}" --repo "${REPO}" --exit-status
 
-log 'Deployment passed. Running end-to-end staging smoke.'
+log 'Deployment passed. Running end-to-end Hermes and Letta staging smoke.'
 bash "${REPO_ROOT}/scripts/ops/staging-smoke.sh"
 
-log 'PASS: deployment and Hermes/Letta staging smoke completed.'
+if [[ "${CHAT_SKIP_STAGING_BROWSER:-false}" != 'true' ]]; then
+  log 'Adapter smoke passed. Running real Chromium staging artifact smoke.'
+  bash "${REPO_ROOT}/scripts/ops/staging-browser-smoke.sh"
+fi
+
+log 'PASS: deployment, Hermes/Letta, and real staging browser artifact smoke completed.'
