@@ -121,7 +121,7 @@ run_agent_smoke() {
   local stream_file="${TMP_DIR}/${slug}-stream.ndjson"
   local payload
   local conversation_id
-  local client_message_id
+  local http_status
 
   payload="$(python3 - "${system_id}" "${agent_id}" <<'PY'
 import json
@@ -135,11 +135,23 @@ print(json.dumps({
 PY
 )"
 
-  curl -fsS \
-    -H "${AUTH_HEADER}" \
-    -H 'Content-Type: application/json' \
-    --data "${payload}" \
-    "${BASE}/api/conversations" >"${conversation_file}"
+  if ! http_status="$(
+    curl -sS \
+      -o "${conversation_file}" \
+      -w '%{http_code}' \
+      -H "${AUTH_HEADER}" \
+      -H 'Content-Type: application/json' \
+      --data "${payload}" \
+      "${BASE}/api/conversations"
+  )"; then
+    cat "${conversation_file}" >&2 2>/dev/null || true
+    fail "conversation creation request failed for ${system_id}"
+  fi
+  if [[ ! "${http_status}" =~ ^2[0-9][0-9]$ ]]; then
+    log "Conversation creation returned HTTP ${http_status} for ${system_id}:"
+    cat "${conversation_file}" >&2 2>/dev/null || true
+    fail "conversation creation failed for ${system_id}"
+  fi
 
   conversation_id="$(python3 - "${conversation_file}" <<'PY'
 import json
@@ -151,24 +163,36 @@ print(payload["conversation"]["id"])
 PY
 )"
 
-  client_message_id="smoke-${slug}-$(date +%s)-$$"
-  payload="$(python3 - "${marker}" "${client_message_id}" <<'PY'
+  payload="$(python3 - "${marker}" <<'PY'
 import json
 import sys
+import uuid
 
 print(json.dumps({
     "content": f"Chat V2 actual adapter smoke test. Reply with {sys.argv[1]} only.",
-    "clientMessageId": sys.argv[2],
+    "clientMessageId": str(uuid.uuid4()),
 }))
 PY
 )"
 
   log "Calling ${system_id} through Chat V2."
-  curl -fsS -N \
-    -H "${AUTH_HEADER}" \
-    -H 'Content-Type: application/json' \
-    --data "${payload}" \
-    "${BASE}/api/conversations/${conversation_id}/messages/stream" >"${stream_file}"
+  if ! http_status="$(
+    curl -sS -N \
+      -o "${stream_file}" \
+      -w '%{http_code}' \
+      -H "${AUTH_HEADER}" \
+      -H 'Content-Type: application/json' \
+      --data "${payload}" \
+      "${BASE}/api/conversations/${conversation_id}/messages/stream"
+  )"; then
+    cat "${stream_file}" >&2 2>/dev/null || true
+    fail "message stream request failed for ${system_id}"
+  fi
+  if [[ ! "${http_status}" =~ ^2[0-9][0-9]$ ]]; then
+    log "Message stream returned HTTP ${http_status} for ${system_id}:"
+    cat "${stream_file}" >&2 2>/dev/null || true
+    fail "message stream failed for ${system_id}"
+  fi
 
   python3 - "${stream_file}" "${marker}" <<'PY'
 import json
