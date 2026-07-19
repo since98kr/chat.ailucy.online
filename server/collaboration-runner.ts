@@ -7,6 +7,7 @@ import type {
   StreamEvent,
 } from '../shared/contracts.js';
 import { getAdapter } from './adapters/index.js';
+import { storeGeneratedArtifact } from './artifacts.js';
 import type { CollaborationService } from './collaboration.js';
 import type { ChatDatabase } from './database.js';
 
@@ -80,6 +81,7 @@ export async function* runCollaborativeReply(input: CollaborationRunInput): Asyn
         conversation: latest,
         userMessage,
         history,
+        artifacts: attachedArtifacts,
         targetAgentId: agentId,
         routingMode: routing.mode,
         participants,
@@ -98,17 +100,28 @@ export async function* runCollaborativeReply(input: CollaborationRunInput): Asyn
           });
           yield { type: 'run.status', runId, status: item.status, agentId };
           yield { type: 'team.activity', activity: statusActivity };
-        } else {
-          content += item.delta;
-          database.updateMessage(assistantMessage.id, { content, state: 'streaming' });
-          yield {
-            type: 'content.delta',
-            runId,
-            messageId: assistantMessage.id,
-            delta: item.delta,
-            authorId: agentId,
-          };
+          continue;
         }
+        if (item.type === 'artifact') {
+          const stored = await storeGeneratedArtifact(conversation.id, item.artifact);
+          const artifact = database.addArtifact({
+            conversationId: conversation.id,
+            messageId: assistantMessage.id,
+            ...stored,
+          });
+          yield { type: 'artifact.created', runId, artifact };
+          continue;
+        }
+
+        content += item.delta;
+        database.updateMessage(assistantMessage.id, { content, state: 'streaming' });
+        yield {
+          type: 'content.delta',
+          runId,
+          messageId: assistantMessage.id,
+          delta: item.delta,
+          authorId: agentId,
+        };
       }
 
       const finalMessage = database.updateMessage(assistantMessage.id, {
