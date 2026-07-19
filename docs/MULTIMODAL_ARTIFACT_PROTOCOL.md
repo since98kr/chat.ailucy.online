@@ -2,14 +2,15 @@
 
 ## Purpose
 
-Chat V2 must distinguish four different states that were previously conflated:
+Chat V2 must distinguish five states that were previously conflated:
 
 1. a file was uploaded to Chat V2;
 2. the file was attached to a user message;
-3. the selected AI backend actually received and could interpret it;
-4. an AI backend returned a generated file that Chat V2 persisted and exposed to the user.
+3. the selected AI backend accepted the attachment request;
+4. the model demonstrated understanding of information found only in the attachment;
+5. an AI backend returned a generated file that Chat V2 persisted and exposed to the user.
 
-The protocol below makes states 3 and 4 explicit and testable.
+The protocol below makes states 3, 4, and 5 explicit and independently testable.
 
 ## Input contract
 
@@ -71,6 +72,36 @@ Supported image MIME types for the OpenAI-compatible path:
 - `image/webp`
 
 Unsupported binary types fail explicitly. They are never silently omitted.
+
+## Delivery lifecycle
+
+Each target agent receives its own delivery lifecycle event. A team or federated request can therefore show that one backend accepted a file while another rejected it.
+
+```json
+{
+  "type": "artifacts.delivery",
+  "delivery": {
+    "runId": "uuid",
+    "messageId": "uuid",
+    "agentId": "Gemma",
+    "systemId": "hermes",
+    "artifactIds": ["uuid"],
+    "state": "delivered",
+    "detail": "Backend accepted the attachment request; model understanding is verified separately."
+  }
+}
+```
+
+States:
+
+- `delivering`: Chat V2 is validating, extracting, and serializing bounded attachment content;
+- `delivered`: the backend accepted the request and began or completed a response;
+- `unsupported`: the selected path cannot process the MIME type or no extractable text exists without OCR;
+- `failed`: delivery failed for an operational reason such as a backend error, timeout, cancellation, or size-limit failure.
+
+`delivered` never means that the model understood the attachment. Understanding is proven only by an E2E marker placed exclusively inside the attachment and reproduced in the model response.
+
+Delivery events expose only artifact IDs and safe metadata. They never include the storage path, raw bytes, API keys, or backend credentials. Federated delivery events are also persisted in workflow evidence.
 
 ## Output contract
 
@@ -158,10 +189,11 @@ A green transport test is not evidence of AI understanding. Release E2E must pla
 
 ## Required release evidence
 
-1. A marker contained only in a PDF is reproduced by real Letta.
-2. A marker contained only in a PNG is reproduced by a multimodal Hermes lane.
-3. PDF and DOCX extractors pass deterministic unit tests.
-4. An AI-generated TXT file is returned, persisted, reloaded, and downloaded byte-for-byte.
-5. A generated image path is validated before claiming image-generation output support.
-6. Unsupported MIME, image-only PDF, oversize input, and extraction-limit failures are visible and explicit.
-7. The same required cases pass through the public Cloudflare Access hostname when the external gate is enabled.
+1. Each attachment path emits `delivering` followed by `delivered`, or an explicit `unsupported`/`failed` state.
+2. A marker contained only in a PDF is reproduced by real Letta.
+3. A marker contained only in a PNG is reproduced by a multimodal Hermes lane.
+4. PDF and DOCX extractors pass deterministic unit tests.
+5. An AI-generated TXT file is returned, persisted, reloaded, and downloaded byte-for-byte.
+6. A generated image path is validated before claiming image-generation output support.
+7. Unsupported MIME, image-only PDF, oversize input, and extraction-limit failures are visible and explicit.
+8. The same required cases pass through the public Cloudflare Access hostname when the external gate is enabled.
