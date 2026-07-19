@@ -1,4 +1,5 @@
-triggered_at=2026-07-20T04:45:00+09:00
+triggered_at=2026-07-20T05:00:00+09:00
 requested_by=Tei
 scope=credential-metadata-only
 secret_output=false
+async_wrapper=fixed
