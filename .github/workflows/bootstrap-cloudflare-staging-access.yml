@@ -60,7 +60,11 @@ jobs:
           CHAT_PUBLIC_ORIGIN: https://chat-staging.ailucy.online
           CHAT_ALLOWED_EMAILS: ${{ vars.CHAT_ALLOWED_EMAILS }}
           CHAT_CLOUDFLARE_ACCESS_STATE_FILE: /opt/chat-v2/staging/secrets/cloudflare-access-staging.json
-        run: node scripts/ops/bootstrap-cloudflare-staging-access.mjs
+        run: |
+          set -euo pipefail
+          mkdir -p /opt/chat-v2/staging/state
+          node scripts/ops/bootstrap-cloudflare-staging-access.mjs \
+            2>&1 | tee /opt/chat-v2/staging/state/cloudflare-bootstrap.log
 
       - name: Load the generated service identity without logging its secret
         run: |
@@ -182,6 +186,7 @@ jobs:
         with:
           name: chat-v2-cloudflare-access-${{ github.run_id }}
           path: |
+            /opt/chat-v2/staging/state/cloudflare-bootstrap.log
             /opt/chat-v2/staging/state/last-deployment.json
             /opt/chat-v2/staging/state/last-preflight.json
             /opt/chat-v2/staging/state/last-preflight-output.log
