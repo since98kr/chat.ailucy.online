@@ -1,6 +1,8 @@
 import { Bot, Download, FileText, GitBranch, Image, LoaderCircle } from 'lucide-react';
 import type { ArtifactRecord, ConversationDetail, MessageRecord, SystemId } from '../shared/contracts';
+import { isInlineImageMime } from '../shared/artifact-mime';
 import { artifactContentUrl, artifactDownloadUrl } from './api';
+import { renderMessageContent } from './message-content';
 
 export default function MessageStream({
   conversation,
@@ -69,20 +71,20 @@ function MessageItem({ message, system, artifacts, onBranch }: {
         {!isUser && message.authorId !== '[Hermes] Lucy' && <small className="source-output">원문</small>}
         <button className="message-branch" onClick={onBranch} title="이 메시지까지 새 Conversation으로 분기"><GitBranch size={13} /></button>
       </div>
-      <p>{message.content || ' '}{message.state === 'streaming' && <span className="stream-cursor" />}</p>
+      <p>{renderMessageContent(message.content || ' ')}{message.state === 'streaming' && <span className="stream-cursor" />}</p>
       {artifacts.map((artifact) => <ArtifactItem key={artifact.id} artifact={artifact} />)}
     </article>
   );
 }
 
 function ArtifactItem({ artifact }: { artifact: ArtifactRecord }) {
-  if (artifact.mimeType.startsWith('image/')) {
+  if (isInlineImageMime(artifact.mimeType)) {
     return (
       <div className="inline-image-card">
         <img src={artifactContentUrl(artifact.id)} alt={artifact.filename} />
         <div className="image-toolbar">
           <a href={artifactDownloadUrl(artifact.id)}><Download size={15} /> 다운로드</a>
-          <a href={artifactContentUrl(artifact.id)} target="_blank" rel="noreferrer"><Image size={15} /> 전체 화면</a>
+          <a href={artifactContentUrl(artifact.id)} target="_blank" rel="noopener noreferrer"><Image size={15} /> 전체 화면</a>
         </div>
       </div>
     );

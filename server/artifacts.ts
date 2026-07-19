@@ -3,6 +3,7 @@ import { pipeline } from 'node:stream/promises';
 import { basename, join, resolve } from 'node:path';
 import { randomUUID } from 'node:crypto';
 import type { MultipartFile } from '@fastify/multipart';
+import { normalizeArtifactMime } from '../shared/artifact-mime.js';
 
 function rootPath() {
   return resolve(process.env.CHAT_ARTIFACT_ROOT ?? './data/artifacts');
@@ -29,7 +30,7 @@ export async function storeArtifact(conversationId: string, file: MultipartFile)
 
   return {
     filename,
-    mimeType: file.mimetype || 'application/octet-stream',
+    mimeType: normalizeArtifactMime(file.mimetype),
     sizeBytes,
     storagePath,
   };
