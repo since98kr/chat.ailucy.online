@@ -1,0 +1,197 @@
+name: Giant staging PR52 local and public verification
+
+on:
+  push:
+    branches:
+      - ops/staging-verify-pr52-live
+
+permissions:
+  contents: read
+  statuses: write
+
+concurrency:
+  group: chat-v2-staging-deploy
+  cancel-in-progress: false
+
+jobs:
+  verify:
+    name: Deploy approved PR52 to isolated staging
+    runs-on: [self-hosted, linux, x64, chat-staging]
+    environment: staging
+    timeout-minutes: 90
+    steps:
+      - name: Checkout approved SHA
+        uses: actions/checkout@v4
+        with:
+          ref: 9c5c230d3a059c74e33c5c23d2b6508d2d77ba24
+          clean: true
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Verify exact source
+        id: source
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "9c5c230d3a059c74e33c5c23d2b6508d2d77ba24"
+          echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+
+      - name: Mark staging pending
+        uses: actions/github-script@v7
+        env:
+          DEPLOY_SHA: ${{ steps.source.outputs.sha }}
+        with:
+          script: |
+            await github.rest.repos.createCommitStatus({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              sha: process.env.DEPLOY_SHA,
+              state: 'pending',
+              context: 'chat-v2/staging',
+              description: 'PR52 isolated staging verification is running',
+              target_url: `${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`,
+            });
+
+      - name: Resolve Cloudflare staging service credentials
+        env:
+          CF_ACCESS_CLIENT_SECRET_INPUT: ${{ secrets.CF_ACCESS_CLIENT_SECRET }}
+        run: |
+          set -euo pipefail
+          client_id='a12fba8e18fb4e9540782d70d3cf4fee.access'
+          client_secret="${CF_ACCESS_CLIENT_SECRET_INPUT:-}"
+          for candidate in \
+            /opt/chat-v2/staging/secrets/cloudflare-service-token.env \
+            /opt/chat-v2/staging/.cloudflare-service-token.env \
+            /etc/cloudflared/chat-v2-staging-service-token.env; do
+            if [[ -z "${client_secret}" && -r "${candidate}" ]]; then
+              set -a
+              source "${candidate}"
+              set +a
+              client_secret="${CF_ACCESS_CLIENT_SECRET:-}"
+            fi
+          done
+          echo "::add-mask::${client_id}"
+          [[ -z "${client_secret}" ]] || echo "::add-mask::${client_secret}"
+          echo "CF_ACCESS_CLIENT_ID_RUNTIME=${client_id}" >> "$GITHUB_ENV"
+          echo "CF_ACCESS_CLIENT_SECRET_RUNTIME=${client_secret}" >> "$GITHUB_ENV"
+
+      - name: Deploy with strict preflight backup health and rollback
+        env:
+          CHAT_STAGING_ROOT: /opt/chat-v2/staging
+          CHAT_STAGING_DATA_DIR: /opt/chat-v2/staging/data
+          CHAT_STAGING_PORT: '14174'
+          CHAT_PREFLIGHT_STRICT: 'true'
+          CHAT_PREFLIGHT_MIN_FREE_BYTES: ${{ vars.CHAT_PREFLIGHT_MIN_FREE_BYTES }}
+          CHAT_BACKUP_RETENTION: ${{ vars.CHAT_BACKUP_RETENTION }}
+          CHAT_PUBLIC_ORIGIN: https://chat-staging.ailucy.online
+          CHAT_ALLOWED_ORIGIN: https://chat-staging.ailucy.online,http://127.0.0.1:14174
+          CHAT_AUTH_MODE: ${{ vars.CHAT_AUTH_MODE }}
+          CHAT_ALLOWED_EMAILS: ${{ vars.CHAT_ALLOWED_EMAILS }}
+          CHAT_CF_ACCESS_ISSUER: ${{ vars.CHAT_CF_ACCESS_ISSUER }}
+          CHAT_CF_ACCESS_AUD: ${{ vars.CHAT_CF_ACCESS_AUD }}
+          CHAT_ACCESS_TOKEN: ${{ secrets.CHAT_ACCESS_TOKEN }}
+          CHAT_RATE_LIMIT_GENERAL: ${{ vars.CHAT_RATE_LIMIT_GENERAL }}
+          CHAT_RATE_LIMIT_CHAT: ${{ vars.CHAT_RATE_LIMIT_CHAT }}
+          CHAT_RATE_LIMIT_UPLOAD: ${{ vars.CHAT_RATE_LIMIT_UPLOAD }}
+          CHAT_MAX_UPLOAD_BYTES: ${{ vars.CHAT_MAX_UPLOAD_BYTES }}
+          CHAT_MAX_GENERATED_ARTIFACT_BYTES: ${{ vars.CHAT_MAX_GENERATED_ARTIFACT_BYTES }}
+          CHAT_MAX_INLINE_GENERATED_ARTIFACT_PAYLOAD_BYTES: '10485760'
+          LETTA_BASE_URL: ${{ vars.LETTA_BASE_URL }}
+          LETTA_CHAT_PATH: ${{ vars.LETTA_CHAT_PATH }}
+          LETTA_HEALTH_PATH: ${{ vars.LETTA_HEALTH_PATH }}
+          LETTA_AGENT_ID: ${{ vars.LETTA_AGENT_ID }}
+          LETTA_API_KEY: ${{ secrets.LETTA_API_KEY }}
+          LETTA_TIMEOUT_MS: ${{ vars.LETTA_TIMEOUT_MS }}
+          LETTA_PROTOCOL: ${{ vars.LETTA_PROTOCOL }}
+          LETTA_MODEL_MAP_JSON: ${{ vars.LETTA_MODEL_MAP_JSON }}
+          LETTA_MAX_ARTIFACT_BYTES: ${{ vars.LETTA_MAX_ARTIFACT_BYTES }}
+          LETTA_MAX_ARTIFACT_TOTAL_BYTES: ${{ vars.LETTA_MAX_ARTIFACT_TOTAL_BYTES }}
+          LETTA_MAX_TEXT_ARTIFACT_BYTES: ${{ vars.LETTA_MAX_TEXT_ARTIFACT_BYTES }}
+          LETTA_NATIVE_BINARY_ARTIFACTS: ${{ vars.LETTA_NATIVE_BINARY_ARTIFACTS }}
+          LETTA_ARTIFACT_TOOL_ENABLED: ${{ vars.LETTA_ARTIFACT_TOOL_ENABLED }}
+          HERMES_BASE_URL: ${{ vars.HERMES_BASE_URL }}
+          HERMES_CHAT_PATH: ${{ vars.HERMES_CHAT_PATH }}
+          HERMES_HEALTH_PATH: ${{ vars.HERMES_HEALTH_PATH }}
+          HERMES_AGENT_ID: ${{ vars.HERMES_AGENT_ID }}
+          HERMES_API_KEY: ${{ secrets.HERMES_API_KEY }}
+          HERMES_TIMEOUT_MS: '120000'
+          HERMES_PROTOCOL: openai
+          HERMES_MODEL_MAP_JSON: ${{ vars.HERMES_MODEL_MAP_JSON }}
+          HERMES_MAX_ARTIFACT_BYTES: ${{ vars.HERMES_MAX_ARTIFACT_BYTES }}
+          HERMES_MAX_ARTIFACT_TOTAL_BYTES: ${{ vars.HERMES_MAX_ARTIFACT_TOTAL_BYTES }}
+          HERMES_ARTIFACT_TOOL_ENABLED: 'true'
+          HERMES_ARTIFACT_ENVELOPE_ENABLED: 'true'
+          HERMES_DOCKER_NETWORK: ${{ vars.HERMES_DOCKER_NETWORK }}
+        run: |
+          set -euo pipefail
+          export CHAT_ALLOWED_SERVICE_CLIENT_IDS="${CF_ACCESS_CLIENT_ID_RUNTIME}"
+          bash scripts/deploy/staging.sh "$(git rev-parse HEAD)"
+
+      - name: Verify real transport and local browser AI gates
+        env:
+          CHAT_STAGING_BASE_URL: http://127.0.0.1:14174
+          CHAT_STAGING_EMAIL: ${{ vars.CHAT_ALLOWED_EMAILS }}
+          CHAT_MULTIMODAL_QA_REQUIRED: 'true'
+          CHAT_GENERATED_ARTIFACT_QA_REQUIRED: 'true'
+          CHAT_HERMES_VISION_AGENT_ID: Gemma
+        run: |
+          set -euo pipefail
+          bash scripts/ops/staging-smoke.sh
+          bash scripts/ops/staging-browser-smoke.sh
+
+      - name: Verify public Cloudflare Access and full browser gates
+        env:
+          CHAT_STAGING_BASE_URL: https://chat-staging.ailucy.online
+          CHAT_MULTIMODAL_QA_REQUIRED: 'true'
+          CHAT_GENERATED_ARTIFACT_QA_REQUIRED: 'true'
+          CHAT_HERMES_VISION_AGENT_ID: Gemma
+        run: |
+          set -euo pipefail
+          if [[ -z "${CF_ACCESS_CLIENT_SECRET_RUNTIME}" ]]; then
+            echo 'BLOCKED: matching Cloudflare Access Client Secret is not configured on the staging runner or GitHub staging environment.' >&2
+            exit 53
+          fi
+          export CF_ACCESS_CLIENT_ID="${CF_ACCESS_CLIENT_ID_RUNTIME}"
+          export CF_ACCESS_CLIENT_SECRET="${CF_ACCESS_CLIENT_SECRET_RUNTIME}"
+          bash scripts/ops/external-staging-browser-smoke.sh
+
+      - name: Upload staging evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: chat-v2-pr52-staging-${{ github.run_id }}
+          path: |
+            /opt/chat-v2/staging/state/last-deployment.json
+            /opt/chat-v2/staging/state/last-preflight.json
+            /opt/chat-v2/staging/state/last-preflight-output.log
+            /opt/chat-v2/staging/state/last-backup.json
+            /opt/chat-v2/staging/state/last-backup-verify.json
+            /opt/chat-v2/staging/state/last-health.json
+            /opt/chat-v2/staging/state/last-ops-status.json
+            test-results-staging-browser
+            playwright-staging-report
+            test-results-external-staging-browser
+            playwright-external-staging-report
+          if-no-files-found: warn
+          retention-days: 30
+
+      - name: Publish staging status
+        if: always()
+        uses: actions/github-script@v7
+        env:
+          DEPLOY_SHA: ${{ steps.source.outputs.sha }}
+          DEPLOY_RESULT: ${{ job.status }}
+        with:
+          script: |
+            const success = process.env.DEPLOY_RESULT === 'success';
+            await github.rest.repos.createCommitStatus({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              sha: process.env.DEPLOY_SHA,
+              state: success ? 'success' : 'failure',
+              context: 'chat-v2/staging',
+              description: success ? 'PR52 isolated and public staging QA passed' : 'PR52 staging QA found a blocker',
+              target_url: `${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`,
+            });
