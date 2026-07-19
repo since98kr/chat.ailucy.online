@@ -48,6 +48,16 @@ describe('OpenAiArtifactToolAccumulator', () => {
     }]);
   });
 
+  it('rejects streamed tool arguments before they can grow beyond the transport limit', () => {
+    const accumulator = new OpenAiArtifactToolAccumulator(64);
+    expect(() => accumulator.ingest({
+      choices: [{ delta: { tool_calls: [{ index: 0, function: {
+        name: 'return_artifact',
+        arguments: `{"filename":"x.txt","mime_type":"text/plain","content_text":"${'x'.repeat(80)}`,
+      } }] } }],
+    })).toThrow('exceed 64 bytes');
+  });
+
   it('rejects an artifact call without inline content', () => {
     const accumulator = new OpenAiArtifactToolAccumulator();
     accumulator.ingest({
@@ -78,5 +88,19 @@ describe('OpenAiArtifactToolAccumulator', () => {
       content_text: 'inline',
       url: 'https://backend.invalid/unsafe.txt',
     }))).toThrow('must not contain url');
+  });
+
+  it('rejects ambiguous aliases and oversized metadata', () => {
+    expect(() => parseGeneratedArtifactArguments(JSON.stringify({
+      filename: 'ambiguous.txt',
+      mime_type: 'text/plain',
+      mimeType: 'application/octet-stream',
+      content_text: 'x',
+    }))).toThrow('must not supply both mime_type and mimeType');
+    expect(() => parseGeneratedArtifactArguments(JSON.stringify({
+      filename: `${'a'.repeat(161)}.txt`,
+      mime_type: 'text/plain',
+      content_text: 'x',
+    }))).toThrow('filename exceeds 160 characters');
   });
 });
