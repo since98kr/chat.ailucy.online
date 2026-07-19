@@ -19,6 +19,9 @@ function prepareEnvironment() {
   delete process.env.CHAT_PUBLIC_ORIGIN;
   delete process.env.CHAT_ACCESS_TOKEN;
   delete process.env.CHAT_ALLOWED_EMAILS;
+  delete process.env.CHAT_ALLOWED_SERVICE_CLIENT_IDS;
+  delete process.env.CHAT_CF_ACCESS_ISSUER;
+  delete process.env.CHAT_CF_ACCESS_AUD;
   delete process.env.CHAT_MAX_GENERATED_ARTIFACT_BYTES;
   delete process.env.CHAT_MAX_INLINE_GENERATED_ARTIFACT_PAYLOAD_BYTES;
   process.env.CHAT_AUTH_MODE = 'disabled';
@@ -64,6 +67,42 @@ describe('deployment preflight', () => {
     expect(report.ok).toBe(true);
     expect(report.checks.find((check) => check.name === 'authentication')?.ok).toBe(true);
     expect(report.checks.find((check) => check.name === 'public-origin')?.ok).toBe(true);
+  });
+
+  it('fails before replacement when a Cloudflare service client lacks JWT verifier settings', async () => {
+    prepareEnvironment();
+    process.env.CHAT_AUTH_MODE = 'cloudflare';
+    process.env.CHAT_ALLOWED_EMAILS = 'tei@example.com';
+    process.env.CHAT_ALLOWED_SERVICE_CLIENT_IDS = 'staging-client.access';
+    process.env.CHAT_PUBLIC_ORIGIN = 'https://chat-staging.ailucy.online';
+    process.env.CHAT_PREFLIGHT_REQUIRE_REAL_ADAPTERS = 'false';
+
+    const report = await runPreflight({ strict: true });
+
+    expect(report.ok).toBe(false);
+    expect(report.checks.find((check) => check.name === 'cloudflare-service-client-verifier')).toMatchObject({
+      ok: false,
+      level: 'error',
+    });
+  });
+
+  it('accepts a Cloudflare service client only with issuer and audience together', async () => {
+    prepareEnvironment();
+    process.env.CHAT_AUTH_MODE = 'cloudflare';
+    process.env.CHAT_ALLOWED_SERVICE_CLIENT_IDS = 'staging-client.access';
+    process.env.CHAT_CF_ACCESS_ISSUER = 'https://example.cloudflareaccess.com';
+    process.env.CHAT_CF_ACCESS_AUD = 'staging-audience';
+    process.env.CHAT_PUBLIC_ORIGIN = 'https://chat-staging.ailucy.online';
+    process.env.CHAT_PREFLIGHT_REQUIRE_REAL_ADAPTERS = 'false';
+
+    const report = await runPreflight({ strict: true });
+
+    expect(report.ok).toBe(true);
+    expect(report.checks.find((check) => check.name === 'cloudflare-identities')?.ok).toBe(true);
+    expect(report.checks.find((check) => check.name === 'cloudflare-service-client-verifier')).toMatchObject({
+      ok: true,
+      level: 'info',
+    });
   });
 
   it('fails before deployment when an inline generated artifact limit is invalid', async () => {
