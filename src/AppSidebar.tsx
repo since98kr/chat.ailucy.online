@@ -34,6 +34,11 @@ export default function AppSidebar({
     setMobileOpen(false);
   };
 
+  const createConversation = () => {
+    setMobileOpen(false);
+    void chat.createConversation();
+  };
+
   return (
     <>
       <aside className={`sidebar ${mobileOpen ? 'sidebar--open' : ''}`}>
@@ -60,7 +65,7 @@ export default function AppSidebar({
           <div className="section-title-row conversations-title">
             <span>{statusLabel(chat.selectedStatus)}</span>
             <span className="conversation-create-actions">
-              <button className="icon-button" onClick={() => chat.createConversation().then(() => setMobileOpen(false))} aria-label="새 대화" disabled={chat.selectedStatus !== 'active'}><Plus size={16} /></button>
+              <button className="icon-button" onClick={createConversation} aria-label="새 대화" disabled={chat.selectedStatus !== 'active'}><Plus size={16} /></button>
               <button className="icon-button" onClick={onCreateFederated} aria-label="새 교차 시스템 대화" disabled={chat.selectedStatus !== 'active'}><GitMerge size={15} /></button>
             </span>
           </div>
