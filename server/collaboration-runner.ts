@@ -3,6 +3,7 @@ import type {
   ArtifactRecord,
   ConversationRecord,
   MessageRecord,
+  RoutingPlanRecord,
   SendMessageInput,
   StreamEvent,
 } from '../shared/contracts.js';
@@ -20,6 +21,11 @@ export type CollaborationRunInput = {
   attachedArtifacts: ArtifactRecord[];
   sendInput: SendMessageInput;
   signal: AbortSignal;
+  forcedAgentId?: string;
+  suppressUserAccepted?: boolean;
+  historyEndsAtSourceMessage?: boolean;
+  regeneratedFromMessageId?: string;
+  retryMode?: 'retry' | 'regenerate';
 };
 
 function participantWorkState(agentId: string) {
@@ -27,17 +33,38 @@ function participantWorkState(agentId: string) {
   return 'working' as const;
 }
 
+function forcedRouting(agentId: string): RoutingPlanRecord {
+  return {
+    mode: 'direct',
+    leadAgentId: agentId,
+    mentionedAgentIds: [],
+    targetAgentIds: [agentId],
+    rejectedMentions: [],
+  };
+}
+
+function historyThroughSource(messages: MessageRecord[], sourceMessageId: string) {
+  const index = messages.findIndex((message) => message.id === sourceMessageId);
+  return index < 0 ? messages : messages.slice(0, index + 1);
+}
+
 export async function* runCollaborativeReply(input: CollaborationRunInput): AsyncGenerator<StreamEvent> {
-  const { database, collaboration, conversation, userMessage, attachedArtifacts, sendInput, signal } = input;
-  const routing = collaboration.resolveRouting(
+  const {
+    database,
+    collaboration,
     conversation,
-    userMessage.content,
-    sendInput.targetAgentIds ?? [],
-  );
+    userMessage,
+    attachedArtifacts,
+    sendInput,
+    signal,
+  } = input;
+  const routing = input.forcedAgentId
+    ? forcedRouting(input.forcedAgentId)
+    : collaboration.resolveRouting(conversation, userMessage.content, sendInput.targetAgentIds ?? []);
   let participants = collaboration.ensureRoutingParticipants(conversation, routing);
 
-  yield { type: 'message.accepted', message: userMessage };
-  if (attachedArtifacts.length) {
+  if (!input.suppressUserAccepted) yield { type: 'message.accepted', message: userMessage };
+  if (attachedArtifacts.length && !input.suppressUserAccepted) {
     yield { type: 'artifacts.attached', messageId: userMessage.id, artifacts: attachedArtifacts };
   }
   yield { type: 'routing.resolved', routing };
@@ -48,15 +75,19 @@ export async function* runCollaborativeReply(input: CollaborationRunInput): Asyn
     if (signal.aborted) return;
     const runId = randomUUID();
     const state = participantWorkState(agentId);
+    const retryLabel = input.regeneratedFromMessageId
+      ? `${input.retryMode === 'retry' ? 'Retry' : 'Regeneration'} requested from response ${input.regeneratedFromMessageId}.`
+      : null;
     const assigned = collaboration.addActivity({
       conversationId: conversation.id,
       agentId,
       type: 'assigned',
       status: state,
-      summary: routing.mode === 'team'
+      summary: retryLabel ?? (routing.mode === 'team'
         ? `${agentId} received an explicit team assignment.`
-        : `${agentId} received the Conversation request.`,
+        : `${agentId} received the Conversation request.`),
       sourceMessageId: userMessage.id,
+      outputMessageId: input.regeneratedFromMessageId ?? null,
     });
     collaboration.setParticipantState(conversation.id, agentId, state);
     participants = collaboration.listParticipants(conversation.id);
@@ -83,14 +114,19 @@ export async function* runCollaborativeReply(input: CollaborationRunInput): Asyn
         systemId: conversation.systemId,
         artifacts: attachedArtifacts,
         state: 'delivering',
-        detail: 'Preparing bounded attachment content for the selected backend.',
+        detail: input.regeneratedFromMessageId
+          ? 'Preparing the original bounded attachment content for response regeneration.'
+          : 'Preparing bounded attachment content for the selected backend.',
       });
     }
 
     let content = '';
     try {
       const latest = database.getConversation(conversation.id)!;
-      const history = latest.messages.filter((message) => message.id !== assistantMessage.id);
+      const withoutCurrent = latest.messages.filter((message) => message.id !== assistantMessage.id);
+      const history = input.historyEndsAtSourceMessage
+        ? historyThroughSource(withoutCurrent, userMessage.id)
+        : withoutCurrent;
       for await (const item of adapter.streamReply({
         conversation: latest,
         userMessage,
@@ -186,7 +222,9 @@ export async function* runCollaborativeReply(input: CollaborationRunInput): Asyn
         status: signal.aborted ? 'blocked' : 'active',
         summary: signal.aborted
           ? `${agentId} output was cancelled by the user.`
-          : `${agentId} original output was preserved in the transcript.`,
+          : input.regeneratedFromMessageId
+            ? `${agentId} produced a new response from ${input.regeneratedFromMessageId}; the original response was preserved.`
+            : `${agentId} original output was preserved in the transcript.`,
         sourceMessageId: userMessage.id,
         outputMessageId: finalMessage.id,
       });
