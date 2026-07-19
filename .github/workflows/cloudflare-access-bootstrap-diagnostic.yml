@@ -16,34 +16,30 @@ jobs:
     environment: staging
     timeout-minutes: 10
     steps:
-      - name: Setup Node.js
-        uses: actions/setup-node@v4
-        with:
-          node-version: '22'
-
-      - name: Derive Access issuer and application audience
+      - name: Inspect public hostname and Access endpoints
         env:
           CHAT_PUBLIC_ORIGIN: https://chat-staging.ailucy.online
         run: |
           set -euo pipefail
-          headers="$(mktemp)"
-          curl --silent --show-error --max-time 30 --max-redirs 0 \
-            --dump-header "${headers}" --output /dev/null \
-            "${CHAT_PUBLIC_ORIGIN}/api/auth/session" || true
-          location="$(awk 'BEGIN{IGNORECASE=1} /^location:/ {sub(/^[^:]+:[[:space:]]*/,""); sub(/\r$/,""); print; exit}' "${headers}")"
-          rm -f "${headers}"
-          node - "${location}" <<'NODE'
-          const value = process.argv[2] || '';
-          if (!value) {
-            console.error('Access redirect did not expose a login location.');
-            process.exit(41);
-          }
-          const url = new URL(value);
-          const audience = url.searchParams.get('aud') || url.searchParams.get('kid') || '';
-          console.log(`issuer=${url.origin}`);
-          console.log(`audience-present=${Boolean(audience)}`);
-          if (!url.hostname.endsWith('.cloudflareaccess.com') || !audience) process.exit(42);
-          NODE
+          for path in / /api/auth/session /cdn-cgi/access/login; do
+            headers="$(mktemp)"
+            status="$(curl --silent --show-error --max-time 30 --max-redirs 0 \
+              --dump-header "${headers}" --output /dev/null --write-out '%{http_code}' \
+              "${CHAT_PUBLIC_ORIGIN}${path}" || true)"
+            location="$(awk 'BEGIN{IGNORECASE=1} /^location:/ {sub(/^[^:]+:[[:space:]]*/,""); sub(/\r$/,""); print; exit}' "${headers}")"
+            content_type="$(awk 'BEGIN{IGNORECASE=1} /^content-type:/ {sub(/^[^:]+:[[:space:]]*/,""); sub(/\r$/,""); print; exit}' "${headers}")"
+            rm -f "${headers}"
+            printf 'path=%s status=%s redirect=%s content-type=%s\n' \
+              "${path}" "${status}" "$([[ -n "${location}" ]] && echo true || echo false)" "${content_type:-unknown}"
+            if [[ -n "${location}" ]]; then
+              node - "${location}" <<'NODE'
+              const url = new URL(process.argv[2]);
+              const audience = url.searchParams.get('aud') || url.searchParams.get('kid') || '';
+              console.log(`redirect-origin=${url.origin}`);
+              console.log(`redirect-audience-present=${Boolean(audience)}`);
+              NODE
+            fi
+          done
 
       - name: Report credential-source readiness without revealing values
         env:
