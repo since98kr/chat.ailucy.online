@@ -26,14 +26,13 @@ test('real staging supports chat links and durable artifact transport', async ({
 
   const baseURL = process.env.CHAT_STAGING_BASE_URL?.trim() || 'http://127.0.0.1:14174';
   const email = process.env.CHAT_STAGING_EMAIL?.trim();
-  const origin = process.env.CHAT_STAGING_ORIGIN?.trim() || 'https://chat-staging.ailucy.online';
   if (!email) throw new Error('CHAT_STAGING_EMAIL is required');
 
   const api = await apiRequest.newContext({
     baseURL,
     extraHTTPHeaders: {
       'Cf-Access-Authenticated-User-Email': email,
-      Origin: origin,
+      Origin: new URL(baseURL).origin,
     },
   });
 
