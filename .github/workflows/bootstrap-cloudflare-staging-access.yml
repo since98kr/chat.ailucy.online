@@ -1,4 +1,4 @@
-name: Bootstrap Cloudflare Access and close staging E2E blocker
+name: Bootstrap Cloudflare Access and close staging E2E blocker rerun
 
 on:
   workflow_dispatch:
