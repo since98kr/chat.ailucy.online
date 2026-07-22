@@ -8,7 +8,14 @@ MARKER="${REPO_ROOT}/scripts/ops/write-production-e2e-marker.sh"
 SHA='9a787035ec65e6e9973222b99cb427c64d108f4b'
 RUN_ID='424242'
 TMP_DIR="$(mktemp -d)"
-trap 'rm -rf "${TMP_DIR}"' EXIT
+STANDARD_ROOT="/opt/chat-v2/production-ci-standard-${GITHUB_RUN_ID:-$$}"
+INITIAL_ROOT="/opt/chat-v2/production-ci-initial-${GITHUB_RUN_ID:-$$}"
+
+cleanup() {
+  rm -rf "${TMP_DIR}"
+  sudo rm -rf "${STANDARD_ROOT}" "${INITIAL_ROOT}"
+}
+trap cleanup EXIT
 
 expect_failure() {
   local label="$1"
@@ -142,17 +149,15 @@ cat >"${FAKE_BIN}/docker" <<'SH'
 [[ "${1:-}" == image && "${2:-}" == inspect && "${3:-}" == chat-ailucy-v2:previous ]]
 SH
 chmod +x "${FAKE_BIN}/docker"
-STANDARD_ROOT="${TMP_DIR}/prereq-standard"
-mkdir -p "${STANDARD_ROOT}/state" "${STANDARD_ROOT}/data"
+
+sudo install -d -o "$(id -u)" -g "$(id -g)" "${STANDARD_ROOT}/state" "${STANDARD_ROOT}/data"
 printf '%s' 'chat-ailucy-v2:previous' >"${STANDARD_ROOT}/state/current-image"
 printf 'sqlite' >"${STANDARD_ROOT}/data/chat-v2.sqlite"
 PATH="${FAKE_BIN}:${PATH}" CHAT_PRODUCTION_ROOT="${STANDARD_ROOT}" CHAT_PRODUCTION_DATA_DIR="${STANDARD_ROOT}/data" \
   bash "${PREREQUISITES}" "${SHA}" "${TMP_DIR}/standard-prereq.json"
 node -e 'const j=require(process.argv[1]);if(j.mode!=="standard"||!j.databasePresent)process.exit(1)' "${TMP_DIR}/standard-prereq.json"
 
-INITIAL_ROOT='/opt/chat-v2/production-ci-initial'
-rm -rf "${INITIAL_ROOT}"
-trap 'rm -rf "${TMP_DIR}" "${INITIAL_ROOT}"' EXIT
+sudo install -d -o "$(id -u)" -g "$(id -g)" "${INITIAL_ROOT}"
 CHAT_PRODUCTION_ROOT="${INITIAL_ROOT}" CHAT_PRODUCTION_ALLOW_INITIAL_RELEASE=true \
 CHAT_PRODUCTION_INITIAL_RELEASE_APPROVED_SHA="${SHA}" \
   bash "${PREREQUISITES}" "${SHA}" "${TMP_DIR}/initial-prereq.json"
