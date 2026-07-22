@@ -72,22 +72,30 @@ jobs:
         with:
           node-version: '22'
 
-      - name: Verify exact source is on main
+      - name: Verify exact source and workflow tooling are on main
         id: source
         shell: bash
         env:
           REQUESTED_SHA: ${{ inputs.revision }}
+          TOOLING_SHA: ${{ github.workflow_sha }}
         run: |
           set -euo pipefail
           ACTUAL_SHA="$(git rev-parse HEAD)"
           [[ "${ACTUAL_SHA}" == "${REQUESTED_SHA}" ]]
+          [[ "${TOOLING_SHA}" =~ ^[0-9a-f]{40}$ ]]
           test -z "$(git status --short)"
           git fetch --no-tags origin main
+          git cat-file -e "${TOOLING_SHA}^{commit}"
           git merge-base --is-ancestor "${ACTUAL_SHA}" origin/main || {
             echo 'requested production revision is not contained in main history' >&2
             exit 1
           }
+          git merge-base --is-ancestor "${TOOLING_SHA}" origin/main || {
+            echo 'production workflow tooling SHA is not contained in main history' >&2
+            exit 1
+          }
           echo "sha=${ACTUAL_SHA}" >> "$GITHUB_OUTPUT"
+          echo "tooling_sha=${TOOLING_SHA}" >> "$GITHUB_OUTPUT"
 
       - name: Mark production gate pending
         uses: actions/github-script@v7
@@ -106,6 +114,25 @@ jobs:
               description: deploy ? 'Production release gate is running' : 'Production preflight is running',
               target_url: `${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`,
             });
+
+      - name: Validate deploy rollback prerequisites
+        if: ${{ inputs.mode == 'deploy' }}
+        shell: bash
+        env:
+          RELEASE_SHA: ${{ steps.source.outputs.sha }}
+          TOOLING_SHA: ${{ steps.source.outputs.tooling_sha }}
+          CHAT_PRODUCTION_ROOT: ${{ vars.CHAT_PRODUCTION_ROOT || '/opt/chat-v2/production' }}
+          CHAT_PRODUCTION_DATA_DIR: ${{ vars.CHAT_PRODUCTION_DATA_DIR || '/opt/chat-v2/production/data' }}
+          CHAT_PRODUCTION_ALLOW_INITIAL_RELEASE: ${{ vars.CHAT_PRODUCTION_ALLOW_INITIAL_RELEASE || 'false' }}
+          CHAT_PRODUCTION_INITIAL_RELEASE_APPROVED_SHA: ${{ vars.CHAT_PRODUCTION_INITIAL_RELEASE_APPROVED_SHA }}
+        run: |
+          set -euo pipefail
+          evidence_dir="${RUNNER_TEMP}/chat-v2-production-evidence"
+          tool="${RUNNER_TEMP}/production-deploy-prerequisites.sh"
+          mkdir -p "${evidence_dir}"
+          git show "${TOOLING_SHA}:scripts/ops/production-deploy-prerequisites.sh" >"${tool}"
+          bash -n "${tool}"
+          bash "${tool}" "${RELEASE_SHA}" "${evidence_dir}/rollback-prerequisites.json"
 
       - name: Build, preflight, and conditionally deploy
         env:
@@ -168,6 +195,8 @@ jobs:
       - name: Verify local production application paths
         if: ${{ inputs.mode == 'deploy' }}
         env:
+          RELEASE_SHA: ${{ steps.source.outputs.sha }}
+          TOOLING_SHA: ${{ steps.source.outputs.tooling_sha }}
           CHAT_STAGING_EMAIL: ${{ vars.CHAT_ALLOWED_EMAILS }}
           CHAT_MULTIMODAL_QA_REQUIRED: 'true'
           CHAT_GENERATED_ARTIFACT_QA_REQUIRED: 'true'
@@ -182,9 +211,19 @@ jobs:
             CHAT_STAGING_BASE_URL="http://127.0.0.1:${CHAT_PRODUCTION_PORT}" \
             bash scripts/ops/staging-browser-smoke.sh
 
+          evidence_dir="${RUNNER_TEMP}/chat-v2-production-evidence"
+          tool="${RUNNER_TEMP}/write-production-e2e-marker.sh"
+          mkdir -p "${evidence_dir}"
+          git show "${TOOLING_SHA}:scripts/ops/write-production-e2e-marker.sh" >"${tool}"
+          bash -n "${tool}"
+          bash "${tool}" local "${RELEASE_SHA}" "${GITHUB_RUN_ID}" "${evidence_dir}/local-e2e.json"
+
       - name: Verify public production Cloudflare path
         if: ${{ inputs.mode == 'deploy' }}
         env:
+          RELEASE_SHA: ${{ steps.source.outputs.sha }}
+          TOOLING_SHA: ${{ steps.source.outputs.tooling_sha }}
+          CHAT_PUBLIC_ORIGIN: ${{ vars.CHAT_PUBLIC_ORIGIN }}
           CHAT_STAGING_BASE_URL: ${{ vars.CHAT_PUBLIC_ORIGIN }}
           CHAT_EXTERNAL_QA_REQUIRED: 'true'
           CHAT_MULTIMODAL_QA_REQUIRED: 'true'
@@ -192,7 +231,16 @@ jobs:
           CHAT_HERMES_VISION_AGENT_ID: ${{ vars.CHAT_HERMES_VISION_AGENT_ID }}
           CF_ACCESS_CLIENT_ID: ${{ vars.CF_ACCESS_CLIENT_ID }}
           CF_ACCESS_CLIENT_SECRET: ${{ secrets.CF_ACCESS_CLIENT_SECRET }}
-        run: bash scripts/ops/external-staging-browser-smoke.sh
+        run: |
+          set -euo pipefail
+          bash scripts/ops/external-staging-browser-smoke.sh
+
+          evidence_dir="${RUNNER_TEMP}/chat-v2-production-evidence"
+          tool="${RUNNER_TEMP}/write-production-e2e-marker.sh"
+          mkdir -p "${evidence_dir}"
+          git show "${TOOLING_SHA}:scripts/ops/write-production-e2e-marker.sh" >"${tool}"
+          bash -n "${tool}"
+          bash "${tool}" public "${RELEASE_SHA}" "${GITHUB_RUN_ID}" "${evidence_dir}/public-e2e.json"
 
       - name: Publish production gate summary
         if: always()
@@ -200,6 +248,7 @@ jobs:
         env:
           RELEASE_MODE: ${{ inputs.mode }}
           RELEASE_SHA: ${{ steps.source.outputs.sha }}
+          TOOLING_SHA: ${{ steps.source.outputs.tooling_sha }}
           PRODUCTION_ROOT: ${{ vars.CHAT_PRODUCTION_ROOT || '/opt/chat-v2/production' }}
           PRODUCTION_PUBLIC_ORIGIN: ${{ vars.CHAT_PUBLIC_ORIGIN }}
         run: |
@@ -208,9 +257,14 @@ jobs:
             echo
             echo "- Mode: \`${RELEASE_MODE}\`"
             echo "- Revision: \`${RELEASE_SHA}\`"
+            echo "- Workflow tooling: \`${TOOLING_SHA}\`"
             echo "- Production root: \`${PRODUCTION_ROOT}\`"
             echo "- Public origin: \`${PRODUCTION_PUBLIC_ORIGIN}\`"
             echo '- Automatic main-push deployment: `disabled`'
+            marker="${RUNNER_TEMP}/chat-v2-production-evidence/rollback-prerequisites.json"
+            if [[ -f "${marker}" ]]; then
+              echo "- Rollback prerequisite mode: \`$(node -p "require('${marker}').mode")\`"
+            fi
           } >> "$GITHUB_STEP_SUMMARY"
 
       - name: Upload production evidence
@@ -227,6 +281,7 @@ jobs:
             ${{ vars.CHAT_PRODUCTION_ROOT || '/opt/chat-v2/production' }}/state/last-health.json
             ${{ vars.CHAT_PRODUCTION_ROOT || '/opt/chat-v2/production' }}/state/last-ops-status.json
             ${{ vars.CHAT_PRODUCTION_ROOT || '/opt/chat-v2/production' }}/state/last-deployment.json
+            ${{ runner.temp }}/chat-v2-production-evidence/*.json
             test-results-staging-browser
             playwright-staging-report
             test-results-external-staging-browser
