@@ -1,0 +1,49 @@
+name: Production preflight evidence CI
+
+on:
+  pull_request:
+    paths:
+      - 'scripts/ops/verify-production-preflight-evidence.sh'
+      - 'scripts/ci/production-preflight-evidence-smoke.sh'
+      - 'docs/PRODUCTION_PREFLIGHT_EVIDENCE.md'
+      - '.github/workflows/production-preflight-evidence-ci.yml'
+  push:
+    branches:
+      - main
+      - 'agent/**'
+    paths:
+      - 'scripts/ops/verify-production-preflight-evidence.sh'
+      - 'scripts/ci/production-preflight-evidence-smoke.sh'
+      - 'docs/PRODUCTION_PREFLIGHT_EVIDENCE.md'
+      - '.github/workflows/production-preflight-evidence-ci.yml'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: production-preflight-evidence-ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  verifier:
+    name: ZIP safety and evidence semantics
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Validate shell syntax
+        run: |
+          set -euo pipefail
+          bash -n scripts/ops/verify-production-preflight-evidence.sh
+          bash -n scripts/ci/production-preflight-evidence-smoke.sh
+
+      - name: Exercise valid and negative evidence fixtures
+        run: bash scripts/ci/production-preflight-evidence-smoke.sh
