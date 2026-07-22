@@ -41,6 +41,7 @@ path_is_within() {
 
 validate_configuration() {
   local repository_url runner_home production_root production_data production_state
+  local runner_user_lower runner_name_lower
   repository_url="$(normalize_repository_url "${GITHUB_REPOSITORY_URL}")"
   [[ "${repository_url}" == "${EXPECTED_REPOSITORY_URL}" ]] \
     || fail "runner may only be registered to ${EXPECTED_REPOSITORY_URL}"
@@ -52,13 +53,17 @@ validate_configuration() {
   [[ "${VALIDATE_ONLY}" == 'true' || "${VALIDATE_ONLY}" == 'false' ]] \
     || fail 'RUNNER_VALIDATE_ONLY must be true or false'
 
-  [[ "${RUNNER_USER}" != 'root' && "${RUNNER_USER}" != 'chat-runner' ]] \
+  runner_user_lower="${RUNNER_USER,,}"
+  runner_name_lower="${RUNNER_NAME,,}"
+  [[ "${runner_user_lower}" != 'root' && "${runner_user_lower}" != 'chat-runner' ]] \
     || fail 'production runner must use a dedicated non-staging service account'
+  [[ "${runner_user_lower}" != *staging* ]] \
+    || fail 'production runner service account must not reuse a staging identity'
   [[ "${RUNNER_USER}" =~ ^[a-z_][a-z0-9_-]*$ ]] \
     || fail 'RUNNER_USER contains unsupported characters'
-  [[ "${RUNNER_NAME}" != *staging* && "${RUNNER_NAME}" != 'agentlucy-chat-staging' ]] \
+  [[ "${runner_name_lower}" != *staging* && "${runner_name_lower}" != 'agentlucy-chat-staging' ]] \
     || fail 'production runner name must not reuse a staging identity'
-  [[ "${RUNNER_NAME}" == *production* ]] \
+  [[ "${runner_name_lower}" == *production* ]] \
     || fail 'production runner name must include production'
 
   runner_home="$(realpath -m "${RUNNER_HOME}")"
@@ -66,18 +71,28 @@ validate_configuration() {
   production_data="$(realpath -m "${PRODUCTION_DATA_DIR}")"
   production_state="$(realpath -m "${PRODUCTION_STATE_DIR}")"
 
-  [[ "${runner_home}" == /opt/actions-runner-chat-production* ]] \
+  path_is_within "${runner_home}" /opt/actions-runner-chat-production \
     || fail 'RUNNER_HOME must use the dedicated /opt/actions-runner-chat-production namespace'
-  [[ "${runner_home}" != /opt/actions-runner-chat-staging* ]] \
-    || fail 'production runner may not reuse the staging runner directory'
-  [[ "${production_root}" == /opt/chat-v2/production* ]] \
+  path_is_within "${runner_home}" /opt/actions-runner-chat-staging \
+    && fail 'production runner may not reuse the staging runner directory'
+  path_is_within "${production_root}" /opt/chat-v2/production \
     || fail 'CHAT_PRODUCTION_ROOT must use the /opt/chat-v2/production namespace'
-  [[ "${production_root}" != /opt/chat-v2/staging* ]] \
-    || fail 'production root may not reuse the staging root'
+  path_is_within "${production_root}" /opt/chat-v2/staging \
+    && fail 'production root may not reuse the staging root'
   path_is_within "${production_data}" "${production_root}" \
     || fail 'production data directory must be contained within the production root'
   path_is_within "${production_state}" "${production_root}" \
     || fail 'production state directory must be contained within the production root'
+  [[ "${production_data}" != "${production_root}" ]] \
+    || fail 'production data directory must be separate from the production root'
+  [[ "${production_state}" != "${production_root}" ]] \
+    || fail 'production state directory must be separate from the production root'
+  [[ "${production_data}" != "${production_state}" ]] \
+    || fail 'production data and state directories must be separate'
+  path_is_within "${production_data}" "${production_state}" \
+    && fail 'production data directory must not be nested under the state directory'
+  path_is_within "${production_state}" "${production_data}" \
+    && fail 'production state directory must not be nested under the data directory'
   path_is_within "${runner_home}" "${production_root}" \
     && fail 'runner binaries and production application data must use separate roots'
 
@@ -101,6 +116,16 @@ ensure_directory() {
   if [[ ! -d "${path}" ]]; then
     install -d -o "${RUNNER_USER}" -g "${RUNNER_USER}" -m "${mode}" "${path}"
   fi
+}
+
+require_runner_access() {
+  local path="$1"
+  runuser -u "${RUNNER_USER}" -- test -r "${path}" \
+    || fail "runner account cannot read ${path}"
+  runuser -u "${RUNNER_USER}" -- test -w "${path}" \
+    || fail "runner account cannot write ${path}"
+  runuser -u "${RUNNER_USER}" -- test -x "${path}" \
+    || fail "runner account cannot traverse ${path}"
 }
 
 validate_configuration
@@ -131,6 +156,11 @@ if ! id "${RUNNER_USER}" >/dev/null 2>&1; then
   useradd --system --create-home --shell /usr/sbin/nologin "${RUNNER_USER}"
 fi
 [[ "$(id -u "${RUNNER_USER}")" != '0' ]] || fail 'runner service account must not be root'
+runner_shell="$(getent passwd "${RUNNER_USER}" | cut -d: -f7)"
+case "${runner_shell}" in
+  /usr/sbin/nologin|/sbin/nologin|/bin/false) ;;
+  *) fail "existing runner account must use a non-login shell, found ${runner_shell:-missing}" ;;
+esac
 usermod -aG docker "${RUNNER_USER}"
 
 ensure_directory "${RUNNER_HOME}" 0750
@@ -140,13 +170,12 @@ ensure_directory "${PRODUCTION_DATA_DIR}/artifacts" 0750
 ensure_directory "${PRODUCTION_DATA_DIR}/backups" 0750
 ensure_directory "${PRODUCTION_STATE_DIR}" 0750
 
-runuser -u "${RUNNER_USER}" -- test -r "${PRODUCTION_DATA_DIR}"
-runuser -u "${RUNNER_USER}" -- test -w "${PRODUCTION_DATA_DIR}"
-runuser -u "${RUNNER_USER}" -- test -x "${PRODUCTION_DATA_DIR}"
-runuser -u "${RUNNER_USER}" -- test -r "${PRODUCTION_STATE_DIR}"
-runuser -u "${RUNNER_USER}" -- test -w "${PRODUCTION_STATE_DIR}"
-runuser -u "${RUNNER_USER}" -- test -x "${PRODUCTION_STATE_DIR}"
-runuser -u "${RUNNER_USER}" -- docker version >/dev/null
+require_runner_access "${PRODUCTION_DATA_DIR}"
+require_runner_access "${PRODUCTION_DATA_DIR}/artifacts"
+require_runner_access "${PRODUCTION_DATA_DIR}/backups"
+require_runner_access "${PRODUCTION_STATE_DIR}"
+runuser -u "${RUNNER_USER}" -- docker version >/dev/null \
+  || fail 'runner account cannot access Docker'
 
 if [[ -e "${RUNNER_HOME}/.runner" || -e "${RUNNER_HOME}/.credentials" ]]; then
   fail 'runner directory already contains registration state; manual inspection is required'
