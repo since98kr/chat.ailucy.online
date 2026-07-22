@@ -1,0 +1,74 @@
+name: Production release evidence CI
+
+on:
+  pull_request:
+    paths:
+      - '.github/workflows/production-release.yml'
+      - '.github/workflows/production-release-evidence-ci.yml'
+      - 'scripts/ops/production-deploy-prerequisites.sh'
+      - 'scripts/ops/write-production-e2e-marker.sh'
+      - 'scripts/ops/verify-production-release-evidence.sh'
+      - 'scripts/ci/production-release-evidence-smoke.sh'
+      - 'docs/PRODUCTION_RELEASE_EVIDENCE.md'
+  push:
+    branches:
+      - main
+      - 'agent/**'
+    paths:
+      - '.github/workflows/production-release.yml'
+      - '.github/workflows/production-release-evidence-ci.yml'
+      - 'scripts/ops/production-deploy-prerequisites.sh'
+      - 'scripts/ops/write-production-e2e-marker.sh'
+      - 'scripts/ops/verify-production-release-evidence.sh'
+      - 'scripts/ci/production-release-evidence-smoke.sh'
+      - 'docs/PRODUCTION_RELEASE_EVIDENCE.md'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: production-release-evidence-ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  acceptance:
+    name: Rollback guards and release evidence semantics
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Validate shell syntax
+        run: |
+          set -euo pipefail
+          bash -n scripts/ops/production-deploy-prerequisites.sh
+          bash -n scripts/ops/write-production-e2e-marker.sh
+          bash -n scripts/ops/verify-production-release-evidence.sh
+          bash -n scripts/ci/production-release-evidence-smoke.sh
+
+      - name: Validate workflow hardening references
+        run: |
+          set -euo pipefail
+          workflow='.github/workflows/production-release.yml'
+          grep -Fq 'github.workflow_sha' "${workflow}"
+          grep -Fq 'production-deploy-prerequisites.sh' "${workflow}"
+          grep -Fq 'write-production-e2e-marker.sh' "${workflow}"
+          grep -Fq 'CHAT_PRODUCTION_ALLOW_INITIAL_RELEASE' "${workflow}"
+          grep -Fq 'rollback-prerequisites.json' "${workflow}"
+          grep -Fq 'local-e2e.json' "${workflow}"
+          grep -Fq 'public-e2e.json' "${workflow}"
+          grep -Fq '${{ runner.temp }}/chat-v2-production-evidence/*.json' "${workflow}"
+          if grep -Eq '^[[:space:]]+push:' "${workflow}"; then
+            echo 'production workflow must remain manual-only' >&2
+            exit 1
+          fi
+
+      - name: Exercise standard, initial, and negative release evidence
+        run: bash scripts/ci/production-release-evidence-smoke.sh
