@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { OpenAiArtifactToolAccumulator } from './openai-artifact-tool.js';
+import { OpenAiArtifactToolAccumulator, parseGeneratedArtifactArguments } from './openai-artifact-tool.js';
 
 describe('OpenAiArtifactToolAccumulator', () => {
   it('parses a complete return_artifact tool call', () => {
@@ -48,6 +48,27 @@ describe('OpenAiArtifactToolAccumulator', () => {
     }]);
   });
 
+  it('ignores unrelated backend tool calls instead of applying artifact limits to them', () => {
+    const accumulator = new OpenAiArtifactToolAccumulator(64);
+    expect(() => accumulator.ingest({
+      choices: [{ delta: { tool_calls: [{ index: 0, function: {
+        name: 'backend_internal_tool',
+        arguments: 'x'.repeat(10_000),
+      } }] } }],
+    })).not.toThrow();
+    expect(accumulator.finish()).toEqual([]);
+  });
+
+  it('rejects streamed artifact tool arguments before they can grow beyond the transport limit', () => {
+    const accumulator = new OpenAiArtifactToolAccumulator(64);
+    expect(() => accumulator.ingest({
+      choices: [{ delta: { tool_calls: [{ index: 0, function: {
+        name: 'return_artifact',
+        arguments: `{"filename":"x.txt","mime_type":"text/plain","content_text":"${'x'.repeat(80)}`,
+      } }] } }],
+    })).toThrow('exceed 64 bytes');
+  });
+
   it('rejects an artifact call without inline content', () => {
     const accumulator = new OpenAiArtifactToolAccumulator();
     accumulator.ingest({
@@ -63,5 +84,34 @@ describe('OpenAiArtifactToolAccumulator', () => {
       }],
     });
     expect(() => accumulator.finish()).toThrow('requires content_text or content_base64');
+  });
+
+  it('rejects backend paths and URLs even when inline content is also supplied', () => {
+    expect(() => parseGeneratedArtifactArguments(JSON.stringify({
+      filename: 'unsafe.txt',
+      mime_type: 'text/plain',
+      content_text: 'inline',
+      path: '/home/backend/unsafe.txt',
+    }))).toThrow('must not contain path');
+    expect(() => parseGeneratedArtifactArguments(JSON.stringify({
+      filename: 'unsafe.txt',
+      mime_type: 'text/plain',
+      content_text: 'inline',
+      url: 'https://backend.invalid/unsafe.txt',
+    }))).toThrow('must not contain url');
+  });
+
+  it('rejects ambiguous aliases and oversized metadata', () => {
+    expect(() => parseGeneratedArtifactArguments(JSON.stringify({
+      filename: 'ambiguous.txt',
+      mime_type: 'text/plain',
+      mimeType: 'application/octet-stream',
+      content_text: 'x',
+    }))).toThrow('must not supply both mime_type and mimeType');
+    expect(() => parseGeneratedArtifactArguments(JSON.stringify({
+      filename: `${'a'.repeat(161)}.txt`,
+      mime_type: 'text/plain',
+      content_text: 'x',
+    }))).toThrow('filename exceeds 160 characters');
   });
 });

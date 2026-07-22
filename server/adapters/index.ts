@@ -1,5 +1,6 @@
 import type { AdapterHealthRecord, SystemId } from '../../shared/contracts.js';
 import type { AdapterRequest, ChatBackendAdapter } from './types.js';
+import { wrapArtifactEnvelopeFallback } from './artifact-envelope.js';
 import { MockAdapter } from './mock.js';
 import { HttpAgentAdapter, httpAdapterConfig } from './http.js';
 import { augmentNativeArtifactContext } from './native-artifacts.js';
@@ -13,6 +14,10 @@ export function resolveNativeTargetAgentId(
   const requested = requestedAgentId || conversationAgentId;
   return modelMap?.[requested]
     ?? (configuredAgentId && requested === conversationAgentId ? configuredAgentId : requested);
+}
+
+function enabled(value: string | undefined) {
+  return (value ?? '').trim().toLowerCase() === 'true';
 }
 
 function wrapNativeAgentMapping(
@@ -40,9 +45,14 @@ function wrapNativeAgentMapping(
 function createAdapter(systemId: SystemId): ChatBackendAdapter {
   const config = httpAdapterConfig(systemId);
   if (!config) return new MockAdapter(systemId);
-  const adapter = new HttpAgentAdapter(systemId, config);
-  return config.protocol === 'native'
-    ? wrapNativeAgentMapping(adapter, config.agentId, config.modelMap)
+  const httpAdapter = new HttpAgentAdapter(systemId, config);
+  const adapter = config.protocol === 'native'
+    ? wrapNativeAgentMapping(httpAdapter, config.agentId, config.modelMap)
+    : httpAdapter;
+  return systemId === 'hermes'
+    && config.protocol === 'openai'
+    && enabled(process.env.HERMES_ARTIFACT_ENVELOPE_ENABLED)
+    ? wrapArtifactEnvelopeFallback(adapter)
     : adapter;
 }
 
