@@ -49,6 +49,15 @@ if [[ "${ALLOW_INITIAL}" == 'true' ]]; then
     || fail 'initial release override is invalid because a prior image is recorded'
   [[ ! -e "${DATABASE_FILE}" ]] \
     || fail 'initial release override is invalid because a production database exists'
+  for stale_path in \
+    "${STATE_DIR}/current-revision" \
+    "${STATE_DIR}/last-deployment.json" \
+    "${STATE_DIR}/last-backup-verify.json" \
+    "${STATE_DIR}/last-health.json" \
+    "${STATE_DIR}/last-ops-status.json"; do
+    [[ ! -e "${stale_path}" ]] \
+      || fail "initial release override is invalid because stale runtime state exists: ${stale_path}"
+  done
 else
   [[ -s "${STATE_FILE}" ]] || fail 'standard deploy requires a recorded prior production image'
   PREVIOUS_IMAGE="$(<"${STATE_FILE}")"
