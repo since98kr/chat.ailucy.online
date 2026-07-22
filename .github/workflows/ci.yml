@@ -37,7 +37,9 @@ jobs:
         run: |
           set -euo pipefail
           bash -n scripts/deploy/staging.sh
+          bash -n scripts/deploy/production.sh
           bash -n scripts/ops/staging-preflight.sh
+          bash -n scripts/ops/production-preflight.sh
           bash -n scripts/ops/staging-smoke.sh
           bash -n scripts/ops/staging-browser-smoke.sh
           bash -n scripts/ops/external-staging-browser-smoke.sh
@@ -47,6 +49,17 @@ jobs:
           bash -n scripts/backup/restore-staging.sh
           bash -n scripts/ci/container-smoke.sh
           CHAT_IMAGE=chat-ailucy-v2:validation docker compose -f compose.staging.yml config >/dev/null
+          CHAT_IMAGE=chat-ailucy-v2:validation \
+            CHAT_PRODUCTION_PORT=4180 \
+            CHAT_PRODUCTION_DATA_DIR=/tmp/chat-v2-production/data \
+            CHAT_PUBLIC_ORIGIN=https://chat.example.invalid \
+            CHAT_ALLOWED_ORIGIN=https://chat.example.invalid \
+            CHAT_AUTH_MODE=token \
+            LETTA_BASE_URL=http://letta.example.invalid \
+            LETTA_AGENT_ID=letta-validation \
+            HERMES_BASE_URL=http://hermes.example.invalid \
+            HERMES_AGENT_ID=hermes-validation \
+            docker compose -f compose.production.yml config >/dev/null
 
       - name: Typecheck
         shell: bash
@@ -138,6 +151,20 @@ jobs:
         run: |
           set -o pipefail
           bash scripts/ops/staging-preflight.sh chat-ailucy-v2:ci ci-sha 2>&1 | tee staging-preflight.log
+
+      - name: Validate production safety guards without host mutation
+        shell: bash
+        run: |
+          set -euo pipefail
+          if CHAT_PRODUCTION_PORT=4180 bash scripts/ops/production-preflight.sh chat-ailucy-v2:ci not-a-full-sha 2>/dev/null; then
+            echo 'production preflight accepted a mutable or invalid revision' >&2
+            exit 1
+          fi
+          if CHAT_PRODUCTION_PORT=4180 CHAT_PRODUCTION_MODE=deploy \
+            bash scripts/deploy/production.sh not-a-full-sha 2>/dev/null; then
+            echo 'production deployment controller accepted an invalid revision' >&2
+            exit 1
+          fi
 
       - name: Container security, identity, and recovery smoke test
         shell: bash
