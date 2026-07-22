@@ -173,13 +173,18 @@ jobs:
           CHAT_MULTIMODAL_QA_REQUIRED: 'true'
           CHAT_GENERATED_ARTIFACT_QA_REQUIRED: 'true'
           CHAT_HERMES_VISION_AGENT_ID: Gemma
-          CF_ACCESS_CLIENT_ID: ${{ env.CF_ACCESS_CLIENT_ID_RUNTIME }}
-          CF_ACCESS_CLIENT_SECRET: ${{ env.CF_ACCESS_CLIENT_SECRET_RUNTIME }}
         run: |
           set -euo pipefail
-          CHAT_STAGING_BASE_URL=http://127.0.0.1:14174 bash scripts/ops/staging-smoke.sh
-          CHAT_STAGING_BASE_URL=http://127.0.0.1:14174 bash scripts/ops/staging-browser-smoke.sh
-          CHAT_STAGING_BASE_URL=https://chat-staging.ailucy.online bash scripts/ops/external-staging-browser-smoke.sh
+          env -u CF_ACCESS_CLIENT_ID -u CF_ACCESS_CLIENT_SECRET \
+            CHAT_STAGING_BASE_URL=http://127.0.0.1:14174 \
+            bash scripts/ops/staging-smoke.sh
+          env -u CF_ACCESS_CLIENT_ID -u CF_ACCESS_CLIENT_SECRET \
+            CHAT_STAGING_BASE_URL=http://127.0.0.1:14174 \
+            bash scripts/ops/staging-browser-smoke.sh
+          CF_ACCESS_CLIENT_ID="${CF_ACCESS_CLIENT_ID_RUNTIME}" \
+            CF_ACCESS_CLIENT_SECRET="${CF_ACCESS_CLIENT_SECRET_RUNTIME}" \
+            CHAT_STAGING_BASE_URL=https://chat-staging.ailucy.online \
+            bash scripts/ops/external-staging-browser-smoke.sh
 
       - name: Upload Cloudflare and staging evidence
         if: always()
