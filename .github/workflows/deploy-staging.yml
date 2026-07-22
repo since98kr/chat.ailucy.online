@@ -82,6 +82,9 @@ jobs:
           CHAT_RATE_LIMIT_GENERAL: ${{ vars.CHAT_RATE_LIMIT_GENERAL }}
           CHAT_RATE_LIMIT_CHAT: ${{ vars.CHAT_RATE_LIMIT_CHAT }}
           CHAT_RATE_LIMIT_UPLOAD: ${{ vars.CHAT_RATE_LIMIT_UPLOAD }}
+          CHAT_MAX_UPLOAD_BYTES: ${{ vars.CHAT_MAX_UPLOAD_BYTES }}
+          CHAT_MAX_GENERATED_ARTIFACT_BYTES: ${{ vars.CHAT_MAX_GENERATED_ARTIFACT_BYTES }}
+          CHAT_MAX_INLINE_GENERATED_ARTIFACT_PAYLOAD_BYTES: ${{ vars.CHAT_MAX_INLINE_GENERATED_ARTIFACT_PAYLOAD_BYTES }}
           LETTA_BASE_URL: ${{ vars.LETTA_BASE_URL }}
           LETTA_CHAT_PATH: ${{ vars.LETTA_CHAT_PATH }}
           LETTA_HEALTH_PATH: ${{ vars.LETTA_HEALTH_PATH }}
@@ -90,6 +93,11 @@ jobs:
           LETTA_TIMEOUT_MS: ${{ vars.LETTA_TIMEOUT_MS }}
           LETTA_PROTOCOL: ${{ vars.LETTA_PROTOCOL }}
           LETTA_MODEL_MAP_JSON: ${{ vars.LETTA_MODEL_MAP_JSON }}
+          LETTA_MAX_ARTIFACT_BYTES: ${{ vars.LETTA_MAX_ARTIFACT_BYTES }}
+          LETTA_MAX_ARTIFACT_TOTAL_BYTES: ${{ vars.LETTA_MAX_ARTIFACT_TOTAL_BYTES }}
+          LETTA_MAX_TEXT_ARTIFACT_BYTES: ${{ vars.LETTA_MAX_TEXT_ARTIFACT_BYTES }}
+          LETTA_NATIVE_BINARY_ARTIFACTS: ${{ vars.LETTA_NATIVE_BINARY_ARTIFACTS }}
+          LETTA_ARTIFACT_TOOL_ENABLED: ${{ vars.LETTA_ARTIFACT_TOOL_ENABLED }}
           HERMES_BASE_URL: ${{ vars.HERMES_BASE_URL }}
           HERMES_CHAT_PATH: ${{ vars.HERMES_CHAT_PATH }}
           HERMES_HEALTH_PATH: ${{ vars.HERMES_HEALTH_PATH }}
@@ -98,6 +106,10 @@ jobs:
           HERMES_TIMEOUT_MS: ${{ vars.HERMES_TIMEOUT_MS }}
           HERMES_PROTOCOL: ${{ vars.HERMES_PROTOCOL }}
           HERMES_MODEL_MAP_JSON: ${{ vars.HERMES_MODEL_MAP_JSON }}
+          HERMES_MAX_ARTIFACT_BYTES: ${{ vars.HERMES_MAX_ARTIFACT_BYTES }}
+          HERMES_MAX_ARTIFACT_TOTAL_BYTES: ${{ vars.HERMES_MAX_ARTIFACT_TOTAL_BYTES }}
+          HERMES_ARTIFACT_TOOL_ENABLED: ${{ vars.HERMES_ARTIFACT_TOOL_ENABLED }}
+          HERMES_ARTIFACT_ENVELOPE_ENABLED: ${{ vars.HERMES_ARTIFACT_ENVELOPE_ENABLED }}
           HERMES_DOCKER_NETWORK: ${{ vars.HERMES_DOCKER_NETWORK }}
         run: bash scripts/deploy/staging.sh "$(git rev-parse HEAD)"
 
@@ -107,15 +119,21 @@ jobs:
           CHAT_STAGING_EMAIL: ${{ vars.CHAT_ALLOWED_EMAILS }}
         run: bash scripts/ops/staging-smoke.sh
 
-      - name: Verify real browser links and artifact transport
+      - name: Verify real browser links, artifacts, and configured AI understanding
         env:
           CHAT_STAGING_BASE_URL: http://127.0.0.1:14174
           CHAT_STAGING_EMAIL: ${{ vars.CHAT_ALLOWED_EMAILS }}
+          CHAT_MULTIMODAL_QA_REQUIRED: ${{ vars.CHAT_MULTIMODAL_QA_REQUIRED }}
+          CHAT_GENERATED_ARTIFACT_QA_REQUIRED: ${{ vars.CHAT_GENERATED_ARTIFACT_QA_REQUIRED }}
+          CHAT_HERMES_VISION_AGENT_ID: ${{ vars.CHAT_HERMES_VISION_AGENT_ID }}
         run: bash scripts/ops/staging-browser-smoke.sh
 
       - name: Verify public Cloudflare Access and artifact transport
         env:
           CHAT_EXTERNAL_QA_REQUIRED: ${{ vars.CHAT_EXTERNAL_QA_REQUIRED }}
+          CHAT_MULTIMODAL_QA_REQUIRED: ${{ vars.CHAT_MULTIMODAL_QA_REQUIRED }}
+          CHAT_GENERATED_ARTIFACT_QA_REQUIRED: ${{ vars.CHAT_GENERATED_ARTIFACT_QA_REQUIRED }}
+          CHAT_HERMES_VISION_AGENT_ID: ${{ vars.CHAT_HERMES_VISION_AGENT_ID }}
           CHAT_STAGING_BASE_URL: ${{ vars.CHAT_PUBLIC_ORIGIN }}
           CF_ACCESS_CLIENT_ID: ${{ vars.CF_ACCESS_CLIENT_ID }}
           CF_ACCESS_CLIENT_SECRET: ${{ secrets.CF_ACCESS_CLIENT_SECRET }}
@@ -138,7 +156,9 @@ jobs:
             echo '- Local endpoint: `http://127.0.0.1:14174`'
             echo "- Public endpoint: \`${{ vars.CHAT_PUBLIC_ORIGIN }}\`"
             echo "- External QA required: \`${{ vars.CHAT_EXTERNAL_QA_REQUIRED || 'false' }}\`"
-            echo '- Required gates: deploy, Hermes, Letta, local Chromium, optional public Cloudflare Chromium'
+            echo "- Multimodal QA required: \`${{ vars.CHAT_MULTIMODAL_QA_REQUIRED || 'false' }}\`"
+            echo "- Generated artifact QA required: \`${{ vars.CHAT_GENERATED_ARTIFACT_QA_REQUIRED || 'false' }}\`"
+            echo '- Required gates: deploy, Hermes, Letta, local Chromium, and configured public/multimodal gates'
             for item in last-deployment.json last-preflight.json last-backup.json last-backup-verify.json last-health.json last-ops-status.json; do
               path="/opt/chat-v2/staging/state/${item}"
               if [[ -f "${path}" ]]; then

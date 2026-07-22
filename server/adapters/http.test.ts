@@ -1,7 +1,15 @@
 import { afterEach, describe, expect, it } from 'vitest';
 import { createServer, type RequestListener, type Server } from 'node:http';
 import type { AddressInfo } from 'node:net';
-import type { ConversationParticipantRecord, ConversationRecord, MessageRecord } from '../../shared/contracts.js';
+import { mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import type {
+  ArtifactRecord,
+  ConversationParticipantRecord,
+  ConversationRecord,
+  MessageRecord,
+} from '../../shared/contracts.js';
 import { HttpAgentAdapter } from './http.js';
 
 const timestamp = '2026-07-18T00:00:00.000Z';
@@ -56,11 +64,14 @@ const participants: ConversationParticipantRecord[] = [{
 }];
 
 let server: Server | null = null;
+const temporaryDirectories: string[] = [];
 
 afterEach(async () => {
-  if (!server) return;
-  await new Promise<void>((resolve, reject) => server?.close((error) => (error ? reject(error) : resolve())));
-  server = null;
+  if (server) {
+    await new Promise<void>((resolve, reject) => server?.close((error) => (error ? reject(error) : resolve())));
+    server = null;
+  }
+  await Promise.all(temporaryDirectories.splice(0).map((directory) => rm(directory, { recursive: true, force: true })));
 });
 
 async function startServer(handler: RequestListener) {
@@ -68,6 +79,23 @@ async function startServer(handler: RequestListener) {
   await new Promise<void>((resolve) => server?.listen(0, '127.0.0.1', resolve));
   const address = server.address() as AddressInfo;
   return `http://127.0.0.1:${address.port}`;
+}
+
+async function artifactFixture(filename: string, mimeType: string, bytes: Buffer): Promise<ArtifactRecord> {
+  const directory = await mkdtemp(join(tmpdir(), 'chat-v2-http-artifact-'));
+  temporaryDirectories.push(directory);
+  const storagePath = join(directory, filename);
+  await writeFile(storagePath, bytes);
+  return {
+    id: crypto.randomUUID(),
+    conversationId: conversation.id,
+    messageId: userMessage.id,
+    filename,
+    mimeType,
+    sizeBytes: bytes.length,
+    storagePath,
+    createdAt: timestamp,
+  };
 }
 
 describe('HttpAgentAdapter', () => {
@@ -131,6 +159,7 @@ describe('HttpAgentAdapter', () => {
       metadata: {
         routing_mode: 'team',
         target_agent_id: 'Xixi',
+        artifact_count: 0,
       },
     });
     const receivedMessages = receivedBody['messages'] as Array<Record<string, unknown>>;
@@ -186,4 +215,116 @@ describe('HttpAgentAdapter', () => {
       { type: 'delta', delta: '현재 Conversation과 분리됩니다.' },
     ]);
   });
+
+  it('sends bounded native artifact bytes and accepts generated artifact events', async () => {
+    const noteBytes = Buffer.from('ATTACHMENT_MARKER_2026\n한글 문서', 'utf8');
+    const note = await artifactFixture('input-note.txt', 'text/plain', noteBytes);
+    let receivedBody: Record<string, unknown> = {};
+    const baseUrl = await startServer((request, response) => {
+      const chunks: Buffer[] = [];
+      request.on('data', (chunk: Buffer) => chunks.push(Buffer.from(chunk)));
+      request.on('end', () => {
+        receivedBody = JSON.parse(Buffer.concat(chunks).toString('utf8')) as Record<string, unknown>;
+        response.writeHead(200, { 'Content-Type': 'application/x-ndjson' });
+        response.write(`${JSON.stringify({
+          type: 'artifact.created',
+          artifact: {
+            filename: 'generated-note.txt',
+            mime_type: 'text/plain',
+            content_text: 'GENERATED_ARTIFACT_MARKER',
+          },
+        })}\n`);
+        response.end('{"delta":"완료"}\n');
+      });
+    });
+
+    const adapter = new HttpAgentAdapter('hermes', {
+      baseUrl,
+      chatPath: '/chat',
+      healthPath: '/health',
+      timeoutMs: 2_000,
+    });
+    const items = [];
+    for await (const item of adapter.streamReply({
+      conversation,
+      userMessage,
+      history: [userMessage],
+      artifacts: [note],
+      targetAgentId: '[Hermes] Lucy',
+      routingMode: 'direct',
+      participants,
+    })) items.push(item);
+
+    const receivedArtifacts = receivedBody['artifacts'] as Array<Record<string, unknown>>;
+    expect(receivedArtifacts).toHaveLength(1);
+    expect(receivedArtifacts[0]).toMatchObject({
+      artifact_id: note.id,
+      filename: note.filename,
+      mime_type: 'text/plain',
+      size_bytes: noteBytes.length,
+      text: noteBytes.toString('utf8'),
+    });
+    expect(Buffer.from(String(receivedArtifacts[0].content_base64), 'base64')).toEqual(noteBytes);
+    expect(items).toEqual([
+      {
+        type: 'artifact',
+        artifact: {
+          filename: 'generated-note.txt',
+          mimeType: 'text/plain',
+          contentBase64: Buffer.from('GENERATED_ARTIFACT_MARKER', 'utf8').toString('base64'),
+        },
+      },
+      { type: 'delta', delta: '완료' },
+    ]);
+  });
+
+  it('builds OpenAI-compatible text and image content parts', async () => {
+    const note = await artifactFixture('context.md', 'text/markdown', Buffer.from('DOC_ONLY_MARKER', 'utf8'));
+    const imageBytes = Buffer.from('fake-png-bytes');
+    const image = await artifactFixture('photo.png', 'image/png', imageBytes);
+    let receivedBody: Record<string, unknown> = {};
+    const baseUrl = await startServer((request, response) => {
+      const chunks: Buffer[] = [];
+      request.on('data', (chunk: Buffer) => chunks.push(Buffer.from(chunk)));
+      request.on('end', () => {
+        receivedBody = JSON.parse(Buffer.concat(chunks).toString('utf8')) as Record<string, unknown>;
+        response.writeHead(200, { 'Content-Type': 'application/json' });
+        response.end('{"choices":[{"message":{"content":"OPENAI_OK"}}]}');
+      });
+    });
+
+    const adapter = new HttpAgentAdapter('hermes', {
+      baseUrl,
+      chatPath: '/chat',
+      healthPath: '/health',
+      timeoutMs: 2_000,
+      protocol: 'openai',
+      modelMap: { '[Hermes] Lucy': 'vision-model' },
+    });
+    const items = [];
+    for await (const item of adapter.streamReply({
+      conversation,
+      userMessage,
+      history: [userMessage],
+      artifacts: [note, image],
+      targetAgentId: '[Hermes] Lucy',
+      routingMode: 'direct',
+      participants,
+    })) items.push(item);
+
+    expect(receivedBody.model).toBe('vision-model');
+    const messages = receivedBody.messages as Array<{ role: string; content: string | OpenAiTestPart[] }>;
+    const content = messages.at(-1)?.content;
+    expect(Array.isArray(content)).toBe(true);
+    const parts = content as OpenAiTestPart[];
+    expect(parts[0].text).toContain('DOC_ONLY_MARKER');
+    expect(parts[1].image_url?.url).toBe(`data:image/png;base64,${imageBytes.toString('base64')}`);
+    expect(items).toEqual([{ type: 'delta', delta: 'OPENAI_OK' }]);
+  });
 });
+
+type OpenAiTestPart = {
+  type: string;
+  text?: string;
+  image_url?: { url: string };
+};

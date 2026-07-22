@@ -88,3 +88,55 @@ test('drag-and-drop and clipboard image paste create pending attachments', async
   await expect(page.locator('.upload-chip--complete').filter({ hasText: 'pasted-pixel.png' })).toBeVisible();
   await expect(page.getByText('첨부파일 2개가 다음 메시지에 포함됩니다.')).toBeVisible();
 });
+
+test('v1.5 copies a message and exports sanitized JSON evidence', async ({ page, context }, testInfo) => {
+  test.skip(!testInfo.project.name.startsWith('desktop'));
+  await context.grantPermissions(['clipboard-read', 'clipboard-write'], { origin: 'http://127.0.0.1:4190' });
+
+  await page.goto('/');
+  await page.locator('.conversations-title button[aria-label="새 대화"]').click();
+  await page.locator('input[type="file"]').setInputFiles({
+    name: 'v1-5-evidence.txt',
+    mimeType: 'text/plain',
+    buffer: Buffer.from('V1_5_EXPORT_MARKER', 'utf8'),
+  });
+  await expect(page.locator('.upload-chip--complete')).toHaveCount(1);
+
+  const message = 'V1.5 복사 및 JSON 증거 내보내기';
+  await page.locator('.composer textarea').fill(message);
+  await page.locator('button[aria-label="전송"]').click();
+  const userMessage = page.locator('.message--user').filter({ hasText: message }).last();
+  await expect(userMessage).toBeVisible();
+
+  await userMessage.getByRole('button', { name: '메시지 복사' }).click();
+  await expect(userMessage.getByRole('button', { name: '메시지 복사됨' })).toBeVisible();
+  expect(await page.evaluate(() => navigator.clipboard.readText())).toBe(message);
+
+  await page.locator('summary[aria-label="대화 메뉴"]').click();
+  const downloadPromise = page.waitForEvent('download');
+  await page.getByRole('link', { name: /JSON 증거 내보내기/ }).click();
+  const payload = JSON.parse((await readDownload(await downloadPromise)).toString('utf8')) as {
+    schema: string;
+    conversation: {
+      messages: Array<{ content: string }>;
+      artifacts: Array<Record<string, unknown>>;
+    };
+    collaboration: {
+      participants: unknown[];
+      activities: unknown[];
+    };
+    federation: {
+      workflows: Array<{ run: unknown; events: unknown[] }>;
+    };
+  };
+  expect(payload.schema).toBe('chat.ailucy.online/conversation-export-v1');
+  expect(payload.conversation.messages.some((item) => item.content === message)).toBe(true);
+  expect(payload.conversation.artifacts[0]).toMatchObject({
+    filename: 'v1-5-evidence.txt',
+    mimeType: 'text/plain',
+  });
+  expect(payload.conversation.artifacts[0]).not.toHaveProperty('storagePath');
+  expect(Array.isArray(payload.collaboration.participants)).toBe(true);
+  expect(Array.isArray(payload.collaboration.activities)).toBe(true);
+  expect(Array.isArray(payload.federation.workflows)).toBe(true);
+});

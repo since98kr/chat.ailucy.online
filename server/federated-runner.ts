@@ -10,6 +10,8 @@ import type {
   WorkflowStepRecord,
 } from '../shared/contracts.js';
 import { getAdapter } from './adapters/index.js';
+import { artifactDeliveryEvent, classifyArtifactDeliveryFailure } from './artifact-delivery.js';
+import { storeGeneratedArtifact } from './artifacts.js';
 import type { CollaborationService } from './collaboration.js';
 import type { ChatDatabase } from './database.js';
 import type { FederationService } from './federation.js';
@@ -145,13 +147,25 @@ async function executeStep(input: {
   federation: FederationService;
   conversation: ConversationRecord;
   userMessage: MessageRecord;
+  attachedArtifacts: ArtifactRecord[];
   step: WorkflowStepRecord;
   run: WorkflowRunRecord;
   allAgents: AgentRecord[];
   queue: AsyncEventQueue<StreamEvent>;
   signal: AbortSignal;
 }): Promise<StepResult> {
-  const { database, collaboration, federation, conversation, userMessage, run, allAgents, queue, signal } = input;
+  const {
+    database,
+    collaboration,
+    federation,
+    conversation,
+    userMessage,
+    attachedArtifacts,
+    run,
+    allAgents,
+    queue,
+    signal,
+  } = input;
   let step = federation.updateStep(input.step.id, {
     status: 'running',
     error: null,
@@ -173,6 +187,21 @@ async function executeStep(input: {
   queue.push({ type: 'message.created', message: assistantMessage });
   const adapter = getAdapter(step.systemId);
   let content = '';
+  let deliveryConfirmed = attachedArtifacts.length === 0;
+
+  if (attachedArtifacts.length) {
+    const delivery = artifactDeliveryEvent({
+      runId: run.id,
+      messageId: userMessage.id,
+      agentId: step.agentId,
+      systemId: step.systemId,
+      artifacts: attachedArtifacts,
+      state: 'delivering',
+      detail: 'Preparing bounded attachment content for this workflow step.',
+    });
+    persistStreamEvent(federation, run.id, 'step.status', delivery);
+    queue.push(delivery);
+  }
 
   try {
     const latest = database.getConversation(conversation.id)!;
@@ -191,6 +220,7 @@ async function executeStep(input: {
       conversation,
       userMessage,
       history,
+      artifacts: attachedArtifacts,
       targetAgentId: step.agentId,
       routingMode: 'team',
       participants: collaboration.listParticipants(conversation.id),
@@ -199,24 +229,68 @@ async function executeStep(input: {
       workflowRunId: run.id,
       signal,
     })) {
+      if (!deliveryConfirmed) {
+        deliveryConfirmed = true;
+        const delivery = artifactDeliveryEvent({
+          runId: run.id,
+          messageId: userMessage.id,
+          agentId: step.agentId,
+          systemId: step.systemId,
+          artifacts: attachedArtifacts,
+          state: 'delivered',
+          detail: 'Backend accepted the attachment request; model understanding is verified separately.',
+        });
+        persistStreamEvent(federation, run.id, 'step.status', delivery);
+        queue.push(delivery);
+      }
       if (signal.aborted) break;
       if (item.type === 'status') {
         const event: StreamEvent = { type: 'run.status', runId: run.id, status: item.status, agentId: step.agentId };
         persistStreamEvent(federation, run.id, 'step.status', event);
         queue.push(event);
-      } else {
-        content += item.delta;
-        database.updateMessage(assistantMessage.id, { content, state: 'streaming' });
-        const event: StreamEvent = {
-          type: 'content.delta',
-          runId: run.id,
+        continue;
+      }
+      if (item.type === 'artifact') {
+        const stored = await storeGeneratedArtifact(conversation.id, item.artifact);
+        const artifact = database.addArtifact({
+          conversationId: conversation.id,
           messageId: assistantMessage.id,
-          delta: item.delta,
-          authorId: step.agentId,
-        };
+          ...stored,
+        });
+        const event: StreamEvent = { type: 'artifact.created', runId: run.id, artifact };
         persistStreamEvent(federation, run.id, 'step.delta', event);
         queue.push(event);
+        continue;
       }
+
+      content += item.delta;
+      database.updateMessage(assistantMessage.id, { content, state: 'streaming' });
+      const event: StreamEvent = {
+        type: 'content.delta',
+        runId: run.id,
+        messageId: assistantMessage.id,
+        delta: item.delta,
+        authorId: step.agentId,
+      };
+      persistStreamEvent(federation, run.id, 'step.delta', event);
+      queue.push(event);
+    }
+
+    if (attachedArtifacts.length && !deliveryConfirmed) {
+      const delivery = artifactDeliveryEvent({
+        runId: run.id,
+        messageId: userMessage.id,
+        agentId: step.agentId,
+        systemId: step.systemId,
+        artifacts: attachedArtifacts,
+        state: signal.aborted ? 'failed' : 'delivered',
+        detail: signal.aborted
+          ? 'The workflow step was cancelled before the backend confirmed attachment delivery.'
+          : 'Backend completed an empty response after accepting the attachment request.',
+      });
+      persistStreamEvent(federation, run.id, 'step.status', delivery);
+      queue.push(delivery);
+      deliveryConfirmed = !signal.aborted;
     }
 
     if (signal.aborted) {
@@ -245,6 +319,20 @@ async function executeStep(input: {
     return { ok: true, aborted: false, step };
   } catch (error) {
     const message = error instanceof Error ? error.message : 'Unknown federated adapter error';
+    if (attachedArtifacts.length && !deliveryConfirmed) {
+      const failure = classifyArtifactDeliveryFailure(error);
+      const delivery = artifactDeliveryEvent({
+        runId: run.id,
+        messageId: userMessage.id,
+        agentId: step.agentId,
+        systemId: step.systemId,
+        artifacts: attachedArtifacts,
+        state: failure.state,
+        detail: failure.detail,
+      });
+      persistStreamEvent(federation, run.id, 'step.status', delivery);
+      queue.push(delivery);
+    }
     database.updateMessage(assistantMessage.id, { content, state: 'failed' });
     step = federation.updateStep(step.id, {
       status: 'failed',
@@ -330,6 +418,7 @@ export async function* runFederatedWorkflow(input: FederatedRunInput): AsyncGene
       federation,
       conversation,
       userMessage,
+      attachedArtifacts,
       step,
       run: currentRun,
       allAgents: resolved.allAgents,
@@ -353,6 +442,7 @@ export async function* runFederatedWorkflow(input: FederatedRunInput): AsyncGene
         federation,
         conversation,
         userMessage,
+        attachedArtifacts,
         step: coordinatorStep,
         run: federation.getRun(run.id)!,
         allAgents: resolved.allAgents,

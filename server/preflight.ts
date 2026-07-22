@@ -38,6 +38,21 @@ function addCheck(checks: PreflightCheck[], check: PreflightCheck) {
   checks.push(check);
 }
 
+function checkPositiveIntegerEnv(
+  checks: PreflightCheck[],
+  input: { name: string; checkName: string; fallback: number },
+) {
+  const raw = process.env[input.name]?.trim();
+  const value = raw ? Number(raw) : input.fallback;
+  const ok = Number.isFinite(value) && Number.isInteger(value) && value > 0;
+  addCheck(checks, {
+    name: input.checkName,
+    ok,
+    level: ok ? 'info' : 'error',
+    detail: ok ? `${input.name}=${value}` : `${input.name} must be a positive integer`,
+  });
+}
+
 function checkWritableDirectory(checks: PreflightCheck[], name: string, path: string) {
   const absolute = resolve(path);
   try {
@@ -132,9 +147,37 @@ function checkSecurity(checks: PreflightCheck[], strict: boolean) {
   if (security.authMode === 'token' && !security.accessToken) {
     addCheck(checks, { name: 'token-config', ok: false, level: 'error', detail: 'CHAT_ACCESS_TOKEN is missing' });
   }
-  if (security.authMode === 'cloudflare' && security.allowedEmails.size === 0) {
-    addCheck(checks, { name: 'cloudflare-config', ok: false, level: 'error', detail: 'CHAT_ALLOWED_EMAILS is empty' });
+
+  if (security.authMode === 'cloudflare') {
+    const identityConfigured = security.allowedEmails.size > 0 || security.allowedServiceClientIds.size > 0;
+    addCheck(checks, {
+      name: 'cloudflare-identities',
+      ok: identityConfigured,
+      level: identityConfigured ? 'info' : 'error',
+      detail: identityConfigured
+        ? `emails=${security.allowedEmails.size}; service-clients=${security.allowedServiceClientIds.size}`
+        : 'Cloudflare mode requires an allowed email or service client ID',
+    });
+
+    const hasIssuer = Boolean(security.accessIssuer);
+    const hasAudience = Boolean(security.accessAudience);
+    const verifierConfigured = hasIssuer && hasAudience;
+    const verifierRequired = security.allowedServiceClientIds.size > 0;
+    const verifierOk = hasIssuer === hasAudience && (!verifierRequired || verifierConfigured);
+    addCheck(checks, {
+      name: 'cloudflare-service-client-verifier',
+      ok: verifierOk,
+      level: verifierOk ? (verifierConfigured ? 'info' : 'warning') : 'error',
+      detail: verifierOk
+        ? verifierConfigured
+          ? 'Access JWT issuer and audience are configured'
+          : 'No service client is enabled; Access JWT verifier is optional'
+        : verifierRequired
+          ? 'Service client IDs require both CHAT_CF_ACCESS_ISSUER and CHAT_CF_ACCESS_AUD'
+          : 'CHAT_CF_ACCESS_ISSUER and CHAT_CF_ACCESS_AUD must be configured together',
+    });
   }
+
   if (strict && !publicOrigin) {
     addCheck(checks, { name: 'public-origin', ok: false, level: 'error', detail: 'CHAT_PUBLIC_ORIGIN is required in strict mode' });
   } else {
@@ -161,6 +204,16 @@ export async function runPreflight(options?: { strict?: boolean }): Promise<Pref
   checkDisk(checks, dataRoot);
   checkDatabase(checks, databasePath);
   checkSecurity(checks, strict);
+  checkPositiveIntegerEnv(checks, {
+    name: 'CHAT_MAX_GENERATED_ARTIFACT_BYTES',
+    checkName: 'generated-artifact-size-limit',
+    fallback: 50 * 1024 * 1024,
+  });
+  checkPositiveIntegerEnv(checks, {
+    name: 'CHAT_MAX_INLINE_GENERATED_ARTIFACT_PAYLOAD_BYTES',
+    checkName: 'inline-generated-artifact-payload-limit',
+    fallback: 10 * 1024 * 1024,
+  });
 
   const adapters = await adapterHealth();
   const requireRealAdapters = boolEnv('CHAT_PREFLIGHT_REQUIRE_REAL_ADAPTERS', strict);
