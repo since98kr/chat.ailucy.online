@@ -65,13 +65,14 @@ jobs:
         with:
           ref: ${{ inputs.revision }}
           clean: true
+          fetch-depth: 0
 
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
           node-version: '22'
 
-      - name: Verify exact source
+      - name: Verify exact source is on main
         id: source
         shell: bash
         env:
@@ -81,6 +82,11 @@ jobs:
           ACTUAL_SHA="$(git rev-parse HEAD)"
           [[ "${ACTUAL_SHA}" == "${REQUESTED_SHA}" ]]
           test -z "$(git status --short)"
+          git fetch --no-tags origin main
+          git merge-base --is-ancestor "${ACTUAL_SHA}" origin/main || {
+            echo 'requested production revision is not contained in main history' >&2
+            exit 1
+          }
           echo "sha=${ACTUAL_SHA}" >> "$GITHUB_OUTPUT"
 
       - name: Mark production gate pending
@@ -105,12 +111,12 @@ jobs:
         env:
           CHAT_PRODUCTION_MODE: ${{ inputs.mode }}
           CHAT_PRODUCTION_CONFIRM: ${{ inputs.confirm }}
-          CHAT_PRODUCTION_APPROVED_SHA: ${{ steps.source.outputs.sha }}
-          CHAT_PRODUCTION_ROOT: ${{ vars.CHAT_PRODUCTION_ROOT }}
-          CHAT_PRODUCTION_DATA_DIR: ${{ vars.CHAT_PRODUCTION_DATA_DIR }}
+          CHAT_PRODUCTION_APPROVED_SHA: ${{ vars.CHAT_PRODUCTION_APPROVED_SHA }}
+          CHAT_PRODUCTION_ROOT: ${{ vars.CHAT_PRODUCTION_ROOT || '/opt/chat-v2/production' }}
+          CHAT_PRODUCTION_DATA_DIR: ${{ vars.CHAT_PRODUCTION_DATA_DIR || '/opt/chat-v2/production/data' }}
           CHAT_PRODUCTION_PORT: ${{ vars.CHAT_PRODUCTION_PORT }}
-          CHAT_PRODUCTION_CONTAINER_NAME: ${{ vars.CHAT_PRODUCTION_CONTAINER_NAME }}
-          CHAT_PRODUCTION_COMPOSE_PROJECT: ${{ vars.CHAT_PRODUCTION_COMPOSE_PROJECT }}
+          CHAT_PRODUCTION_CONTAINER_NAME: ${{ vars.CHAT_PRODUCTION_CONTAINER_NAME || 'chat-v2-production' }}
+          CHAT_PRODUCTION_COMPOSE_PROJECT: ${{ vars.CHAT_PRODUCTION_COMPOSE_PROJECT || 'chat-v2-production' }}
           CHAT_ENVIRONMENT: production
           CHAT_PREFLIGHT_STRICT: 'true'
           CHAT_PREFLIGHT_MIN_FREE_BYTES: ${{ vars.CHAT_PREFLIGHT_MIN_FREE_BYTES }}
@@ -194,7 +200,7 @@ jobs:
         env:
           RELEASE_MODE: ${{ inputs.mode }}
           RELEASE_SHA: ${{ steps.source.outputs.sha }}
-          PRODUCTION_ROOT: ${{ vars.CHAT_PRODUCTION_ROOT }}
+          PRODUCTION_ROOT: ${{ vars.CHAT_PRODUCTION_ROOT || '/opt/chat-v2/production' }}
           PRODUCTION_PUBLIC_ORIGIN: ${{ vars.CHAT_PUBLIC_ORIGIN }}
         run: |
           {
@@ -213,14 +219,14 @@ jobs:
         with:
           name: chat-v2-production-${{ inputs.mode }}-${{ github.run_id }}
           path: |
-            ${{ vars.CHAT_PRODUCTION_ROOT }}/state/last-production-readiness.json
-            ${{ vars.CHAT_PRODUCTION_ROOT }}/state/last-preflight.json
-            ${{ vars.CHAT_PRODUCTION_ROOT }}/state/last-preflight-output.log
-            ${{ vars.CHAT_PRODUCTION_ROOT }}/state/last-backup.json
-            ${{ vars.CHAT_PRODUCTION_ROOT }}/state/last-backup-verify.json
-            ${{ vars.CHAT_PRODUCTION_ROOT }}/state/last-health.json
-            ${{ vars.CHAT_PRODUCTION_ROOT }}/state/last-ops-status.json
-            ${{ vars.CHAT_PRODUCTION_ROOT }}/state/last-deployment.json
+            ${{ vars.CHAT_PRODUCTION_ROOT || '/opt/chat-v2/production' }}/state/last-production-readiness.json
+            ${{ vars.CHAT_PRODUCTION_ROOT || '/opt/chat-v2/production' }}/state/last-preflight.json
+            ${{ vars.CHAT_PRODUCTION_ROOT || '/opt/chat-v2/production' }}/state/last-preflight-output.log
+            ${{ vars.CHAT_PRODUCTION_ROOT || '/opt/chat-v2/production' }}/state/last-backup.json
+            ${{ vars.CHAT_PRODUCTION_ROOT || '/opt/chat-v2/production' }}/state/last-backup-verify.json
+            ${{ vars.CHAT_PRODUCTION_ROOT || '/opt/chat-v2/production' }}/state/last-health.json
+            ${{ vars.CHAT_PRODUCTION_ROOT || '/opt/chat-v2/production' }}/state/last-ops-status.json
+            ${{ vars.CHAT_PRODUCTION_ROOT || '/opt/chat-v2/production' }}/state/last-deployment.json
             test-results-staging-browser
             playwright-staging-report
             test-results-external-staging-browser
