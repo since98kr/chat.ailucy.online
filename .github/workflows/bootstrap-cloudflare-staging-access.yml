@@ -1,4 +1,4 @@
-name: Bootstrap Cloudflare Access and close staging E2E blocker rerun
+name: Verify Cloudflare Access staging E2E
 
 on:
   workflow_dispatch:
@@ -92,14 +92,14 @@ jobs:
       - name: Checkout the validated Chat V2 staging revision
         uses: actions/checkout@v4
         with:
-          ref: 7327a8a512a7d64da5a21be9e81063ef45e0f890
+          ref: 5ce49ef00a1cb9ee7378ad447b5e856c7a839aa4
           clean: true
 
       - name: Verify exact application source
         id: source
         run: |
           set -euo pipefail
-          test "$(git rev-parse HEAD)" = "7327a8a512a7d64da5a21be9e81063ef45e0f890"
+          test "$(git rev-parse HEAD)" = "5ce49ef00a1cb9ee7378ad447b5e856c7a839aa4"
           echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
 
       - name: Mark public staging verification pending
@@ -207,7 +207,7 @@ jobs:
           if-no-files-found: warn
           retention-days: 30
 
-      - name: Close Issue 53 after full public evidence
+      - name: Record successful public evidence on Issue 53
         if: success()
         uses: actions/github-script@v7
         with:
@@ -216,14 +216,7 @@ jobs:
               owner: context.repo.owner,
               repo: context.repo.repo,
               issue_number: 53,
-              body: `Resolved by run ${context.runId}. Cloudflare Access application, human Allow policy, dedicated Service Auth policy, service token, origin JWT verification, local QA, and public multimodal/generated-file E2E all passed for Chat V2 SHA 7327a8a512a7d64da5a21be9e81063ef45e0f890. No production deployment or merge was performed.`,
-            });
-            await github.rest.issues.update({
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              issue_number: 53,
-              state: 'closed',
-              state_reason: 'completed',
+              body: `Post-integration verification run ${context.runId} passed for Chat V2 SHA 5ce49ef00a1cb9ee7378ad447b5e856c7a839aa4. Cloudflare Access, origin JWT verification, local QA, and public multimodal/generated-file E2E all passed. Issue #53 remains completed; no production deployment or main merge was performed.`,
             });
 
       - name: Publish giant-step result
