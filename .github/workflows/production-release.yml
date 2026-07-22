@@ -107,6 +107,77 @@ jobs:
               target_url: `${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`,
             });
 
+      - name: Validate deploy rollback prerequisites
+        if: ${{ inputs.mode == 'deploy' }}
+        shell: bash
+        env:
+          RELEASE_SHA: ${{ steps.source.outputs.sha }}
+          PRODUCTION_ROOT: ${{ vars.CHAT_PRODUCTION_ROOT || '/opt/chat-v2/production' }}
+          PRODUCTION_DATA_DIR: ${{ vars.CHAT_PRODUCTION_DATA_DIR || '/opt/chat-v2/production/data' }}
+          ALLOW_INITIAL_RELEASE: ${{ vars.CHAT_PRODUCTION_ALLOW_INITIAL_RELEASE || 'false' }}
+          INITIAL_RELEASE_APPROVED_SHA: ${{ vars.CHAT_PRODUCTION_INITIAL_RELEASE_APPROVED_SHA }}
+        run: |
+          set -euo pipefail
+          [[ "${ALLOW_INITIAL_RELEASE}" == 'true' || "${ALLOW_INITIAL_RELEASE}" == 'false' ]]
+          root="$(realpath -m "${PRODUCTION_ROOT}")"
+          data="$(realpath -m "${PRODUCTION_DATA_DIR}")"
+          [[ "${root}" == /opt/chat-v2/production* ]]
+          [[ "${data}" == "${root}"/* ]]
+          state_file="${root}/state/current-image"
+          database_file="${data}/chat-v2.sqlite"
+          evidence_dir="${RUNNER_TEMP}/chat-v2-production-evidence"
+          mkdir -p "${evidence_dir}"
+          output="${evidence_dir}/rollback-prerequisites.json"
+          [[ ! -e "${output}" ]]
+
+          mode='standard'
+          previous_image=''
+          database_present=false
+          if [[ "${ALLOW_INITIAL_RELEASE}" == 'true' ]]; then
+            mode='initial'
+            [[ "${INITIAL_RELEASE_APPROVED_SHA}" == "${RELEASE_SHA}" ]] || {
+              echo 'initial release requires a separate exact approved SHA' >&2
+              exit 1
+            }
+            [[ ! -s "${state_file}" ]] || {
+              echo 'initial release override is invalid because a prior image is recorded' >&2
+              exit 1
+            }
+            [[ ! -e "${database_file}" ]] || {
+              echo 'initial release override is invalid because a production database exists' >&2
+              exit 1
+            }
+          else
+            [[ -s "${state_file}" ]] || {
+              echo 'standard deploy requires a recorded prior production image' >&2
+              exit 1
+            }
+            previous_image="$(<"${state_file}")"
+            [[ "${previous_image}" == chat-ailucy-v2:* ]]
+            docker image inspect "${previous_image}" >/dev/null
+            [[ -f "${database_file}" && -r "${database_file}" ]] || {
+              echo 'standard deploy requires a readable production database for verified backup' >&2
+              exit 1
+            }
+            database_present=true
+          fi
+
+          MODE="${mode}" REVISION="${RELEASE_SHA}" PREVIOUS_IMAGE="${previous_image}" \
+          DATABASE_PRESENT="${database_present}" DEPLOY_ROOT="${root}" DATA_DIR="${data}" \
+            node - "${output}" <<'NODE'
+          const fs = require('node:fs');
+          fs.writeFileSync(process.argv[2], JSON.stringify({
+            ok: true,
+            mode: process.env.MODE,
+            revision: process.env.REVISION,
+            previousImage: process.env.PREVIOUS_IMAGE || null,
+            databasePresent: process.env.DATABASE_PRESENT === 'true',
+            deployRoot: process.env.DEPLOY_ROOT,
+            dataDir: process.env.DATA_DIR,
+            checkedAt: new Date().toISOString(),
+          }, null, 2) + '\n', { flag: 'wx' });
+          NODE
+
       - name: Build, preflight, and conditionally deploy
         env:
           CHAT_PRODUCTION_MODE: ${{ inputs.mode }}
@@ -168,6 +239,7 @@ jobs:
       - name: Verify local production application paths
         if: ${{ inputs.mode == 'deploy' }}
         env:
+          RELEASE_SHA: ${{ steps.source.outputs.sha }}
           CHAT_STAGING_EMAIL: ${{ vars.CHAT_ALLOWED_EMAILS }}
           CHAT_MULTIMODAL_QA_REQUIRED: 'true'
           CHAT_GENERATED_ARTIFACT_QA_REQUIRED: 'true'
@@ -182,9 +254,28 @@ jobs:
             CHAT_STAGING_BASE_URL="http://127.0.0.1:${CHAT_PRODUCTION_PORT}" \
             bash scripts/ops/staging-browser-smoke.sh
 
+          evidence_dir="${RUNNER_TEMP}/chat-v2-production-evidence"
+          mkdir -p "${evidence_dir}"
+          node - "${evidence_dir}/local-e2e.json" "${RELEASE_SHA}" "${GITHUB_RUN_ID}" \
+            "http://127.0.0.1:${CHAT_PRODUCTION_PORT}" <<'NODE'
+          const fs = require('node:fs');
+          const [output, revision, runId, endpoint] = process.argv.slice(2);
+          fs.writeFileSync(output, JSON.stringify({
+            ok: true,
+            phase: 'local',
+            revision,
+            runId: Number(runId),
+            endpoint,
+            checks: ['transport', 'browser', 'artifact-roundtrip', 'multimodal', 'generated-artifact'],
+            checkedAt: new Date().toISOString(),
+          }, null, 2) + '\n', { flag: 'wx' });
+          NODE
+
       - name: Verify public production Cloudflare path
         if: ${{ inputs.mode == 'deploy' }}
         env:
+          RELEASE_SHA: ${{ steps.source.outputs.sha }}
+          CHAT_PUBLIC_ORIGIN: ${{ vars.CHAT_PUBLIC_ORIGIN }}
           CHAT_STAGING_BASE_URL: ${{ vars.CHAT_PUBLIC_ORIGIN }}
           CHAT_EXTERNAL_QA_REQUIRED: 'true'
           CHAT_MULTIMODAL_QA_REQUIRED: 'true'
@@ -192,7 +283,27 @@ jobs:
           CHAT_HERMES_VISION_AGENT_ID: ${{ vars.CHAT_HERMES_VISION_AGENT_ID }}
           CF_ACCESS_CLIENT_ID: ${{ vars.CF_ACCESS_CLIENT_ID }}
           CF_ACCESS_CLIENT_SECRET: ${{ secrets.CF_ACCESS_CLIENT_SECRET }}
-        run: bash scripts/ops/external-staging-browser-smoke.sh
+        run: |
+          set -euo pipefail
+          bash scripts/ops/external-staging-browser-smoke.sh
+
+          evidence_dir="${RUNNER_TEMP}/chat-v2-production-evidence"
+          mkdir -p "${evidence_dir}"
+          node - "${evidence_dir}/public-e2e.json" "${RELEASE_SHA}" "${GITHUB_RUN_ID}" \
+            "${CHAT_PUBLIC_ORIGIN}" <<'NODE'
+          const fs = require('node:fs');
+          const [output, revision, runId, endpoint] = process.argv.slice(2);
+          if (!endpoint.startsWith('https://')) process.exit(1);
+          fs.writeFileSync(output, JSON.stringify({
+            ok: true,
+            phase: 'public',
+            revision,
+            runId: Number(runId),
+            endpoint,
+            checks: ['cloudflare-access', 'browser', 'artifact-roundtrip', 'multimodal', 'generated-artifact'],
+            checkedAt: new Date().toISOString(),
+          }, null, 2) + '\n', { flag: 'wx' });
+          NODE
 
       - name: Publish production gate summary
         if: always()
@@ -211,6 +322,10 @@ jobs:
             echo "- Production root: \`${PRODUCTION_ROOT}\`"
             echo "- Public origin: \`${PRODUCTION_PUBLIC_ORIGIN}\`"
             echo '- Automatic main-push deployment: `disabled`'
+            marker="${RUNNER_TEMP}/chat-v2-production-evidence/rollback-prerequisites.json"
+            if [[ -f "${marker}" ]]; then
+              echo "- Rollback prerequisite mode: \`$(node -p "require('${marker}').mode")\`"
+            fi
           } >> "$GITHUB_STEP_SUMMARY"
 
       - name: Upload production evidence
@@ -227,6 +342,7 @@ jobs:
             ${{ vars.CHAT_PRODUCTION_ROOT || '/opt/chat-v2/production' }}/state/last-health.json
             ${{ vars.CHAT_PRODUCTION_ROOT || '/opt/chat-v2/production' }}/state/last-ops-status.json
             ${{ vars.CHAT_PRODUCTION_ROOT || '/opt/chat-v2/production' }}/state/last-deployment.json
+            ${{ runner.temp }}/chat-v2-production-evidence/*.json
             test-results-staging-browser
             playwright-staging-report
             test-results-external-staging-browser
