@@ -4,13 +4,16 @@
 
 The repository contains a guarded production release framework. It does not deploy automatically when `main` changes.
 
-Current validated release candidate:
+Current production release candidate:
 
-- main merge commit: `bd6ce5515eefc1e0be5d40c3a57006781d0d56c3`
-- validated integration tree: `5ce49ef00a1cb9ee7378ad447b5e856c7a839aa4`
-- V2 CI: run `29937009074`
-- isolated/public staging: run `29937336698`
-- staging evidence: `chat-v2-cloudflare-access-29937336698`
+- approved candidate on `main`: `9a787035ec65e6e9973222b99cb427c64d108f4b`
+- validated application integration tree: `5ce49ef00a1cb9ee7378ad447b5e856c7a839aa4`
+- application integration CI: run `29937009074`
+- production-readiness CI: run `29939308900`
+- exact candidate isolated/public staging: run `29939697429`
+- staging evidence: `chat-v2-staging-deployment-29939697429`
+
+The candidate SHA includes both the validated application tree and the manual production release controls. An earlier application-only SHA does not contain the production controller and must not be selected for this workflow.
 
 A future production release must use a full immutable SHA that is contained in `main` history. A branch name such as `main`, an unmerged branch SHA, or a moving tag is not accepted as the release identity.
 
@@ -29,6 +32,8 @@ Production must have resources separate from staging:
 - production-specific secrets and variables
 
 The scripts reject production roots or data directories under `/opt/chat-v2/staging`.
+
+The one-time runner and Environment setup procedure is documented in `docs/HOME_SERVER_PRODUCTION_SETUP.md`.
 
 ## Workflow behavior
 
@@ -65,7 +70,7 @@ CHAT_PRODUCTION_DATA_DIR=/opt/chat-v2/production/data
 CHAT_PRODUCTION_PORT=<production-localhost-port>
 CHAT_PRODUCTION_CONTAINER_NAME=chat-v2-production
 CHAT_PRODUCTION_COMPOSE_PROJECT=chat-v2-production
-CHAT_PRODUCTION_APPROVED_SHA=<approved main SHA>
+CHAT_PRODUCTION_APPROVED_SHA=9a787035ec65e6e9973222b99cb427c64d108f4b
 CHAT_PRODUCTION_RELEASE_ENABLED=false
 ```
 
@@ -130,10 +135,10 @@ A production release is not complete unless the workflow artifact contains:
 
 ## Operator sequence
 
-1. Install and register the dedicated production runner.
+1. Install and register the dedicated production runner using `docs/HOME_SERVER_PRODUCTION_SETUP.md`.
 2. Create the GitHub `production` Environment with required reviewers.
 3. Configure production variables and secrets with release disabled.
-4. Set `CHAT_PRODUCTION_APPROVED_SHA` to the reviewed full SHA from `main`.
+4. Set `CHAT_PRODUCTION_APPROVED_SHA` to the reviewed full candidate SHA from `main`.
 5. Run the workflow in `preflight` mode for that same SHA.
 6. Inspect the evidence and verify that no production replacement occurred.
 7. Enable `CHAT_PRODUCTION_RELEASE_ENABLED` only for the approved release window.
@@ -149,6 +154,7 @@ A production release is not complete unless the workflow artifact contains:
 - staging and production sharing a data root;
 - staging service credentials in production;
 - mutable branch names or unmerged SHAs as release identities;
+- selecting an older SHA that does not contain the production controller;
 - workflow input silently overriding the Environment-approved SHA;
 - deployment without verified backup and rollback image;
 - printing secret state files;
