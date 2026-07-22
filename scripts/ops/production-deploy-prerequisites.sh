@@ -29,8 +29,8 @@ DATA_DIR_REAL="$(realpath -m "${DATA_DIR}")"
 case "${DEPLOY_ROOT_REAL}" in
   /opt/chat-v2/staging|/opt/chat-v2/staging/*) fail 'production root may not reuse staging' ;;
 esac
-[[ "${DEPLOY_ROOT_REAL}" == /opt/chat-v2/production* ]] \
-  || fail 'production root must use /opt/chat-v2/production'
+[[ "${DEPLOY_ROOT_REAL}" == '/opt/chat-v2/production' || "${DEPLOY_ROOT_REAL}" == /opt/chat-v2/production/* ]] \
+  || fail 'production root must be /opt/chat-v2/production or a contained path'
 [[ "${DATA_DIR_REAL}" == "${DEPLOY_ROOT_REAL}"/* ]] \
   || fail 'production data directory must be contained in the production root'
 
