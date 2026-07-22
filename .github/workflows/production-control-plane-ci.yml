@@ -1,0 +1,49 @@
+name: Production control-plane CLI CI
+
+on:
+  pull_request:
+    paths:
+      - 'scripts/ops/production-control-plane.sh'
+      - 'scripts/ci/production-control-plane-smoke.sh'
+      - 'docs/PRODUCTION_CONTROL_PLANE_CLI.md'
+      - '.github/workflows/production-control-plane-ci.yml'
+  push:
+    branches:
+      - main
+      - 'agent/**'
+    paths:
+      - 'scripts/ops/production-control-plane.sh'
+      - 'scripts/ci/production-control-plane-smoke.sh'
+      - 'docs/PRODUCTION_CONTROL_PLANE_CLI.md'
+      - '.github/workflows/production-control-plane-ci.yml'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: production-control-plane-ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  guard:
+    name: Shell syntax and fail-closed control-plane smoke
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Validate shell syntax
+        run: |
+          set -euo pipefail
+          bash -n scripts/ops/production-control-plane.sh
+          bash -n scripts/ci/production-control-plane-smoke.sh
+
+      - name: Exercise fake-GitHub safety guards
+        run: bash scripts/ci/production-control-plane-smoke.sh
