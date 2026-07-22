@@ -64,7 +64,7 @@ jobs:
           grep -Fq 'rollback-prerequisites.json' "${workflow}"
           grep -Fq 'local-e2e.json' "${workflow}"
           grep -Fq 'public-e2e.json' "${workflow}"
-          grep -Fq '${{ runner.temp }}/chat-v2-production-evidence/*.json' "${workflow}"
+          grep -Fq 'chat-v2-production-evidence/*.json' "${workflow}"
           if grep -Eq '^[[:space:]]+push:' "${workflow}"; then
             echo 'production workflow must remain manual-only' >&2
             exit 1
