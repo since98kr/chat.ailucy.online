@@ -8,8 +8,8 @@ MARKER="${REPO_ROOT}/scripts/ops/write-production-e2e-marker.sh"
 SHA='9a787035ec65e6e9973222b99cb427c64d108f4b'
 RUN_ID='424242'
 TMP_DIR="$(mktemp -d)"
-STANDARD_ROOT="/opt/chat-v2/production-ci-standard-${GITHUB_RUN_ID:-$$}"
-INITIAL_ROOT="/opt/chat-v2/production-ci-initial-${GITHUB_RUN_ID:-$$}"
+STANDARD_ROOT="/opt/chat-v2/production/ci-standard-${GITHUB_RUN_ID:-$$}"
+INITIAL_ROOT="/opt/chat-v2/production/ci-initial-${GITHUB_RUN_ID:-$$}"
 
 cleanup() {
   rm -rf "${TMP_DIR}"
