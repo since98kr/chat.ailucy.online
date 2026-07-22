@@ -32,7 +32,7 @@ jobs:
       - name: Install dependencies
         run: npm install --no-audit --no-fund
 
-      - name: Validate deployment, preflight, and recovery scripts
+      - name: Validate deployment, preflight, runner, and recovery scripts
         shell: bash
         run: |
           set -euo pipefail
@@ -46,6 +46,7 @@ jobs:
           bash -n scripts/ops/configure-cloudflare-access-qa.sh
           bash -n scripts/ops/staging-redeploy-smoke.sh
           bash -n scripts/runner/install-chat-staging-runner.sh
+          bash -n scripts/runner/install-chat-production-runner.sh
           bash -n scripts/backup/restore-staging.sh
           bash -n scripts/ci/container-smoke.sh
           CHAT_IMAGE=chat-ailucy-v2:validation docker compose -f compose.staging.yml config >/dev/null
@@ -60,6 +61,47 @@ jobs:
             HERMES_BASE_URL=http://hermes.example.invalid \
             HERMES_AGENT_ID=hermes-validation \
             docker compose -f compose.production.yml config >/dev/null
+
+      - name: Validate production runner bootstrap guards without host mutation
+        shell: bash
+        run: |
+          set -euo pipefail
+          digest="$(printf 'a%.0s' {1..64})"
+          script='scripts/runner/install-chat-production-runner.sh'
+
+          common=(
+            RUNNER_VALIDATE_ONLY=true
+            GITHUB_REPOSITORY_URL=https://github.com/since98kr/chat.ailucy.online
+            RUNNER_VERSION=2.335.1
+            RUNNER_SHA256="${digest}"
+            RUNNER_NAME=agentlucy-chat-production
+          )
+
+          env "${common[@]}" bash "${script}" >/tmp/production-runner-valid.log
+          grep -Fq 'No user, directory, runner, service, Docker, or GitHub state was changed.' \
+            /tmp/production-runner-valid.log
+
+          expect_failure() {
+            local label="$1"
+            shift
+            if "$@" >/dev/null 2>&1; then
+              echo "production runner guard unexpectedly accepted: ${label}" >&2
+              exit 1
+            fi
+          }
+
+          expect_failure staging-name \
+            env "${common[@]}" RUNNER_NAME=agentlucy-chat-staging bash "${script}"
+          expect_failure staging-user \
+            env "${common[@]}" RUNNER_USER=chat-runner bash "${script}"
+          expect_failure staging-runner-home \
+            env "${common[@]}" RUNNER_HOME=/opt/actions-runner-chat-staging bash "${script}"
+          expect_failure staging-production-root \
+            env "${common[@]}" CHAT_PRODUCTION_ROOT=/opt/chat-v2/staging bash "${script}"
+          expect_failure foreign-repository \
+            env "${common[@]}" GITHUB_REPOSITORY_URL=https://github.com/example/other bash "${script}"
+          expect_failure malformed-checksum \
+            env "${common[@]}" RUNNER_SHA256=not-a-checksum bash "${script}"
 
       - name: Typecheck
         shell: bash
