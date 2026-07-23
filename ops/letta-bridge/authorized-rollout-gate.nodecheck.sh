@@ -53,7 +53,6 @@ mkdir -p "${EXTRA_DIR}"
 cp "${CANONICAL}" "${EXTRA_DIR}/letta-cli-bridge.mjs"
 printf '%s\n' 'unexpected' >"${EXTRA_DIR}/extra.txt"
 tar -C "${EXTRA_DIR}" -cf "${TMP}/extra.tar" letta-cli-bridge.mjs extra.txt
-expect_failure extra bash -c 'cat "$1" | "$2"' _ "${TMP}/extra.tar" "$(printf '%q' env)"
 if env HOME="${HOME_DIR}" LETTA_BRIDGE_USER="$(id -un)" SSH_ORIGINAL_COMMAND=letta-rollout-v1 \
   bash "${GATE}" <"${TMP}/extra.tar" >"${TMP}/extra-direct.out" 2>"${TMP}/extra-direct.err"; then
   echo 'extra archive unexpectedly passed' >&2
