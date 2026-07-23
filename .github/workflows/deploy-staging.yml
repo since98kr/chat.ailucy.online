@@ -25,7 +25,7 @@ jobs:
     name: Deploy and verify isolated staging
     runs-on: [self-hosted, linux, x64, chat-staging]
     environment: staging
-    timeout-minutes: 70
+    timeout-minutes: 80
 
     steps:
       - name: Checkout approved revision
@@ -62,6 +62,16 @@ jobs:
               description: 'Staging deploy and full QA are running',
               target_url: `${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`,
             });
+
+      - name: Deploy full Letta CLI runtime bridge
+        env:
+          LETTA_BASE_URL: ${{ vars.LETTA_BASE_URL }}
+          LETTA_SSH_HOST: ${{ vars.LETTA_SSH_HOST || 'ax.hni-gl.ai' }}
+          LETTA_SSH_PORT: ${{ vars.LETTA_SSH_PORT || '3004' }}
+          LETTA_SSH_USER: ${{ vars.LETTA_SSH_USER || 'since98kr' }}
+          LETTA_BRIDGE_USER: ${{ vars.LETTA_BRIDGE_USER || 'since98kr' }}
+          LETTA_BRIDGE_EVIDENCE_PATH: ${{ runner.temp }}/letta-full-runtime-health.json
+        run: bash ops/letta-bridge/deploy-from-agentlucy.sh
 
       - name: Deploy with strict preflight, backup, health check, and rollback
         env:
@@ -119,20 +129,51 @@ jobs:
           CHAT_STAGING_EMAIL: ${{ vars.CHAT_ALLOWED_EMAILS }}
         run: bash scripts/ops/staging-smoke.sh
 
-      - name: Verify real browser links, artifacts, and configured AI understanding
+      - name: Verify real browser links, artifacts, and full Letta CLI runtime
         env:
           CHAT_STAGING_BASE_URL: http://127.0.0.1:14174
           CHAT_STAGING_EMAIL: ${{ vars.CHAT_ALLOWED_EMAILS }}
           CHAT_MULTIMODAL_QA_REQUIRED: ${{ vars.CHAT_MULTIMODAL_QA_REQUIRED }}
           CHAT_GENERATED_ARTIFACT_QA_REQUIRED: ${{ vars.CHAT_GENERATED_ARTIFACT_QA_REQUIRED }}
+          CHAT_LETTA_FULL_RUNTIME_QA_REQUIRED: ${{ vars.CHAT_LETTA_FULL_RUNTIME_QA_REQUIRED || 'true' }}
           CHAT_HERMES_VISION_AGENT_ID: ${{ vars.CHAT_HERMES_VISION_AGENT_ID }}
         run: bash scripts/ops/staging-browser-smoke.sh
+
+      - name: Capture authenticated Letta runtime capabilities
+        shell: bash
+        env:
+          LETTA_BASE_URL: ${{ vars.LETTA_BASE_URL }}
+          LETTA_API_KEY: ${{ secrets.LETTA_API_KEY }}
+          LETTA_CAPABILITY_EVIDENCE_PATH: ${{ runner.temp }}/letta-full-runtime-capabilities.json
+        run: |
+          set -euo pipefail
+          [[ -n "${LETTA_API_KEY}" ]] || { echo 'LETTA_API_KEY is required.' >&2; exit 1; }
+          base_url="${LETTA_BASE_URL:-http://host.docker.internal:18283}"
+          if [[ "${base_url}" == *'host.docker.internal'* ]] && ! getent hosts host.docker.internal >/dev/null 2>&1; then
+            gateway="$(docker network inspect bridge --format '{{(index .IPAM.Config 0).Gateway}}')"
+            [[ -n "${gateway}" ]]
+            base_url="${base_url/host.docker.internal/${gateway}}"
+          fi
+          umask 077
+          curl --fail --silent --show-error \
+            --header "Authorization: Bearer ${LETTA_API_KEY}" \
+            "${base_url%/}/capabilities" >"${LETTA_CAPABILITY_EVIDENCE_PATH}"
+          node - "${LETTA_CAPABILITY_EVIDENCE_PATH}" <<'NODE'
+          const fs = require('node:fs');
+          const path = process.argv[2];
+          const value = JSON.parse(fs.readFileSync(path, 'utf8'));
+          if (!value.model || !Array.isArray(value.tools) || !Array.isArray(value.skills) || !Array.isArray(value.mcp_servers)) {
+            process.exit(1);
+          }
+          NODE
+          echo 'Authenticated Letta runtime capability evidence captured without secret values.'
 
       - name: Verify public Cloudflare Access and artifact transport
         env:
           CHAT_EXTERNAL_QA_REQUIRED: ${{ vars.CHAT_EXTERNAL_QA_REQUIRED }}
           CHAT_MULTIMODAL_QA_REQUIRED: ${{ vars.CHAT_MULTIMODAL_QA_REQUIRED }}
           CHAT_GENERATED_ARTIFACT_QA_REQUIRED: ${{ vars.CHAT_GENERATED_ARTIFACT_QA_REQUIRED }}
+          CHAT_LETTA_FULL_RUNTIME_QA_REQUIRED: ${{ vars.CHAT_LETTA_FULL_RUNTIME_QA_REQUIRED || 'true' }}
           CHAT_HERMES_VISION_AGENT_ID: ${{ vars.CHAT_HERMES_VISION_AGENT_ID }}
           CHAT_STAGING_BASE_URL: ${{ vars.CHAT_PUBLIC_ORIGIN }}
           CF_ACCESS_CLIENT_ID: ${{ vars.CF_ACCESS_CLIENT_ID }}
@@ -158,12 +199,23 @@ jobs:
             echo "- External QA required: \`${{ vars.CHAT_EXTERNAL_QA_REQUIRED || 'false' }}\`"
             echo "- Multimodal QA required: \`${{ vars.CHAT_MULTIMODAL_QA_REQUIRED || 'false' }}\`"
             echo "- Generated artifact QA required: \`${{ vars.CHAT_GENERATED_ARTIFACT_QA_REQUIRED || 'false' }}\`"
-            echo '- Required gates: deploy, Hermes, Letta, local Chromium, and configured public/multimodal gates'
+            echo "- Full Letta CLI runtime QA required: \`${{ vars.CHAT_LETTA_FULL_RUNTIME_QA_REQUIRED || 'true' }}\`"
+            echo '- Required gates: full Letta bridge deployment, exact model identity, real CLI tool execution, Hermes, local Chromium, and configured public/multimodal gates'
             for item in last-deployment.json last-preflight.json last-backup.json last-backup-verify.json last-health.json last-ops-status.json; do
               path="/opt/chat-v2/staging/state/${item}"
               if [[ -f "${path}" ]]; then
                 echo
                 echo "### ${item}"
+                echo '```json'
+                cat "${path}"
+                echo
+                echo '```'
+              fi
+            done
+            for path in "${RUNNER_TEMP}/letta-full-runtime-health.json" "${RUNNER_TEMP}/letta-full-runtime-capabilities.json"; do
+              if [[ -f "${path}" ]]; then
+                echo
+                echo "### $(basename "${path}")"
                 echo '```json'
                 cat "${path}"
                 echo
@@ -185,6 +237,8 @@ jobs:
             /opt/chat-v2/staging/state/last-backup-verify.json
             /opt/chat-v2/staging/state/last-health.json
             /opt/chat-v2/staging/state/last-ops-status.json
+            ${{ runner.temp }}/letta-full-runtime-health.json
+            ${{ runner.temp }}/letta-full-runtime-capabilities.json
             test-results-staging-browser
             playwright-staging-report
             test-results-external-staging-browser
@@ -208,7 +262,7 @@ jobs:
               state: success ? 'success' : 'failure',
               context: 'chat-v2/staging',
               description: success
-                ? 'Staging deploy and configured QA gates passed'
-                : 'Staging deploy or QA failed',
+                ? 'Staging full CLI runtime and configured QA gates passed'
+                : 'Staging deploy, full CLI runtime, or QA failed',
               target_url: `${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`,
             });
