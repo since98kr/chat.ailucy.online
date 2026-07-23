@@ -162,7 +162,17 @@ jobs:
           const fs = require('node:fs');
           const path = process.argv[2];
           const value = JSON.parse(fs.readFileSync(path, 'utf8'));
-          if (!value.model || !Array.isArray(value.tools) || !Array.isArray(value.skills) || !Array.isArray(value.mcp_servers)) {
+          const mcpHealthy = Array.isArray(value.mcp_servers)
+            && value.mcp_servers.length > 0
+            && value.mcp_servers.every((server) => server && typeof server.name === 'string'
+              && !['error', 'failed', 'disconnected'].includes(String(server.status || '').toLowerCase()));
+          if (!value.model
+            || !Array.isArray(value.tools) || value.tools.length === 0
+            || !Array.isArray(value.skill_sources) || value.skill_sources.length === 0
+            || !Array.isArray(value.slash_commands) || value.slash_commands.length === 0
+            || !mcpHealthy
+            || !value.permission_mode
+            || value.memfs_enabled !== true) {
             process.exit(1);
           }
           NODE
@@ -200,7 +210,8 @@ jobs:
             echo "- Multimodal QA required: \`${{ vars.CHAT_MULTIMODAL_QA_REQUIRED || 'false' }}\`"
             echo "- Generated artifact QA required: \`${{ vars.CHAT_GENERATED_ARTIFACT_QA_REQUIRED || 'false' }}\`"
             echo "- Full Letta CLI runtime QA required: \`${{ vars.CHAT_LETTA_FULL_RUNTIME_QA_REQUIRED || 'true' }}\`"
-            echo '- Required gates: full Letta bridge deployment, exact model identity, real CLI tool execution, Hermes, local Chromium, and configured public/multimodal gates'
+            echo '- Required Letta gates: exact model, permission mode, MemFS, tools, skill sources, slash commands, healthy MCP servers, and real tool execution'
+            echo '- Other required gates: deploy, backup/rollback, Hermes, local Chromium, and configured public/multimodal gates'
             for item in last-deployment.json last-preflight.json last-backup.json last-backup-verify.json last-health.json last-ops-status.json; do
               path="/opt/chat-v2/staging/state/${item}"
               if [[ -f "${path}" ]]; then
