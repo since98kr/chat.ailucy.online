@@ -45,7 +45,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          node --check ops/letta-bridge/letta-full-bridge.mjs
+          node --check ops/letta-bridge/letta-cli-bridge.mjs
           bash -n ops/letta-bridge/install-hni-node-04.sh
           bash -n ops/letta-bridge/deploy-from-agentlucy.sh
           bash -n ops/letta-bridge/configure-github-staging.sh
@@ -54,14 +54,19 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          bridge='ops/letta-bridge/letta-full-bridge.mjs'
+          bridge='ops/letta-bridge/letta-cli-bridge.mjs'
           installer='ops/letta-bridge/install-hni-node-04.sh'
           workflow='.github/workflows/deploy-staging.yml'
           qa='e2e-staging/letta-full-runtime.spec.ts'
 
           grep -Fq 'full-cli-runtime' "${bridge}"
-          grep -Fq 'letta-full-bridge.mjs' "${installer}"
-          grep -Fq 'ExecStart=${NODE_BIN} ${INSTALL_DIR}/letta-full-bridge.mjs' "${installer}"
+          grep -Fq 'wire?.skill_sources' "${bridge}"
+          grep -Fq 'wire?.slash_commands' "${bridge}"
+          grep -Fq 'wire?.mcp_servers' "${bridge}"
+          grep -Fq 'wire?.permission_mode' "${bridge}"
+          grep -Fq 'wire?.memfs_enabled' "${bridge}"
+          grep -Fq 'letta-cli-bridge.mjs' "${installer}"
+          grep -Fq 'ExecStart=${NODE_BIN} ${INSTALL_DIR}/letta-cli-bridge.mjs' "${installer}"
           if grep -Fq "'--memfs-startup', 'skip'" "${bridge}"; then
             echo 'full bridge must not force MemFS startup to skip' >&2
             exit 1
@@ -70,8 +75,10 @@ jobs:
           grep -Fq 'CHAT_LETTA_FULL_RUNTIME_QA_REQUIRED' "${workflow}"
           grep -Fq 'Capture authenticated Letta runtime capabilities' "${workflow}"
           grep -Fq 'capabilityStatus?.tools' "${qa}"
-          grep -Fq 'capabilityStatus?.skills' "${qa}"
+          grep -Fq 'capabilityStatus?.skillSources' "${qa}"
           grep -Fq 'capabilityStatus?.mcp' "${qa}"
+          grep -Fq 'capabilityStatus?.commands' "${qa}"
+          grep -Fq 'capabilityStatus?.memfs' "${qa}"
           grep -Fq 'tool.completed:' "${qa}"
 
       - name: Exercise runtime identity, capability, session, and redaction contracts
