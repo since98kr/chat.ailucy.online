@@ -140,8 +140,23 @@ jobs:
           grep -Fq 'capabilityStatus?.memfs' "${qa}"
           grep -Fq 'tool.completed:' "${qa}"
 
-      - name: Exercise runtime identity, capability, session, and redaction contracts
-        run: node --test ops/letta-bridge/*.nodecheck.mjs
+      - name: Exercise explicit empty slash-command metadata contract
+        run: node --test ops/letta-bridge/letta-empty-slash.nodecheck.mjs
+
+      - name: Exercise full bridge capability contract
+        run: node --test ops/letta-bridge/letta-full-bridge.nodecheck.mjs
+
+      - name: Exercise remaining runtime identity, capability, session, and redaction contracts
+        run: |
+          set -euo pipefail
+          files=()
+          for file in ops/letta-bridge/*.nodecheck.mjs; do
+            case "${file}" in
+              *letta-empty-slash.nodecheck.mjs|*letta-full-bridge.nodecheck.mjs) ;;
+              *) files+=("${file}") ;;
+            esac
+          done
+          node --test "${files[@]}"
 
       - name: Exercise atomic user-owned rollout and rollback
         run: bash ops/letta-bridge/rollout-user-owned.nodecheck.sh
