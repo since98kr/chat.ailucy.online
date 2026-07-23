@@ -7,6 +7,12 @@ on:
     paths:
       - '.github/patches/letta-empty-mcp-advertisement.patch'
       - '.github/workflows/apply-letta-empty-mcp-patch.yml'
+  pull_request:
+    branches:
+      - main
+    paths:
+      - '.github/patches/letta-empty-mcp-advertisement.patch'
+      - '.github/workflows/apply-letta-empty-mcp-patch.yml'
 
 permissions:
   contents: write
@@ -17,7 +23,6 @@ concurrency:
 
 jobs:
   apply:
-    if: ${{ !contains(github.event.head_commit.message, '[mcp-patch-applied]') }}
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
@@ -31,6 +36,10 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+          if grep -Fq 'mcpAdvertised' ops/letta-bridge/letta-cli-bridge.mjs; then
+            echo 'Reviewed MCP compatibility patch is already applied.'
+            exit 0
+          fi
           patch='.github/patches/letta-empty-mcp-advertisement.patch'
           git apply --check "${patch}"
           git apply "${patch}"
