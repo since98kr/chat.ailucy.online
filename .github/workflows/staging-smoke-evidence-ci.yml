@@ -1,0 +1,39 @@
+name: Staging transport smoke evidence CI
+
+on:
+  pull_request:
+    paths:
+      - '.github/workflows/staging-smoke-evidence-ci.yml'
+      - 'scripts/ops/staging-smoke.sh'
+      - 'scripts/ops/sanitize-staging-smoke-log.py'
+      - 'scripts/ops/sanitize-staging-smoke-log.nodecheck.sh'
+  push:
+    branches:
+      - main
+      - 'agent/**'
+    paths:
+      - '.github/workflows/staging-smoke-evidence-ci.yml'
+      - 'scripts/ops/staging-smoke.sh'
+      - 'scripts/ops/sanitize-staging-smoke-log.py'
+      - 'scripts/ops/sanitize-staging-smoke-log.nodecheck.sh'
+
+permissions:
+  contents: read
+
+jobs:
+  evidence:
+    name: Syntax and redaction contract
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Validate evidence scripts
+        shell: bash
+        run: |
+          set -euo pipefail
+          bash -n scripts/ops/staging-smoke.sh
+          bash -n scripts/ops/sanitize-staging-smoke-log.nodecheck.sh
+          python3 -m py_compile scripts/ops/sanitize-staging-smoke-log.py
+          bash scripts/ops/sanitize-staging-smoke-log.nodecheck.sh
