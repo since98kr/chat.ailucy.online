@@ -166,7 +166,7 @@ jobs:
           const path = process.argv[2];
           const value = JSON.parse(fs.readFileSync(path, 'utf8'));
           const mcpHealthy = Array.isArray(value.mcp_servers)
-            && value.mcp_servers.length > 0
+            && value.mcp_advertised === true
             && value.mcp_servers.every((server) => server && typeof server.name === 'string'
               && !['error', 'failed', 'disconnected'].includes(String(server.status || '').toLowerCase()));
           if (!value.model
@@ -213,7 +213,7 @@ jobs:
             echo "- Multimodal QA required: \`${{ vars.CHAT_MULTIMODAL_QA_REQUIRED || 'false' }}\`"
             echo "- Generated artifact QA required: \`${{ vars.CHAT_GENERATED_ARTIFACT_QA_REQUIRED || 'false' }}\`"
             echo "- Full Letta CLI runtime QA required: \`${{ vars.CHAT_LETTA_FULL_RUNTIME_QA_REQUIRED || 'true' }}\`"
-            echo '- Required Letta gates: exact model, permission mode, MemFS, tools, skill sources, slash commands, healthy MCP servers, and real tool execution'
+            echo '- Required Letta gates: exact model, permission mode, MemFS, tools, skill sources, slash commands, explicit MCP metadata with any configured servers healthy, and real tool execution'
             echo '- Other required gates: deploy, backup/rollback, Hermes, local Chromium, and configured public/multimodal gates'
             for item in last-deployment.json last-preflight.json last-backup.json last-backup-verify.json last-health.json last-ops-status.json; do
               path="/opt/chat-v2/staging/state/${item}"
