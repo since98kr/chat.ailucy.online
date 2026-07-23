@@ -62,12 +62,12 @@ run_case() {
     exit 1
   fi
   node - "${diagnostic}" "${expected}" <<'NODE'
-  const fs = require('node:fs');
-  const [path, expected] = process.argv.slice(2);
-  const value = JSON.parse(fs.readFileSync(path, 'utf8'));
-  if (value.ok || value.category !== expected || value.stage !== 'ssh-preflight') process.exit(1);
-  if (!value.runner_user || value.remote_user !== 'since98kr' || value.bridge_user !== 'since98kr') process.exit(1);
-  NODE
+const fs = require('node:fs');
+const [path, expected] = process.argv.slice(2);
+const value = JSON.parse(fs.readFileSync(path, 'utf8'));
+if (value.ok || value.category !== expected || value.stage !== 'ssh-preflight') process.exit(1);
+if (!value.runner_user || value.remote_user !== 'since98kr' || value.bridge_user !== 'since98kr') process.exit(1);
+NODE
   if grep -Eq 'PRIVATE_KEY_SENTINEL|KNOWN_HOST_SENTINEL' "${diagnostic}" "${stdout}" "${stderr}"; then
     echo "credential sentinel leaked in ${label}" >&2
     exit 1
