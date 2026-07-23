@@ -38,10 +38,15 @@ test('MCP compatibility edits produce validated Git blob payloads', async (t) =>
     await mkdir(dirname(destination), { recursive: true });
     await cp(join(root, relative), destination);
   }
-  const script = join(sandbox, 'apply.py');
-  await writeFile(script, `${python}\n`, 'utf8');
-  const applied = spawnSync('python3', [script], { cwd: sandbox, encoding: 'utf8' });
-  assert.equal(applied.status, 0, `${applied.stdout}\n${applied.stderr}`);
+
+  const sourceBridge = await readFile(join(sandbox, targets[0]), 'utf8');
+  const alreadyApplied = sourceBridge.includes('mcpAdvertised');
+  if (!alreadyApplied) {
+    const script = join(sandbox, 'apply.py');
+    await writeFile(script, `${python}\n`, 'utf8');
+    const applied = spawnSync('python3', [script], { cwd: sandbox, encoding: 'utf8' });
+    assert.equal(applied.status, 0, `${applied.stdout}\n${applied.stderr}`);
+  }
 
   const checked = spawnSync(process.execPath, ['--check', join(sandbox, targets[0])], { encoding: 'utf8' });
   assert.equal(checked.status, 0, `${checked.stdout}\n${checked.stderr}`);
@@ -93,10 +98,16 @@ test('MCP compatibility edits produce validated Git blob payloads', async (t) =>
     /missing required MCP server: github/,
   );
 
+  const writeRoot = process.env.CHAT_MCP_PATCH_WRITE_ROOT?.trim();
   for (const relative of targets) {
     const payload = await readFile(join(sandbox, relative));
     console.log(`CHAT_MCP_PATCH_BEGIN:${relative}`);
     console.log(payload.toString('base64'));
     console.log(`CHAT_MCP_PATCH_END:${relative}`);
+    if (writeRoot && !alreadyApplied) {
+      const destination = resolve(writeRoot, relative);
+      await mkdir(dirname(destination), { recursive: true });
+      await writeFile(destination, payload);
+    }
   }
 });
