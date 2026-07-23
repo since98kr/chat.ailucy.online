@@ -4,6 +4,11 @@ set -Eeuo pipefail
 REPO="${CHAT_REPO:-since98kr/chat.ailucy.online}"
 ENVIRONMENT="${CHAT_ENVIRONMENT_NAME:-staging}"
 BASE="${CHAT_STAGING_BASE_URL:-http://127.0.0.1:14174}"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+SANITIZER="${SCRIPT_DIR}/sanitize-staging-smoke-log.py"
+EVIDENCE_DIR="${CHAT_STAGING_EVIDENCE_DIR:-test-results-staging-browser/transport-smoke}"
+CURRENT_STAGE='initializing'
+CURRENT_SYSTEM='none'
 
 log() {
   printf '[chat-v2-smoke] %s\n' "$*"
@@ -17,6 +22,7 @@ fail() {
 for command_name in curl python3; do
   command -v "${command_name}" >/dev/null 2>&1 || fail "missing command: ${command_name}"
 done
+[[ -f "${SANITIZER}" && ! -L "${SANITIZER}" ]] || fail 'staging smoke sanitizer is unavailable'
 
 get_staging_variable() {
   local name="$1"
@@ -39,9 +45,55 @@ AUTH_HEADER="Cf-Access-Authenticated-User-Email: ${EMAIL}"
 TMP_DIR="$(mktemp -d)"
 declare -a CREATED_CONVERSATION_IDS=()
 
+persist_evidence() {
+  local status="$1"
+  [[ -n "${EVIDENCE_DIR}" ]] || return 0
+  mkdir -p "${EVIDENCE_DIR}"
+  chmod 0700 "${EVIDENCE_DIR}"
+
+  local source
+  local destination
+  shopt -s nullglob
+  for source in \
+    "${TMP_DIR}/health.json" \
+    "${TMP_DIR}/ops.json" \
+    "${TMP_DIR}/agents.json" \
+    "${TMP_DIR}"/*-conversation.json \
+    "${TMP_DIR}"/*-conversation.http-status \
+    "${TMP_DIR}"/*-stream.ndjson \
+    "${TMP_DIR}"/*-stream.http-status; do
+    [[ -f "${source}" && ! -L "${source}" ]] || continue
+    destination="${EVIDENCE_DIR}/$(basename "${source}")"
+    python3 "${SANITIZER}" "${source}" "${destination}"
+  done
+  shopt -u nullglob
+
+  python3 - "${EVIDENCE_DIR}/result.json" "${status}" "${CURRENT_STAGE}" "${CURRENT_SYSTEM}" <<'PY'
+import json
+import os
+import sys
+from pathlib import Path
+
+path = Path(sys.argv[1])
+status = int(sys.argv[2])
+payload = {
+    "ok": status == 0,
+    "exit_code": status,
+    "stage": sys.argv[3],
+    "system": sys.argv[4],
+}
+tmp = path.with_name(f".{path.name}.{os.getpid()}.tmp")
+tmp.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
+tmp.chmod(0o600)
+os.replace(tmp, path)
+path.chmod(0o600)
+PY
+}
+
 cleanup() {
   local status=$?
   set +e
+  persist_evidence "${status}"
   for conversation_id in "${CREATED_CONVERSATION_IDS[@]}"; do
     curl -sS \
       -H "${AUTH_HEADER}" \
@@ -59,6 +111,7 @@ cleanup() {
 }
 trap cleanup EXIT
 
+CURRENT_STAGE='health'
 log 'Checking staging health.'
 curl -fsS "${BASE}/api/health" >"${TMP_DIR}/health.json"
 python3 - "${TMP_DIR}/health.json" <<'PY'
@@ -71,6 +124,7 @@ if not payload.get("ok"):
     raise SystemExit("staging health is not ok")
 PY
 
+CURRENT_STAGE='ops-status'
 log 'Checking authenticated operations status.'
 curl -fsS \
   -H "${AUTH_HEADER}" \
@@ -85,6 +139,7 @@ if not payload.get("ok"):
     raise SystemExit("staging ops status is not ok")
 PY
 
+CURRENT_STAGE='agent-selection'
 log 'Selecting registered Chat V2 agents.'
 curl -fsS \
   -H "${AUTH_HEADER}" \
@@ -149,6 +204,8 @@ run_agent_smoke() {
   local conversation_id
   local http_status
 
+  CURRENT_SYSTEM="${system_id}"
+  CURRENT_STAGE="${system_id}-conversation-create"
   payload="$(python3 - "${system_id}" "${agent_id}" <<'PY'
 import json
 import sys
@@ -173,6 +230,7 @@ PY
     cat "${conversation_file}" >&2 2>/dev/null || true
     fail "conversation creation request failed for ${system_id}"
   fi
+  printf '%s\n' "${http_status}" >"${TMP_DIR}/${slug}-conversation.http-status"
   if [[ ! "${http_status}" =~ ^2[0-9][0-9]$ ]]; then
     log "Conversation creation returned HTTP ${http_status} for ${system_id}:"
     cat "${conversation_file}" >&2 2>/dev/null || true
@@ -202,6 +260,7 @@ print(json.dumps({
 PY
 )"
 
+  CURRENT_STAGE="${system_id}-message-stream"
   log "Calling ${system_id} through Chat V2."
   if ! http_status="$(
     curl -sS -N \
@@ -215,12 +274,14 @@ PY
     cat "${stream_file}" >&2 2>/dev/null || true
     fail "message stream request failed for ${system_id}"
   fi
+  printf '%s\n' "${http_status}" >"${TMP_DIR}/${slug}-stream.http-status"
   if [[ ! "${http_status}" =~ ^2[0-9][0-9]$ ]]; then
     log "Message stream returned HTTP ${http_status} for ${system_id}:"
     cat "${stream_file}" >&2 2>/dev/null || true
     fail "message stream failed for ${system_id}"
   fi
 
+  CURRENT_STAGE="${system_id}-stream-validate"
   python3 - "${stream_file}" "${marker}" <<'PY'
 import json
 import sys
@@ -259,4 +320,6 @@ PY
 run_agent_smoke hermes "${HERMES_CHAT_AGENT}" CHAT_V2_HERMES_OK hermes
 run_agent_smoke letta "${LETTA_CHAT_AGENT}" CHAT_V2_LETTA_OK letta
 
+CURRENT_STAGE='complete'
+CURRENT_SYSTEM='none'
 log 'PASS: staging, authentication, Hermes, and Letta are all healthy.'
