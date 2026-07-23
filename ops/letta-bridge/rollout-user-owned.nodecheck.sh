@@ -54,7 +54,6 @@ SH
   local pid=$!
   PIDS+=("${pid}")
   printf '%s\n' "${pid}" >"${root}/pid"
-  printf '%s\n' "${home}"
 }
 
 run_rollout() {
@@ -79,41 +78,23 @@ run_rollout() {
 }
 
 SUCCESS="${TMP}/success"
-make_runtime "${SUCCESS}" >/dev/null
+make_runtime "${SUCCESS}"
 run_rollout "${SUCCESS}"
 grep -Fq 'full-cli-runtime' "${SUCCESS}/home/.local/share/letta-bridge/letta-bridge.mjs"
 grep -Fq 'while :; do sleep 60; done' "${SUCCESS}/home/.local/share/letta-bridge/letta-bridge.mjs.pre-full-cli"
 grep -Fq -- '-KILL' "${SUCCESS}/kill.log"
 
 ROLLBACK="${TMP}/rollback"
-make_runtime "${ROLLBACK}" >/dev/null
-expect_failure rollback env FAKE_FAIL_NEW=true bash -c '
-  root="$1"; shift
-  "$@"
-' _ "${ROLLBACK}" run_rollout
-# The helper function is not exported into the subshell above; exercise rollback directly instead.
-if env \
-  HOME="${ROLLBACK}/home" \
-  LETTA_BRIDGE_USER="$(id -un)" \
-  LETTA_ROLLOUT_HEALTH_ATTEMPTS=2 \
-  LETTA_ROLLOUT_HEALTH_INTERVAL_SECONDS=0 \
-  SYSTEMCTL_BIN="${FAKE_BIN}/systemctl" \
-  CURL_BIN="${FAKE_BIN}/curl" \
-  KILL_BIN="${FAKE_BIN}/kill" \
-  NODE_BIN="$(command -v node)" \
-  FAKE_PID_FILE="${ROLLBACK}/pid" \
-  FAKE_KILL_LOG="${ROLLBACK}/kill.log" \
-  FAKE_TARGET="${ROLLBACK}/home/.local/share/letta-bridge/letta-bridge.mjs" \
-  FAKE_FAIL_NEW=true \
-  bash "${ROLLOUT}" "${SOURCE}" >"${TMP}/rollback-direct.out" 2>"${TMP}/rollback-direct.err"; then
+make_runtime "${ROLLBACK}"
+if run_rollout "${ROLLBACK}" FAKE_FAIL_NEW=true >"${TMP}/rollback.out" 2>"${TMP}/rollback.err"; then
   echo 'expected rollback rollout to fail after restoring the prior bridge' >&2
   exit 1
 fi
 grep -Fq 'while :; do sleep 60; done' "${ROLLBACK}/home/.local/share/letta-bridge/letta-bridge.mjs"
-grep -Fq 'full CLI bridge rollout was rolled back' "${TMP}/rollback-direct.err"
+grep -Fq 'full CLI bridge rollout was rolled back' "${TMP}/rollback.err"
 
 WRONG_PID="${TMP}/wrong-pid"
-make_runtime "${WRONG_PID}" >/dev/null
+make_runtime "${WRONG_PID}"
 sleep 60 &
 BAD_PID=$!
 PIDS+=("${BAD_PID}")
