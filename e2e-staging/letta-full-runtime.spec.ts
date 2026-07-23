@@ -36,7 +36,13 @@ function responseText(events: StreamEvent[]) {
   return events.filter((event) => event.type === 'content.delta').map((event) => event.delta ?? '').join('');
 }
 
-test('real Letta Lucy reports its CLI model and executes a CLI tool', async () => {
+function capabilityCounts(status: string) {
+  const match = /^runtime\.capabilities:tools=(\d+);skills=(\d+);mcp=(\d+)$/.exec(status);
+  if (!match) return null;
+  return { tools: Number(match[1]), skills: Number(match[2]), mcp: Number(match[3]) };
+}
+
+test('real Letta Lucy reports its CLI model, advertises full capability, and executes a CLI tool', async () => {
   test.skip(!enabled('CHAT_LETTA_FULL_RUNTIME_QA_REQUIRED'), 'Full Letta CLI runtime QA is not activated.');
   test.setTimeout(300_000);
 
@@ -76,7 +82,12 @@ test('real Letta Lucy reports its CLI model and executes a CLI tool', async () =
     const model = modelStatus?.slice('runtime.model:'.length).trim() ?? '';
     expect(model.length).toBeGreaterThan(2);
     expect(model).not.toBe('null');
-    expect(statuses.some((status) => status.startsWith('runtime.capabilities:'))).toBe(true);
+
+    const capabilityStatus = statuses.map(capabilityCounts).find(Boolean);
+    expect(capabilityStatus).toBeTruthy();
+    expect(capabilityStatus?.tools).toBeGreaterThan(0);
+    expect(capabilityStatus?.skills).toBeGreaterThan(0);
+    expect(capabilityStatus?.mcp).toBeGreaterThan(0);
     expect(statuses.some((status) => status.startsWith('tool.running:') || status.startsWith('mcp.running:'))).toBe(true);
     expect(statuses.some((status) => status.startsWith('tool.completed:'))).toBe(true);
 
