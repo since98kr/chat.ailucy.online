@@ -8,6 +8,8 @@ INSTALL_DIR="${LETTA_BRIDGE_INSTALL_DIR:-${HOME}/.local/share/letta-bridge}"
 TARGET="${INSTALL_DIR}/letta-bridge.mjs"
 BACKUP="${INSTALL_DIR}/letta-bridge.mjs.pre-full-cli"
 PORT="${LETTA_BRIDGE_PORT:-18283}"
+HEALTH_ATTEMPTS="${LETTA_ROLLOUT_HEALTH_ATTEMPTS:-30}"
+HEALTH_INTERVAL_SECONDS="${LETTA_ROLLOUT_HEALTH_INTERVAL_SECONDS:-1}"
 SYSTEMCTL_BIN="${SYSTEMCTL_BIN:-systemctl}"
 CURL_BIN="${CURL_BIN:-curl}"
 NODE_BIN="${NODE_BIN:-node}"
@@ -23,6 +25,8 @@ fail() {
 }
 
 [[ "${EXPECTED_USER}" =~ ^[a-z_][a-z0-9_-]*$ ]] || fail 'LETTA_BRIDGE_USER is invalid'
+[[ "${HEALTH_ATTEMPTS}" =~ ^[1-9][0-9]*$ ]] || fail 'LETTA_ROLLOUT_HEALTH_ATTEMPTS must be positive'
+[[ "${HEALTH_INTERVAL_SECONDS}" =~ ^[0-9]+([.][0-9]+)?$ ]] || fail 'LETTA_ROLLOUT_HEALTH_INTERVAL_SECONDS is invalid'
 [[ "$(id -un)" == "${EXPECTED_USER}" ]] || fail "remote identity mismatch: expected ${EXPECTED_USER}"
 [[ "${EUID}" -ne 0 ]] || fail 'normal staging rollout must not run as root'
 [[ -f "${SOURCE_FILE}" && ! -L "${SOURCE_FILE}" ]] || fail 'canonical bridge source must be a regular file'
@@ -71,22 +75,15 @@ health_mode() {
 }
 
 wait_for_health() {
-  local expected_mode="$1" attempts="${2:-30}"
+  local expected_mode="$1"
   local attempt
-  for attempt in $(seq 1 "${attempts}"); do
+  for attempt in $(seq 1 "${HEALTH_ATTEMPTS}"); do
     if health_mode "${expected_mode}"; then
       return 0
     fi
-    sleep 1
+    sleep "${HEALTH_INTERVAL_SECONDS}"
   done
   return 1
-}
-
-restart_verified_process() {
-  local pid
-  pid="$(main_pid)"
-  validate_pid "${pid}"
-  "${KILL_BIN}" -KILL "${pid}"
 }
 
 rollback() {
@@ -103,7 +100,7 @@ rollback() {
     validate_pid "${pid}"
     "${KILL_BIN}" -KILL "${pid}" || true
   fi
-  wait_for_health '' 30 || fail 'previous bridge was restored but did not become healthy'
+  wait_for_health '' || fail 'previous bridge was restored but did not become healthy'
   fail 'full CLI bridge rollout was rolled back'
 }
 
@@ -120,6 +117,6 @@ mv -f "${incoming_tmp}" "${TARGET}"
 
 log "Installed canonical bridge atomically; restarting verified PID ${CURRENT_PID}."
 "${KILL_BIN}" -KILL "${CURRENT_PID}" || rollback 'process restart signal failed'
-wait_for_health 'full-cli-runtime' 30 || rollback 'full-cli-runtime health did not pass'
+wait_for_health 'full-cli-runtime' || rollback 'full-cli-runtime health did not pass'
 
 log 'Full CLI bridge rollout completed without sudo or systemd unit mutation.'
