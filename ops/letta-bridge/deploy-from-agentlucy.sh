@@ -46,4 +46,8 @@ node -e '
   const health=JSON.parse(process.argv[1]);
   if (!health.ok || health.mode !== "full-cli-runtime") process.exit(1);
 ' "${HEALTH}"
+if [[ -n "${LETTA_BRIDGE_EVIDENCE_PATH:-}" ]]; then
+  mkdir -p "$(dirname "${LETTA_BRIDGE_EVIDENCE_PATH}")"
+  printf '%s\n' "${HEALTH}" >"${LETTA_BRIDGE_EVIDENCE_PATH}"
+fi
 printf 'Full Letta CLI bridge health verified through %s.\n' "${BASE_URL%/}"
