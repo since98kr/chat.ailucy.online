@@ -56,6 +56,21 @@ SH
   printf '%s\n' "${pid}" >"${root}/pid"
 }
 
+make_node_runtime() {
+  local root="$1"
+  local home="${root}/home"
+  local install_dir="${home}/.local/share/letta-bridge"
+  mkdir -p "${install_dir}"
+  cat >"${install_dir}/letta-bridge.mjs" <<'JS'
+setInterval(() => {}, 60_000);
+JS
+  chmod 0755 "${install_dir}/letta-bridge.mjs"
+  "$(command -v node)" "${install_dir}/letta-bridge.mjs" &
+  local pid=$!
+  PIDS+=("${pid}")
+  printf '%s\n' "${pid}" >"${root}/pid"
+}
+
 run_rollout() {
   local root="$1"
   shift
@@ -77,12 +92,46 @@ run_rollout() {
     bash "${ROLLOUT}" "${SOURCE}"
 }
 
+STRIPPED_BIN="${TMP}/stripped-bin"
+mkdir -p "${STRIPPED_BIN}"
+for command_name in bash basename cat grep id install mv readlink realpath rm seq sleep stat tr; do
+  ln -s "$(command -v "${command_name}")" "${STRIPPED_BIN}/${command_name}"
+done
+ln -s "${FAKE_BIN}/systemctl" "${STRIPPED_BIN}/systemctl"
+ln -s "${FAKE_BIN}/curl" "${STRIPPED_BIN}/curl"
+ln -s "${FAKE_BIN}/kill" "${STRIPPED_BIN}/kill"
+
+run_rollout_without_node_path() {
+  local root="$1"
+  local home="${root}/home"
+  local target="${home}/.local/share/letta-bridge/letta-bridge.mjs"
+  PATH="${STRIPPED_BIN}" \
+  HOME="${home}" \
+  LETTA_BRIDGE_USER="$(id -un)" \
+  LETTA_ROLLOUT_HEALTH_ATTEMPTS=2 \
+  LETTA_ROLLOUT_HEALTH_INTERVAL_SECONDS=0 \
+  SYSTEMCTL_BIN="${STRIPPED_BIN}/systemctl" \
+  CURL_BIN="${STRIPPED_BIN}/curl" \
+  KILL_BIN="${STRIPPED_BIN}/kill" \
+  FAKE_PID_FILE="${root}/pid" \
+  FAKE_KILL_LOG="${root}/kill.log" \
+  FAKE_TARGET="${target}" \
+  /usr/bin/bash "${ROLLOUT}" "${SOURCE}"
+}
+
 SUCCESS="${TMP}/success"
 make_runtime "${SUCCESS}"
 run_rollout "${SUCCESS}"
 grep -Fq 'full-cli-runtime' "${SUCCESS}/home/.local/share/letta-bridge/letta-bridge.mjs"
 grep -Fq 'while :; do sleep 60; done' "${SUCCESS}/home/.local/share/letta-bridge/letta-bridge.mjs.pre-full-cli"
 grep -Fq -- '-KILL' "${SUCCESS}/kill.log"
+
+STRIPPED_PATH="${TMP}/stripped-path"
+make_node_runtime "${STRIPPED_PATH}"
+run_rollout_without_node_path "${STRIPPED_PATH}" >"${TMP}/stripped-path.out"
+grep -Fq 'Node is absent from PATH; reusing the verified letta-bridge.service MainPID executable.' "${TMP}/stripped-path.out"
+grep -Fq 'full-cli-runtime' "${STRIPPED_PATH}/home/.local/share/letta-bridge/letta-bridge.mjs"
+grep -Fq -- '-KILL' "${STRIPPED_PATH}/kill.log"
 
 ROLLBACK="${TMP}/rollback"
 make_runtime "${ROLLBACK}"
