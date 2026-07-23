@@ -6,6 +6,16 @@ REMOTE_HOST="${LETTA_SSH_HOST:-ax.hni-gl.ai}"
 REMOTE_PORT="${LETTA_SSH_PORT:-3004}"
 REMOTE_USER="${LETTA_SSH_USER:-since98kr}"
 BRIDGE_USER="${LETTA_BRIDGE_USER:-since98kr}"
+if [[ -n "${LETTA_SSH_RESTRICTED_MODE:-}" ]]; then
+  RESTRICTED_MODE="${LETTA_SSH_RESTRICTED_MODE}"
+elif [[ -n "${LETTA_SSH_PRIVATE_KEY:-}" && -n "${LETTA_SSH_KNOWN_HOSTS:-}" ]]; then
+  RESTRICTED_MODE='true'
+elif [[ -n "${LETTA_SSH_PRIVATE_KEY:-}" || -n "${LETTA_SSH_KNOWN_HOSTS:-}" ]]; then
+  echo 'Dedicated SSH key and known_hosts must be configured together.' >&2
+  exit 1
+else
+  RESTRICTED_MODE='false'
+fi
 SSH_BIN="${LETTA_SSH_BIN:-ssh}"
 SOURCE_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 DIAGNOSTIC_PATH="${LETTA_BRIDGE_DEPLOY_DIAGNOSTIC_PATH:-}"
@@ -16,12 +26,15 @@ trap 'rm -rf "${TMP_DIR}"' EXIT
 [[ "${REMOTE_PORT}" =~ ^[0-9]{1,5}$ ]] || { echo 'LETTA_SSH_PORT must be numeric.' >&2; exit 1; }
 [[ "${REMOTE_USER}" =~ ^[a-z_][a-z0-9_-]*$ ]] || { echo 'LETTA_SSH_USER contains unsafe characters.' >&2; exit 1; }
 [[ "${BRIDGE_USER}" =~ ^[a-z_][a-z0-9_-]*$ ]] || { echo 'LETTA_BRIDGE_USER contains unsafe characters.' >&2; exit 1; }
+[[ "${RESTRICTED_MODE}" == 'true' || "${RESTRICTED_MODE}" == 'false' ]] || { echo 'LETTA_SSH_RESTRICTED_MODE must be true or false.' >&2; exit 1; }
 
 for command in "${SSH_BIN}" tar curl node; do
   command -v "${command}" >/dev/null || { echo "${command} is required" >&2; exit 1; }
 done
 [[ -f "${SOURCE_DIR}/letta-cli-bridge.mjs" ]] || { echo 'letta-cli-bridge.mjs not found' >&2; exit 1; }
-[[ -f "${SOURCE_DIR}/rollout-user-owned.sh" ]] || { echo 'rollout-user-owned.sh not found' >&2; exit 1; }
+if [[ "${RESTRICTED_MODE}" == 'false' ]]; then
+  [[ -f "${SOURCE_DIR}/rollout-user-owned.sh" ]] || { echo 'rollout-user-owned.sh not found' >&2; exit 1; }
+fi
 
 IDENTITY_SOURCE='runner-default'
 KNOWN_HOSTS_SOURCE='runner-default'
@@ -60,6 +73,7 @@ write_diagnostic() {
   CATEGORY="${category}" EXIT_CODE="${exit_code}" STAGE="${stage}" \
   RUNNER_USER="$(id -un)" REMOTE_USER_SAFE="${REMOTE_USER}" BRIDGE_USER_SAFE="${BRIDGE_USER}" \
   IDENTITY_SOURCE_SAFE="${IDENTITY_SOURCE}" KNOWN_HOSTS_SOURCE_SAFE="${KNOWN_HOSTS_SOURCE}" \
+  RESTRICTED_MODE_SAFE="${RESTRICTED_MODE}" \
   node - "${DIAGNOSTIC_PATH}" <<'NODE'
 const fs = require('node:fs');
 fs.writeFileSync(process.argv[2], JSON.stringify({
@@ -72,6 +86,7 @@ fs.writeFileSync(process.argv[2], JSON.stringify({
   bridge_user: process.env.BRIDGE_USER_SAFE,
   identity_source: process.env.IDENTITY_SOURCE_SAFE,
   known_hosts_source: process.env.KNOWN_HOSTS_SOURCE_SAFE,
+  restricted_mode: process.env.RESTRICTED_MODE_SAFE === 'true',
   checked_at: new Date().toISOString(),
 }, null, 2) + '\n', { mode: 0o600 });
 NODE
@@ -84,6 +99,7 @@ classify_failure() {
     31) category='remote-identity' ;;
     32) category='remote-environment' ;;
     33) category='remote-target' ;;
+    34|35|36|64) category='restricted-gate' ;;
     *)
       if grep -Eqi 'Host key verification failed|REMOTE HOST IDENTIFICATION HAS CHANGED' "${error_file}"; then
         category='ssh-host-key-verification'
@@ -99,9 +115,15 @@ classify_failure() {
 
 run_ssh_preflight() {
   local error_file="${TMP_DIR}/ssh-preflight.err"
+  local remote_command
+  if [[ "${RESTRICTED_MODE}" == 'true' ]]; then
+    remote_command='letta-preflight-v1'
+  else
+    remote_command="set -Eeuo pipefail; [[ \"\$(id -un)\" == '${BRIDGE_USER}' ]] || exit 31; test -r ~/.config/letta-bridge.env || exit 32; test -f ~/.local/share/letta-bridge/letta-bridge.mjs && test ! -L ~/.local/share/letta-bridge/letta-bridge.mjs && test -w ~/.local/share/letta-bridge/letta-bridge.mjs || exit 33"
+  fi
+
   set +e
-  "${SSH[@]}" "set -Eeuo pipefail; [[ \"\$(id -un)\" == '${BRIDGE_USER}' ]] || exit 31; test -r ~/.config/letta-bridge.env || exit 32; test -f ~/.local/share/letta-bridge/letta-bridge.mjs && test ! -L ~/.local/share/letta-bridge/letta-bridge.mjs && test -w ~/.local/share/letta-bridge/letta-bridge.mjs || exit 33" \
-    >/dev/null 2>"${error_file}"
+  "${SSH[@]}" "${remote_command}" >/dev/null 2>"${error_file}"
   local status=$?
   set -e
   if [[ "${status}" -ne 0 ]]; then
@@ -113,17 +135,24 @@ run_ssh_preflight() {
   fi
 }
 
-printf 'Checking staging-runner SSH access to %s@%s:%s using %s identity...\n' \
-  "${REMOTE_USER}" "${REMOTE_HOST}" "${REMOTE_PORT}" "${IDENTITY_SOURCE}"
+printf 'Checking staging-runner SSH access to %s@%s:%s using %s identity (%s mode)...\n' \
+  "${REMOTE_USER}" "${REMOTE_HOST}" "${REMOTE_PORT}" "${IDENTITY_SOURCE}" \
+  "$([[ "${RESTRICTED_MODE}" == 'true' ]] && printf restricted || printf legacy)"
 run_ssh_preflight
 
 printf 'Deploying exact full Letta CLI bridge without remote sudo...\n'
 ROLLOUT_ERROR="${TMP_DIR}/ssh-rollout.err"
 set +e
-tar -C "${SOURCE_DIR}" -cf - letta-cli-bridge.mjs rollout-user-owned.sh \
-  | "${SSH[@]}" "set -Eeuo pipefail; tmp=\$(mktemp -d); trap 'rm -rf \"\${tmp}\"' EXIT; tar -C \"\${tmp}\" -xf -; chmod 0755 \"\${tmp}/rollout-user-owned.sh\"; LETTA_BRIDGE_USER='${BRIDGE_USER}' bash \"\${tmp}/rollout-user-owned.sh\" \"\${tmp}/letta-cli-bridge.mjs\"" \
-    >/dev/null 2>"${ROLLOUT_ERROR}"
-ROLLOUT_STATUS=$?
+if [[ "${RESTRICTED_MODE}" == 'true' ]]; then
+  tar -C "${SOURCE_DIR}" -cf - letta-cli-bridge.mjs \
+    | "${SSH[@]}" letta-rollout-v1 >/dev/null 2>"${ROLLOUT_ERROR}"
+  ROLLOUT_STATUS=$?
+else
+  tar -C "${SOURCE_DIR}" -cf - letta-cli-bridge.mjs rollout-user-owned.sh \
+    | "${SSH[@]}" "set -Eeuo pipefail; tmp=\$(mktemp -d); trap 'rm -rf \"\${tmp}\"' EXIT; tar -C \"\${tmp}\" -xf -; chmod 0755 \"\${tmp}/rollout-user-owned.sh\"; LETTA_BRIDGE_USER='${BRIDGE_USER}' bash \"\${tmp}/rollout-user-owned.sh\" \"\${tmp}/letta-cli-bridge.mjs\"" \
+      >/dev/null 2>"${ROLLOUT_ERROR}"
+  ROLLOUT_STATUS=$?
+fi
 set -e
 if [[ "${ROLLOUT_STATUS}" -ne 0 ]]; then
   ROLLOUT_CATEGORY="$(classify_failure "${ROLLOUT_STATUS}" "${ROLLOUT_ERROR}" 'remote-rollout')"

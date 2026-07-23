@@ -28,7 +28,7 @@ concurrency:
 
 jobs:
   bridge:
-    name: CLI identity, capabilities, redaction, rollout, SSH diagnostics, and staging wiring
+    name: CLI identity, capabilities, redaction, rollout, restricted SSH, and staging wiring
     runs-on: ubuntu-latest
     timeout-minutes: 12
 
@@ -51,6 +51,9 @@ jobs:
           bash -n ops/letta-bridge/deploy-ssh-diagnostics.nodecheck.sh
           bash -n ops/letta-bridge/rollout-user-owned.sh
           bash -n ops/letta-bridge/rollout-user-owned.nodecheck.sh
+          bash -n ops/letta-bridge/authorized-rollout-gate.sh
+          bash -n ops/letta-bridge/authorized-rollout-gate.nodecheck.sh
+          bash -n ops/letta-bridge/bootstrap-staging-ssh-access.sh
           bash -n ops/letta-bridge/configure-github-staging.sh
 
       - name: Validate full-runtime static guards
@@ -61,6 +64,8 @@ jobs:
           installer='ops/letta-bridge/install-hni-node-04.sh'
           deploy='ops/letta-bridge/deploy-from-agentlucy.sh'
           rollout='ops/letta-bridge/rollout-user-owned.sh'
+          gate='ops/letta-bridge/authorized-rollout-gate.sh'
+          bootstrap='ops/letta-bridge/bootstrap-staging-ssh-access.sh'
           workflow='.github/workflows/deploy-staging.yml'
           qa='e2e-staging/letta-full-runtime.spec.ts'
 
@@ -72,16 +77,28 @@ jobs:
           grep -Fq 'wire?.memfs_enabled' "${bridge}"
           grep -Fq 'letta-cli-bridge.mjs' "${installer}"
           grep -Fq 'ExecStart=${NODE_BIN} ${INSTALL_DIR}/letta-cli-bridge.mjs' "${installer}"
-          grep -Fq 'rollout-user-owned.sh' "${deploy}"
+          grep -Fq 'letta-preflight-v1' "${deploy}"
+          grep -Fq 'letta-rollout-v1' "${deploy}"
           grep -Fq 'Full CLI bridge rollout completed without sudo' "${rollout}"
+          grep -Fq 'SSH_ORIGINAL_COMMAND' "${gate}"
+          grep -Fq 'payload must contain exactly letta-cli-bridge.mjs' "${gate}"
+          grep -Fq 'restrict,command=' "${bootstrap}"
+          grep -Fq 'ssh-keygen -F' "${bootstrap}"
+          grep -Fq 'gh secret set LETTA_SSH_PRIVATE_KEY' "${bootstrap}"
+          grep -Fq 'gh secret set LETTA_SSH_KNOWN_HOSTS' "${bootstrap}"
+          grep -Fq 'gh workflow run deploy-staging.yml' "${bootstrap}"
           grep -Fq 'ssh-authentication' "${deploy}"
           grep -Fq 'ssh-host-key-verification' "${deploy}"
           grep -Fq 'ssh-connectivity' "${deploy}"
           grep -Fq 'LETTA_SSH_PRIVATE_KEY' "${workflow}"
           grep -Fq 'LETTA_SSH_KNOWN_HOSTS' "${workflow}"
           grep -Fq 'letta-bridge-deploy-diagnostic.json' "${workflow}"
-          if grep -Eq '[[:space:]]sudo[[:space:]]' "${deploy}"; then
-            echo 'normal staging rollout must not use remote sudo' >&2
+          if grep -Eq '[[:space:]]sudo[[:space:]]' "${deploy}" "${gate}" "${bootstrap}"; then
+            echo 'restricted staging SSH path must not use sudo' >&2
+            exit 1
+          fi
+          if grep -Fq 'ssh-keyscan' "${bootstrap}"; then
+            echo 'bootstrap must reuse an existing trusted known_hosts entry, not trust ssh-keyscan output' >&2
             exit 1
           fi
           if grep -Fq "'--memfs-startup', 'skip'" "${bridge}"; then
@@ -103,6 +120,9 @@ jobs:
 
       - name: Exercise atomic user-owned rollout and rollback
         run: bash ops/letta-bridge/rollout-user-owned.nodecheck.sh
+
+      - name: Exercise restricted forced-command gate
+        run: bash ops/letta-bridge/authorized-rollout-gate.nodecheck.sh
 
       - name: Exercise SSH identity files and non-secret failure classification
         run: bash ops/letta-bridge/deploy-ssh-diagnostics.nodecheck.sh
