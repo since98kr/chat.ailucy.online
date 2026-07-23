@@ -70,7 +70,10 @@ jobs:
           LETTA_SSH_PORT: ${{ vars.LETTA_SSH_PORT || '3004' }}
           LETTA_SSH_USER: ${{ vars.LETTA_SSH_USER || 'since98kr' }}
           LETTA_BRIDGE_USER: ${{ vars.LETTA_BRIDGE_USER || 'since98kr' }}
+          LETTA_SSH_PRIVATE_KEY: ${{ secrets.LETTA_SSH_PRIVATE_KEY }}
+          LETTA_SSH_KNOWN_HOSTS: ${{ secrets.LETTA_SSH_KNOWN_HOSTS }}
           LETTA_BRIDGE_EVIDENCE_PATH: ${{ runner.temp }}/letta-full-runtime-health.json
+          LETTA_BRIDGE_DEPLOY_DIAGNOSTIC_PATH: ${{ runner.temp }}/letta-bridge-deploy-diagnostic.json
         run: bash ops/letta-bridge/deploy-from-agentlucy.sh
 
       - name: Deploy with strict preflight, backup, health check, and rollback
@@ -223,7 +226,7 @@ jobs:
                 echo '```'
               fi
             done
-            for path in "${RUNNER_TEMP}/letta-full-runtime-health.json" "${RUNNER_TEMP}/letta-full-runtime-capabilities.json"; do
+            for path in "${RUNNER_TEMP}/letta-bridge-deploy-diagnostic.json" "${RUNNER_TEMP}/letta-full-runtime-health.json" "${RUNNER_TEMP}/letta-full-runtime-capabilities.json"; do
               if [[ -f "${path}" ]]; then
                 echo
                 echo "### $(basename "${path}")"
@@ -248,6 +251,7 @@ jobs:
             /opt/chat-v2/staging/state/last-backup-verify.json
             /opt/chat-v2/staging/state/last-health.json
             /opt/chat-v2/staging/state/last-ops-status.json
+            ${{ runner.temp }}/letta-bridge-deploy-diagnostic.json
             ${{ runner.temp }}/letta-full-runtime-health.json
             ${{ runner.temp }}/letta-full-runtime-capabilities.json
             test-results-staging-browser
