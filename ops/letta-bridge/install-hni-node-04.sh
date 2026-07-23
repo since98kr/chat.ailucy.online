@@ -8,8 +8,8 @@ trap 'printf "Letta full bridge installation failed at line %s: %s\n" "${LINENO}
 }
 
 TARGET_USER="${LETTA_BRIDGE_USER:-${SUDO_USER:-}}"
-[[ -n "${TARGET_USER}" && "${TARGET_USER}" != 'root' ]] || {
-  echo 'Unable to determine the non-root Letta user. Set LETTA_BRIDGE_USER explicitly.'
+[[ "${TARGET_USER}" =~ ^[a-z_][a-z0-9_-]*$ && "${TARGET_USER}" != 'root' ]] || {
+  echo 'Unable to determine a safe non-root Letta user. Set LETTA_BRIDGE_USER explicitly.'
   exit 1
 }
 
@@ -49,8 +49,8 @@ NODE_BIN="$(
 [[ -x "${NODE_BIN}" ]] || { echo "Resolved Node.js path is not executable: ${NODE_BIN}"; exit 1; }
 NODE_DIR="$(dirname "${NODE_BIN}")"
 
-FULL_BRIDGE="${SOURCE_DIR}/letta-full-bridge.mjs"
-[[ -f "${FULL_BRIDGE}" ]] || { echo 'letta-full-bridge.mjs not found'; exit 1; }
+CLI_BRIDGE="${SOURCE_DIR}/letta-cli-bridge.mjs"
+[[ -f "${CLI_BRIDGE}" ]] || { echo 'letta-cli-bridge.mjs not found'; exit 1; }
 [[ -x "${LETTA_COMMAND}" ]] || { echo "Lucy launcher not executable: ${LETTA_COMMAND}"; exit 1; }
 [[ -d "${LETTA_CWD}" ]] || { echo "Letta working directory not found: ${LETTA_CWD}"; exit 1; }
 
@@ -58,7 +58,7 @@ printf 'Installing full Letta CLI bridge for %s\n' "${TARGET_USER}"
 printf 'Node.js: %s\nLucy launcher: %s\nWorking directory: %s\n' "${NODE_BIN}" "${LETTA_COMMAND}" "${LETTA_CWD}"
 
 install -d -m 0755 -o "${TARGET_USER}" -g "${TARGET_USER}" "${INSTALL_DIR}"
-install -m 0755 -o "${TARGET_USER}" -g "${TARGET_USER}" "${FULL_BRIDGE}" "${INSTALL_DIR}/letta-full-bridge.mjs"
+install -m 0755 -o "${TARGET_USER}" -g "${TARGET_USER}" "${CLI_BRIDGE}" "${INSTALL_DIR}/letta-cli-bridge.mjs"
 install -d -m 0700 -o "${TARGET_USER}" -g "${TARGET_USER}" "${CONFIG_DIR}"
 
 if [[ ! -f "${ENV_FILE}" ]]; then
@@ -77,9 +77,15 @@ LETTA_SESSION_IDLE_MS=1800000
 LETTA_REQUEST_TIMEOUT_MS=300000
 LETTA_LOCAL_BACKEND_DIR=${LETTA_CWD}/.letta-local
 LETTA_REQUIRE_RUNTIME_MODEL=true
+LETTA_REQUIRE_TOOLS=true
+LETTA_REQUIRE_SKILL_SOURCES=true
+LETTA_REQUIRE_MCP_SERVERS=true
+LETTA_REQUIRE_SLASH_COMMANDS=true
+LETTA_REQUIRE_MEMFS=true
 LETTA_REQUIRED_TOOLS=
-LETTA_REQUIRED_SKILLS=
+LETTA_REQUIRED_SKILL_SOURCES=
 LETTA_REQUIRED_MCP_SERVERS=
+LETTA_REQUIRED_SLASH_COMMANDS=
 LETTA_EXTRA_ARGS_JSON=[]
 ENV
 else
@@ -95,9 +101,15 @@ ensure_env() {
 }
 
 ensure_env LETTA_REQUIRE_RUNTIME_MODEL true
+ensure_env LETTA_REQUIRE_TOOLS true
+ensure_env LETTA_REQUIRE_SKILL_SOURCES true
+ensure_env LETTA_REQUIRE_MCP_SERVERS true
+ensure_env LETTA_REQUIRE_SLASH_COMMANDS true
+ensure_env LETTA_REQUIRE_MEMFS true
 ensure_env LETTA_REQUIRED_TOOLS ''
-ensure_env LETTA_REQUIRED_SKILLS ''
+ensure_env LETTA_REQUIRED_SKILL_SOURCES ''
 ensure_env LETTA_REQUIRED_MCP_SERVERS ''
+ensure_env LETTA_REQUIRED_SLASH_COMMANDS ''
 ensure_env LETTA_EXTRA_ARGS_JSON '[]'
 
 cat >"${UNIT_FILE}" <<UNIT
@@ -114,7 +126,7 @@ WorkingDirectory=${LETTA_CWD}
 Environment=HOME=${TARGET_HOME}
 Environment=PATH=${TARGET_HOME}/.local/bin:${NODE_DIR}:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
 EnvironmentFile=${ENV_FILE}
-ExecStart=${NODE_BIN} ${INSTALL_DIR}/letta-full-bridge.mjs
+ExecStart=${NODE_BIN} ${INSTALL_DIR}/letta-cli-bridge.mjs
 Restart=on-failure
 RestartSec=3
 TimeoutStopSec=20
