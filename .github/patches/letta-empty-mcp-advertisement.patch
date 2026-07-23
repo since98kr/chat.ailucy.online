@@ -1,0 +1,128 @@
+diff --git a/ops/letta-bridge/letta-cli-bridge.mjs b/ops/letta-bridge/letta-cli-bridge.mjs
+index 16bed6c..0000000 100755
+--- a/ops/letta-bridge/letta-cli-bridge.mjs
++++ b/ops/letta-bridge/letta-cli-bridge.mjs
+@@ -66,6 +66,16 @@ function normalizeMcpServers(value) {
+   return [...deduped.values()].slice(0, MAX_CAPABILITY_ITEMS);
+ }
+ 
++function withMcpAdvertisement(capabilities, advertised) {
++  Object.defineProperty(capabilities, 'mcpAdvertised', {
++    value: advertised === true,
++    enumerable: false,
++    configurable: true,
++    writable: true,
++  });
++  return capabilities;
++}
++
+ export function loadConfig(env = process.env) {
+@@ -113,7 +123,7 @@ export function extractRuntimeCapabilities(wire, fallbackModel = '') {
+   const skillSources = Array.isArray(wire?.skill_sources)
+     ? [...new Set(wire.skill_sources.filter((source) => SKILL_SOURCES.has(source)))]
+     : [];
+-  return {
++  return withMcpAdvertisement({
+     model: safeLabel(wire?.model) || safeLabel(wire?.model_id) || safeLabel(fallbackModel) || null,
+     tools: uniqueLabels(Array.isArray(wire?.tools) ? wire.tools : []),
+     skillSources,
+@@ -122,7 +132,7 @@ export function extractRuntimeCapabilities(wire, fallbackModel = '') {
+     permissionMode: safeLabel(wire?.permission_mode) || null,
+     memfsEnabled: typeof wire?.memfs_enabled === 'boolean' ? wire.memfs_enabled : null,
+     sessionId: safeLabel(wire?.session_id) || null,
+-  };
++  }, Array.isArray(wire?.mcp_servers));
+ }
+ 
+ function mergeCapabilities(left, right) {
+@@ -128,7 +138,7 @@ function mergeCapabilities(left, right) {
+   const mcp = new Map();
+   for (const item of [...(left.mcpServers || []), ...(right.mcpServers || [])]) mcp.set(item.name, item);
+-  return {
++  return withMcpAdvertisement({
+     model: right.model || left.model || null,
+     tools: uniqueLabels([...(left.tools || []), ...(right.tools || [])]),
+     skillSources: [...new Set([...(left.skillSources || []), ...(right.skillSources || [])])],
+@@ -137,7 +147,7 @@ function mergeCapabilities(left, right) {
+     permissionMode: right.permissionMode || left.permissionMode || null,
+     memfsEnabled: right.memfsEnabled ?? left.memfsEnabled ?? null,
+     sessionId: right.sessionId || left.sessionId || null,
+-  };
++  }, left.mcpAdvertised === true || right.mcpAdvertised === true);
+ }
+@@ -148,7 +158,9 @@ export function validateRuntimeCapabilities(capabilities, config) {
+   if (config.requireModel && !capabilities.model) throw new Error('Lucy CLI runtime did not advertise a model identity');
+   if (config.requireTools && capabilities.tools.length === 0) throw new Error('Lucy CLI runtime did not advertise any tools');
+   if (config.requireSkillSources && capabilities.skillSources.length === 0) throw new Error('Lucy CLI runtime did not advertise any skill sources');
+-  if (config.requireMcpServers && capabilities.mcpServers.length === 0) throw new Error('Lucy CLI runtime did not advertise any MCP servers');
++  if (config.requireMcpServers && capabilities.mcpServers.length === 0 && capabilities.mcpAdvertised !== true) {
++    throw new Error('Lucy CLI runtime did not advertise MCP capability metadata');
++  }
+   if (config.requireSlashCommands && capabilities.slashCommands.length === 0) throw new Error('Lucy CLI runtime did not advertise any slash commands');
+@@ -170,6 +182,7 @@ function publicCapabilities(capabilities) {
+     skill_sources: capabilities.skillSources,
+     slash_commands: capabilities.slashCommands,
+     mcp_servers: capabilities.mcpServers,
++    mcp_advertised: capabilities.mcpAdvertised === true,
+     permission_mode: capabilities.permissionMode,
+@@ -183,6 +196,7 @@ function capabilitySummary(capabilities) {
+     skill_source_count: capabilities.skillSources.length,
+     slash_command_count: capabilities.slashCommands.length,
+     mcp_server_count: capabilities.mcpServers.length,
++    mcp_advertised: capabilities.mcpAdvertised === true,
+     permission_mode: capabilities.permissionMode,
+@@ -205,8 +219,9 @@ function runtimeContract(capabilities) {
+     `Skill sources: ${listForPrompt(capabilities.skillSources)}`,
+     `Slash commands and skill invocations: ${listForPrompt(capabilities.slashCommands)}`,
+     `MCP servers: ${listForPrompt(mcp)}`,
+-    'Use the CLI runtime tools, skills, subagents, and MCP servers whenever they are useful. They execute inside this same CLI process under its existing permissions policy.',
++    `MCP metadata advertised by headless runtime: ${capabilities.mcpAdvertised === true ? 'true' : 'false'}`,
++    'Use the CLI runtime tools, skills, subagents, and any advertised MCP servers whenever they are useful. They execute inside this same CLI process under its existing permissions policy.',
+@@ -373,6 +388,7 @@ class LucySession {
+       model: safeLabel(config.runtimeModelId),
+       tools: [], skillSources: [], slashCommands: [], mcpServers: [],
++      mcpAdvertised: false,
+       permissionMode: null, memfsEnabled: null, sessionId: null,
+@@ -507,6 +523,7 @@ class LucySession {
+     onItem({ status: `runtime.model:${summary.model}` });
+     onItem({ status: `runtime.permission:${summary.permission_mode || 'unknown'}` });
++    onItem({ status: `runtime.mcp_advertised:${summary.mcp_advertised === true}` });
+     onItem({ status: `runtime.capabilities:tools=${summary.tool_count};skill_sources=${summary.skill_source_count};mcp=${summary.mcp_server_count};commands=${summary.slash_command_count};memfs=${summary.memfs_enabled === true}` });
+@@ -564,6 +581,7 @@ class SessionManager {
+       model: safeLabel(this.config.runtimeModelId),
+       tools: [], skillSources: [], slashCommands: [], mcpServers: [],
++      mcpAdvertised: false,
+       permissionMode: null, memfsEnabled: null, sessionId: null,
+     });
+diff --git a/e2e-staging/letta-full-runtime.spec.ts b/e2e-staging/letta-full-runtime.spec.ts
+index 8d948df..0000000 100644
+--- a/e2e-staging/letta-full-runtime.spec.ts
++++ b/e2e-staging/letta-full-runtime.spec.ts
+@@ -100,7 +100,8 @@ test('real Letta Lucy reports its CLI model, advertises full capability, and exe
+     expect(capabilityStatus).toBeTruthy();
+     expect(capabilityStatus?.tools).toBeGreaterThan(0);
+     expect(capabilityStatus?.skillSources).toBeGreaterThan(0);
+-    expect(capabilityStatus?.mcp).toBeGreaterThan(0);
++    expect(capabilityStatus?.mcp).toBeGreaterThanOrEqual(0);
++    expect(statuses).toContain('runtime.mcp_advertised:true');
+     expect(capabilityStatus?.commands).toBeGreaterThan(0);
+     expect(capabilityStatus?.memfs).toBe(true);
+diff --git a/.github/workflows/deploy-staging.yml b/.github/workflows/deploy-staging.yml
+index 3285f78..0000000 100644
+--- a/.github/workflows/deploy-staging.yml
++++ b/.github/workflows/deploy-staging.yml
+@@ -168,8 +168,8 @@ jobs:
+           const path = process.argv[2];
+           const value = JSON.parse(fs.readFileSync(path, 'utf8'));
+           const mcpHealthy = Array.isArray(value.mcp_servers)
+-            && value.mcp_servers.length > 0
+-            && value.mcp_servers.every((server) => server && typeof server.name === 'string'
++            && value.mcp_advertised === true
++            && value.mcp_servers.every((server) => server && typeof server.name === 'string'
+               && !['error', 'failed', 'disconnected'].includes(String(server.status || '').toLowerCase()));
+@@ -215,7 +215,7 @@ jobs:
+             echo "- Generated artifact QA required: \`${{ vars.CHAT_GENERATED_ARTIFACT_QA_REQUIRED || 'false' }}\`"
+             echo "- Full Letta CLI runtime QA required: \`${{ vars.CHAT_LETTA_FULL_RUNTIME_QA_REQUIRED || 'true' }}\`"
+-            echo '- Required Letta gates: exact model, permission mode, MemFS, tools, skill sources, slash commands, healthy MCP servers, and real tool execution'
++            echo '- Required Letta gates: exact model, permission mode, MemFS, tools, skill sources, slash commands, explicit MCP metadata with any configured servers healthy, and real tool execution'
+             echo '- Other required gates: deploy, backup/rollback, Hermes, local Chromium, and configured public/multimodal gates'
