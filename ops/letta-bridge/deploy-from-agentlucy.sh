@@ -61,20 +61,20 @@ write_diagnostic() {
   RUNNER_USER="$(id -un)" REMOTE_USER_SAFE="${REMOTE_USER}" BRIDGE_USER_SAFE="${BRIDGE_USER}" \
   IDENTITY_SOURCE_SAFE="${IDENTITY_SOURCE}" KNOWN_HOSTS_SOURCE_SAFE="${KNOWN_HOSTS_SOURCE}" \
   node - "${DIAGNOSTIC_PATH}" <<'NODE'
-  const fs = require('node:fs');
-  fs.writeFileSync(process.argv[2], JSON.stringify({
-    ok: process.env.CATEGORY === 'success',
-    stage: process.env.STAGE,
-    category: process.env.CATEGORY,
-    exit_code: Number(process.env.EXIT_CODE),
-    runner_user: process.env.RUNNER_USER,
-    remote_user: process.env.REMOTE_USER_SAFE,
-    bridge_user: process.env.BRIDGE_USER_SAFE,
-    identity_source: process.env.IDENTITY_SOURCE_SAFE,
-    known_hosts_source: process.env.KNOWN_HOSTS_SOURCE_SAFE,
-    checked_at: new Date().toISOString(),
-  }, null, 2) + '\n', { mode: 0o600 });
-  NODE
+const fs = require('node:fs');
+fs.writeFileSync(process.argv[2], JSON.stringify({
+  ok: process.env.CATEGORY === 'success',
+  stage: process.env.STAGE,
+  category: process.env.CATEGORY,
+  exit_code: Number(process.env.EXIT_CODE),
+  runner_user: process.env.RUNNER_USER,
+  remote_user: process.env.REMOTE_USER_SAFE,
+  bridge_user: process.env.BRIDGE_USER_SAFE,
+  identity_source: process.env.IDENTITY_SOURCE_SAFE,
+  known_hosts_source: process.env.KNOWN_HOSTS_SOURCE_SAFE,
+  checked_at: new Date().toISOString(),
+}, null, 2) + '\n', { mode: 0o600 });
+NODE
 }
 
 classify_failure() {
