@@ -12,7 +12,7 @@
     "build:api": "tsup server/runtime.ts server/backup.ts server/preflight.ts --format esm --platform node --target node22 --out-dir dist-server --sourcemap",
     "typecheck": "tsc --noEmit --pretty false",
     "test": "vitest run && npm run test:bridge",
-    "test:bridge": "node --test ops/letta-bridge/letta-bridge.nodecheck.mjs",
+    "test:bridge": "node --test ops/letta-bridge/*.nodecheck.mjs",
     "test:e2e": "playwright test",
     "test:e2e:auth": "playwright test --config playwright.auth.config.ts",
     "test:e2e:staging": "playwright test --config playwright.staging.config.ts",

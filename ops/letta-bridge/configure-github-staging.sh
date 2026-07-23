@@ -6,6 +6,7 @@ ENVIRONMENT="${GITHUB_ENVIRONMENT:-staging}"
 REMOTE_HOST="${LETTA_SSH_HOST:-ax.hni-gl.ai}"
 REMOTE_PORT="${LETTA_SSH_PORT:-3004}"
 REMOTE_USER="${LETTA_SSH_USER:-since98kr}"
+BRIDGE_USER="${LETTA_BRIDGE_USER:-since98kr}"
 HERMES_ENV_FILE="${HERMES_ENV_FILE:-${HOME}/.hermes/.env}"
 
 command -v gh >/dev/null || { echo 'GitHub CLI (gh) is required.' >&2; exit 1; }
@@ -23,7 +24,7 @@ gh api --method PUT "repos/${REPO}/environments/${ENVIRONMENT}" --silent
 set_variable() {
   local name="$1"
   local value="$2"
-  printf 'Setting %-32s\n' "${name}"
+  printf 'Setting %-40s\n' "${name}"
   gh variable set "${name}" --body "${value}" --repo "${REPO}" --env "${ENVIRONMENT}"
 }
 
@@ -36,6 +37,7 @@ set_variable CHAT_PREFLIGHT_MIN_FREE_BYTES '2147483648'
 set_variable CHAT_RATE_LIMIT_GENERAL '300'
 set_variable CHAT_RATE_LIMIT_CHAT '30'
 set_variable CHAT_RATE_LIMIT_UPLOAD '60'
+set_variable CHAT_LETTA_FULL_RUNTIME_QA_REQUIRED 'true'
 
 set_variable LETTA_BASE_URL 'http://host.docker.internal:18283'
 set_variable LETTA_CHAT_PATH '/v1/chat/stream'
@@ -44,6 +46,10 @@ set_variable LETTA_AGENT_ID 'agent-local-0dc7f93b-7b2e-41f3-8193-a9520950557c'
 set_variable LETTA_TIMEOUT_MS '300000'
 set_variable LETTA_PROTOCOL 'native'
 set_variable LETTA_MODEL_MAP_JSON '{}'
+set_variable LETTA_SSH_HOST "${REMOTE_HOST}"
+set_variable LETTA_SSH_PORT "${REMOTE_PORT}"
+set_variable LETTA_SSH_USER "${REMOTE_USER}"
+set_variable LETTA_BRIDGE_USER "${BRIDGE_USER}"
 
 set_variable HERMES_BASE_URL 'http://host.docker.internal:8642'
 set_variable HERMES_CHAT_PATH '/v1/chat/completions'
@@ -63,6 +69,7 @@ LETTA_TOKEN="$({
   ssh -p "${REMOTE_PORT}" \
     -o BatchMode=yes \
     -o ConnectTimeout=10 \
+    -o StrictHostKeyChecking=yes \
     "${REMOTE_USER}@${REMOTE_HOST}" \
     "sed -n 's/^LETTA_BRIDGE_TOKEN=//p' ~/.config/letta-bridge.env"
 } | head -n 1)"

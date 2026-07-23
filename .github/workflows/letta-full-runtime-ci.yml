@@ -1,0 +1,85 @@
+name: Letta full CLI runtime CI
+
+on:
+  pull_request:
+    paths:
+      - '.github/workflows/deploy-staging.yml'
+      - '.github/workflows/letta-full-runtime-ci.yml'
+      - 'ops/letta-bridge/**'
+      - 'e2e-staging/letta-full-runtime.spec.ts'
+      - 'package.json'
+  push:
+    branches:
+      - main
+      - 'agent/**'
+    paths:
+      - '.github/workflows/deploy-staging.yml'
+      - '.github/workflows/letta-full-runtime-ci.yml'
+      - 'ops/letta-bridge/**'
+      - 'e2e-staging/letta-full-runtime.spec.ts'
+      - 'package.json'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: letta-full-runtime-ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  bridge:
+    name: CLI identity, capabilities, redaction, and staging wiring
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Validate bridge and operator script syntax
+        shell: bash
+        run: |
+          set -euo pipefail
+          node --check ops/letta-bridge/letta-cli-bridge.mjs
+          bash -n ops/letta-bridge/install-hni-node-04.sh
+          bash -n ops/letta-bridge/deploy-from-agentlucy.sh
+          bash -n ops/letta-bridge/configure-github-staging.sh
+
+      - name: Validate full-runtime static guards
+        shell: bash
+        run: |
+          set -euo pipefail
+          bridge='ops/letta-bridge/letta-cli-bridge.mjs'
+          installer='ops/letta-bridge/install-hni-node-04.sh'
+          workflow='.github/workflows/deploy-staging.yml'
+          qa='e2e-staging/letta-full-runtime.spec.ts'
+
+          grep -Fq 'full-cli-runtime' "${bridge}"
+          grep -Fq 'wire?.skill_sources' "${bridge}"
+          grep -Fq 'wire?.slash_commands' "${bridge}"
+          grep -Fq 'wire?.mcp_servers' "${bridge}"
+          grep -Fq 'wire?.permission_mode' "${bridge}"
+          grep -Fq 'wire?.memfs_enabled' "${bridge}"
+          grep -Fq 'letta-cli-bridge.mjs' "${installer}"
+          grep -Fq 'ExecStart=${NODE_BIN} ${INSTALL_DIR}/letta-cli-bridge.mjs' "${installer}"
+          if grep -Fq "'--memfs-startup', 'skip'" "${bridge}"; then
+            echo 'full bridge must not force MemFS startup to skip' >&2
+            exit 1
+          fi
+          grep -Fq 'Deploy full Letta CLI runtime bridge' "${workflow}"
+          grep -Fq 'CHAT_LETTA_FULL_RUNTIME_QA_REQUIRED' "${workflow}"
+          grep -Fq 'Capture authenticated Letta runtime capabilities' "${workflow}"
+          grep -Fq 'capabilityStatus?.tools' "${qa}"
+          grep -Fq 'capabilityStatus?.skillSources' "${qa}"
+          grep -Fq 'capabilityStatus?.mcp' "${qa}"
+          grep -Fq 'capabilityStatus?.commands' "${qa}"
+          grep -Fq 'capabilityStatus?.memfs' "${qa}"
+          grep -Fq 'tool.completed:' "${qa}"
+
+      - name: Exercise runtime identity, capability, session, and redaction contracts
+        run: node --test ops/letta-bridge/*.nodecheck.mjs
