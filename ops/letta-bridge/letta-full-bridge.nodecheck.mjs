@@ -189,7 +189,7 @@ test('bridge exposes exact runtime capability, streams safe tool progress, and r
       const input = JSON.parse(line);
       if (input.type !== 'user') continue;
       turn += 1;
-      await appendFile(${JSON.stringify(captured)}, input.message.content + '\n---TURN---\n');
+      await appendFile(${JSON.stringify('/tmp/captured-placeholder')}, input.message.content + '\\n---TURN---\\n');
       console.log(JSON.stringify({ type: 'message', message_type: 'tool_call_message', tool_call: {
         name: 'Read', tool_call_id: 'call-' + turn, arguments: { path: '/private', token: 'SECRET_ARGUMENT' }
       }}));
@@ -200,7 +200,7 @@ test('bridge exposes exact runtime capability, streams safe tool progress, and r
       console.log(JSON.stringify({ type: 'stream_event', event: { message_type: 'assistant_message', content: [{ type: 'text', text: output }] } }));
       console.log(JSON.stringify({ type: 'result', subtype: 'success', result: output }));
     }
-  `);
+  `.replace(JSON.stringify('/tmp/captured-placeholder'), JSON.stringify(captured)));
 
   const runtimeConfig = config({ cwd: fixtureDir, spawnArgs: [fixture] });
   const { server } = createBridgeServer(runtimeConfig);
