@@ -6,7 +6,16 @@ REMOTE_HOST="${LETTA_SSH_HOST:-ax.hni-gl.ai}"
 REMOTE_PORT="${LETTA_SSH_PORT:-3004}"
 REMOTE_USER="${LETTA_SSH_USER:-since98kr}"
 BRIDGE_USER="${LETTA_BRIDGE_USER:-since98kr}"
-RESTRICTED_MODE="${LETTA_SSH_RESTRICTED_MODE:-false}"
+if [[ -n "${LETTA_SSH_RESTRICTED_MODE:-}" ]]; then
+  RESTRICTED_MODE="${LETTA_SSH_RESTRICTED_MODE}"
+elif [[ -n "${LETTA_SSH_PRIVATE_KEY:-}" && -n "${LETTA_SSH_KNOWN_HOSTS:-}" ]]; then
+  RESTRICTED_MODE='true'
+elif [[ -n "${LETTA_SSH_PRIVATE_KEY:-}" || -n "${LETTA_SSH_KNOWN_HOSTS:-}" ]]; then
+  echo 'Dedicated SSH key and known_hosts must be configured together.' >&2
+  exit 1
+else
+  RESTRICTED_MODE='false'
+fi
 SSH_BIN="${LETTA_SSH_BIN:-ssh}"
 SOURCE_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 DIAGNOSTIC_PATH="${LETTA_BRIDGE_DEPLOY_DIAGNOSTIC_PATH:-}"
