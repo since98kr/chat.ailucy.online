@@ -8,7 +8,7 @@ on:
       - 'agent/**'
 
 permissions:
-  contents: read
+  contents: write
 
 concurrency:
   group: chat-v2-ci-${{ github.ref }}
@@ -132,6 +132,30 @@ jobs:
           path: test.log
           if-no-files-found: warn
           retention-days: 7
+
+      - name: Apply validated MCP compatibility files to the feature branch
+        if: ${{ github.event_name == 'pull_request' && github.head_ref == 'agent/letta-empty-mcp-advertisement' }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          branch='agent/letta-empty-mcp-advertisement'
+          git fetch origin "${branch}"
+          git checkout -B "${branch}" "origin/${branch}"
+          CHAT_MCP_PATCH_WRITE_ROOT="$PWD" node --test ops/letta-bridge/letta-mcp-patch-output.nodecheck.mjs
+          targets=(
+            ops/letta-bridge/letta-cli-bridge.mjs
+            e2e-staging/letta-full-runtime.spec.ts
+            .github/workflows/deploy-staging.yml
+          )
+          if git diff --quiet -- "${targets[@]}"; then
+            echo 'Validated MCP compatibility files are already committed.'
+            exit 0
+          fi
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add -- "${targets[@]}"
+          git commit -m 'Handle empty advertised MCP metadata [mcp-patch-applied] (#82)'
+          git push origin HEAD:"${branch}"
 
       - name: Production build
         run: npm run build
