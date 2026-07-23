@@ -8,6 +8,14 @@ TARGET="${INSTALL_DIR}/letta-bridge.mjs"
 ENV_FILE="${HOME}/.config/letta-bridge.env"
 ROLLOUT="${INSTALL_DIR}/rollout-user-owned.sh"
 MAX_PAYLOAD_BYTES="${LETTA_ROLLOUT_MAX_PAYLOAD_BYTES:-2097152}"
+ROLLOUT_TMP=''
+
+cleanup() {
+  if [[ -n "${ROLLOUT_TMP}" ]]; then
+    rm -rf -- "${ROLLOUT_TMP}"
+  fi
+}
+trap cleanup EXIT
 
 fail() {
   printf '[letta-rollout-gate] denied: %s\n' "$*" >&2
@@ -45,17 +53,16 @@ validate_archive() {
 
 rollout() {
   preflight >/dev/null
-  local tmp archive
-  tmp="$(mktemp -d)"
-  trap 'rm -rf "${tmp}"' EXIT
-  archive="${tmp}/payload.tar"
+  local archive
+  ROLLOUT_TMP="$(mktemp -d)"
+  archive="${ROLLOUT_TMP}/payload.tar"
   umask 077
   cat >"${archive}"
   validate_archive "${archive}"
-  tar --no-same-owner --no-same-permissions -xf "${archive}" -C "${tmp}"
-  [[ -f "${tmp}/letta-cli-bridge.mjs" && ! -L "${tmp}/letta-cli-bridge.mjs" ]] \
+  tar --no-same-owner --no-same-permissions -xf "${archive}" -C "${ROLLOUT_TMP}"
+  [[ -f "${ROLLOUT_TMP}/letta-cli-bridge.mjs" && ! -L "${ROLLOUT_TMP}/letta-cli-bridge.mjs" ]] \
     || fail 'extracted canonical bridge is invalid'
-  LETTA_BRIDGE_USER="${EXPECTED_USER}" bash "${ROLLOUT}" "${tmp}/letta-cli-bridge.mjs"
+  LETTA_BRIDGE_USER="${EXPECTED_USER}" bash "${ROLLOUT}" "${ROLLOUT_TMP}/letta-cli-bridge.mjs"
 }
 
 case "${COMMAND}" in
