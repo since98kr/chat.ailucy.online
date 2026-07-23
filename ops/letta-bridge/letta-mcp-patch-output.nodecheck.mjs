@@ -104,7 +104,8 @@ test('MCP compatibility edits produce validated Git blob payloads', async (t) =>
     console.log(`CHAT_MCP_PATCH_BEGIN:${relative}`);
     console.log(payload.toString('base64'));
     console.log(`CHAT_MCP_PATCH_END:${relative}`);
-    if (writeRoot && !alreadyApplied) {
+    const isWorkflow = relative === '.github/workflows/deploy-staging.yml';
+    if (writeRoot && !alreadyApplied && !isWorkflow) {
       const destination = resolve(writeRoot, relative);
       await mkdir(dirname(destination), { recursive: true });
       await writeFile(destination, payload);
