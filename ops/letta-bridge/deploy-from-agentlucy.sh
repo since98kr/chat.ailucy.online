@@ -31,6 +31,16 @@ tar -C "${SOURCE_DIR}" -cf - letta-full-bridge.mjs install-hni-node-04.sh \
   | "${SSH[@]}" "set -Eeuo pipefail; tmp=\$(mktemp -d); trap 'rm -rf \"\${tmp}\"' EXIT; tar -C \"\${tmp}\" -xf -; sudo LETTA_BRIDGE_USER='${BRIDGE_USER}' bash \"\${tmp}/install-hni-node-04.sh\""
 
 BASE_URL="${LETTA_BASE_URL:-http://host.docker.internal:18283}"
+if [[ "${BASE_URL}" == *'host.docker.internal'* ]] && ! getent hosts host.docker.internal >/dev/null 2>&1; then
+  command -v docker >/dev/null || {
+    echo 'Docker is required to resolve host.docker.internal through the bridge gateway.' >&2
+    exit 1
+  }
+  DOCKER_GATEWAY="$(docker network inspect bridge --format '{{(index .IPAM.Config 0).Gateway}}')"
+  [[ -n "${DOCKER_GATEWAY}" ]] || { echo 'Docker bridge gateway was not resolved.' >&2; exit 1; }
+  BASE_URL="${BASE_URL/host.docker.internal/${DOCKER_GATEWAY}}"
+fi
+
 HEALTH="$(curl --fail --silent --show-error "${BASE_URL%/}/health")"
 node -e '
   const health=JSON.parse(process.argv[1]);
