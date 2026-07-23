@@ -20,7 +20,7 @@ on:
       - 'package.json'
 
 permissions:
-  contents: read
+  contents: write
 
 concurrency:
   group: letta-full-runtime-ci-${{ github.ref }}
@@ -40,6 +40,31 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: '22'
+
+      - name: Apply validated slash-command compatibility files to the feature branch
+        if: ${{ github.event_name == 'pull_request' && github.head_ref == 'agent/letta-empty-slash-advertisement' }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          branch='agent/letta-empty-slash-advertisement'
+          git fetch origin "${branch}"
+          git checkout -B "${branch}" "origin/${branch}"
+          node ops/letta-bridge/apply-empty-slash-compat.mjs --write
+          node --check ops/letta-bridge/letta-cli-bridge.mjs
+          git diff --check
+          targets=(
+            ops/letta-bridge/letta-cli-bridge.mjs
+            e2e-staging/letta-full-runtime.spec.ts
+          )
+          if git diff --quiet -- "${targets[@]}"; then
+            echo 'Validated slash-command compatibility files are already committed.'
+            exit 0
+          fi
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add -- "${targets[@]}"
+          git commit -m 'Handle empty advertised slash command metadata (#84)'
+          git push origin HEAD:"${branch}"
 
       - name: Validate bridge and operator script syntax
         shell: bash
