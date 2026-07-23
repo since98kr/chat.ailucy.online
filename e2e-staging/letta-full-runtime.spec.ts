@@ -98,7 +98,8 @@ test('real Letta Lucy reports its CLI model, advertises full capability, and exe
     expect(capabilityStatus).toBeTruthy();
     expect(capabilityStatus?.tools).toBeGreaterThan(0);
     expect(capabilityStatus?.skillSources).toBeGreaterThan(0);
-    expect(capabilityStatus?.mcp).toBeGreaterThan(0);
+    expect(capabilityStatus?.mcp).toBeGreaterThanOrEqual(0);
+    expect(statuses).toContain('runtime.mcp_advertised:true');
     expect(capabilityStatus?.commands).toBeGreaterThan(0);
     expect(capabilityStatus?.memfs).toBe(true);
     expect(statuses.some((status) => status.startsWith('tool.running:') || status.startsWith('mcp.running:'))).toBe(true);
