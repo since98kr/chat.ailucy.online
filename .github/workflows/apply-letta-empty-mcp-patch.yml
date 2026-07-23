@@ -1,0 +1,43 @@
+name: Apply Letta empty MCP compatibility patch
+
+on:
+  push:
+    branches:
+      - agent/letta-empty-mcp-advertisement
+    paths:
+      - '.github/patches/letta-empty-mcp-advertisement.patch'
+      - '.github/workflows/apply-letta-empty-mcp-patch.yml'
+
+permissions:
+  contents: write
+
+concurrency:
+  group: apply-letta-empty-mcp-patch
+  cancel-in-progress: false
+
+jobs:
+  apply:
+    if: ${{ !contains(github.event.head_commit.message, '[mcp-patch-applied]') }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Checkout patch branch
+        uses: actions/checkout@v4
+        with:
+          ref: agent/letta-empty-mcp-advertisement
+          fetch-depth: 0
+
+      - name: Apply reviewed patch and push
+        shell: bash
+        run: |
+          set -euo pipefail
+          patch='.github/patches/letta-empty-mcp-advertisement.patch'
+          git apply --check "${patch}"
+          git apply "${patch}"
+          node --check ops/letta-bridge/letta-cli-bridge.mjs
+          git diff --check
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add ops/letta-bridge/letta-cli-bridge.mjs e2e-staging/letta-full-runtime.spec.ts .github/workflows/deploy-staging.yml
+          git commit -m 'Handle empty advertised MCP metadata [mcp-patch-applied] (#82)'
+          git push origin HEAD:agent/letta-empty-mcp-advertisement
