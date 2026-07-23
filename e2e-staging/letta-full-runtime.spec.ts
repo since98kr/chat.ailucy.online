@@ -37,9 +37,15 @@ function responseText(events: StreamEvent[]) {
 }
 
 function capabilityCounts(status: string) {
-  const match = /^runtime\.capabilities:tools=(\d+);skills=(\d+);mcp=(\d+)$/.exec(status);
+  const match = /^runtime\.capabilities:tools=(\d+);skill_sources=(\d+);mcp=(\d+);commands=(\d+);memfs=(true|false)$/.exec(status);
   if (!match) return null;
-  return { tools: Number(match[1]), skills: Number(match[2]), mcp: Number(match[3]) };
+  return {
+    tools: Number(match[1]),
+    skillSources: Number(match[2]),
+    mcp: Number(match[3]),
+    commands: Number(match[4]),
+    memfs: match[5] === 'true',
+  };
 }
 
 test('real Letta Lucy reports its CLI model, advertises full capability, and executes a CLI tool', async () => {
@@ -77,17 +83,24 @@ test('real Letta Lucy reports its CLI model, advertises full capability, and exe
     expect(streamed.status()).toBe(200);
     const events = parseEvents(await streamed.text());
     const statuses = events.filter((event) => event.type === 'run.status').map((event) => event.status ?? '');
+
     const modelStatus = statuses.find((status) => status.startsWith('runtime.model:'));
     expect(modelStatus).toBeTruthy();
     const model = modelStatus?.slice('runtime.model:'.length).trim() ?? '';
     expect(model.length).toBeGreaterThan(2);
     expect(model).not.toBe('null');
 
+    const permissionStatus = statuses.find((status) => status.startsWith('runtime.permission:'));
+    expect(permissionStatus).toBeTruthy();
+    expect(permissionStatus).not.toBe('runtime.permission:unknown');
+
     const capabilityStatus = statuses.map(capabilityCounts).find(Boolean);
     expect(capabilityStatus).toBeTruthy();
     expect(capabilityStatus?.tools).toBeGreaterThan(0);
-    expect(capabilityStatus?.skills).toBeGreaterThan(0);
+    expect(capabilityStatus?.skillSources).toBeGreaterThan(0);
     expect(capabilityStatus?.mcp).toBeGreaterThan(0);
+    expect(capabilityStatus?.commands).toBeGreaterThan(0);
+    expect(capabilityStatus?.memfs).toBe(true);
     expect(statuses.some((status) => status.startsWith('tool.running:') || status.startsWith('mcp.running:'))).toBe(true);
     expect(statuses.some((status) => status.startsWith('tool.completed:'))).toBe(true);
 
