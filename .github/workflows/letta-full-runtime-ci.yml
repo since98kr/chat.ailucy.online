@@ -28,7 +28,7 @@ concurrency:
 
 jobs:
   bridge:
-    name: CLI identity, capabilities, redaction, rollout, and staging wiring
+    name: CLI identity, capabilities, redaction, rollout, SSH diagnostics, and staging wiring
     runs-on: ubuntu-latest
     timeout-minutes: 12
 
@@ -48,6 +48,7 @@ jobs:
           node --check ops/letta-bridge/letta-cli-bridge.mjs
           bash -n ops/letta-bridge/install-hni-node-04.sh
           bash -n ops/letta-bridge/deploy-from-agentlucy.sh
+          bash -n ops/letta-bridge/deploy-ssh-diagnostics.nodecheck.sh
           bash -n ops/letta-bridge/rollout-user-owned.sh
           bash -n ops/letta-bridge/rollout-user-owned.nodecheck.sh
           bash -n ops/letta-bridge/configure-github-staging.sh
@@ -73,6 +74,12 @@ jobs:
           grep -Fq 'ExecStart=${NODE_BIN} ${INSTALL_DIR}/letta-cli-bridge.mjs' "${installer}"
           grep -Fq 'rollout-user-owned.sh' "${deploy}"
           grep -Fq 'Full CLI bridge rollout completed without sudo' "${rollout}"
+          grep -Fq 'ssh-authentication' "${deploy}"
+          grep -Fq 'ssh-host-key-verification' "${deploy}"
+          grep -Fq 'ssh-connectivity' "${deploy}"
+          grep -Fq 'LETTA_SSH_PRIVATE_KEY' "${workflow}"
+          grep -Fq 'LETTA_SSH_KNOWN_HOSTS' "${workflow}"
+          grep -Fq 'letta-bridge-deploy-diagnostic.json' "${workflow}"
           if grep -Eq '[[:space:]]sudo[[:space:]]' "${deploy}"; then
             echo 'normal staging rollout must not use remote sudo' >&2
             exit 1
@@ -96,3 +103,6 @@ jobs:
 
       - name: Exercise atomic user-owned rollout and rollback
         run: bash ops/letta-bridge/rollout-user-owned.nodecheck.sh
+
+      - name: Exercise SSH identity files and non-secret failure classification
+        run: bash ops/letta-bridge/deploy-ssh-diagnostics.nodecheck.sh
