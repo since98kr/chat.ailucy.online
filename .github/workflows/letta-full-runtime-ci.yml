@@ -28,7 +28,7 @@ concurrency:
 
 jobs:
   bridge:
-    name: CLI identity, capabilities, redaction, and staging wiring
+    name: CLI identity, capabilities, redaction, rollout, and staging wiring
     runs-on: ubuntu-latest
     timeout-minutes: 12
 
@@ -48,6 +48,8 @@ jobs:
           node --check ops/letta-bridge/letta-cli-bridge.mjs
           bash -n ops/letta-bridge/install-hni-node-04.sh
           bash -n ops/letta-bridge/deploy-from-agentlucy.sh
+          bash -n ops/letta-bridge/rollout-user-owned.sh
+          bash -n ops/letta-bridge/rollout-user-owned.nodecheck.sh
           bash -n ops/letta-bridge/configure-github-staging.sh
 
       - name: Validate full-runtime static guards
@@ -56,6 +58,8 @@ jobs:
           set -euo pipefail
           bridge='ops/letta-bridge/letta-cli-bridge.mjs'
           installer='ops/letta-bridge/install-hni-node-04.sh'
+          deploy='ops/letta-bridge/deploy-from-agentlucy.sh'
+          rollout='ops/letta-bridge/rollout-user-owned.sh'
           workflow='.github/workflows/deploy-staging.yml'
           qa='e2e-staging/letta-full-runtime.spec.ts'
 
@@ -67,6 +71,12 @@ jobs:
           grep -Fq 'wire?.memfs_enabled' "${bridge}"
           grep -Fq 'letta-cli-bridge.mjs' "${installer}"
           grep -Fq 'ExecStart=${NODE_BIN} ${INSTALL_DIR}/letta-cli-bridge.mjs' "${installer}"
+          grep -Fq 'rollout-user-owned.sh' "${deploy}"
+          grep -Fq 'Full CLI bridge rollout completed without sudo' "${rollout}"
+          if grep -Eq '[[:space:]]sudo[[:space:]]' "${deploy}"; then
+            echo 'normal staging rollout must not use remote sudo' >&2
+            exit 1
+          fi
           if grep -Fq "'--memfs-startup', 'skip'" "${bridge}"; then
             echo 'full bridge must not force MemFS startup to skip' >&2
             exit 1
@@ -83,3 +93,6 @@ jobs:
 
       - name: Exercise runtime identity, capability, session, and redaction contracts
         run: node --test ops/letta-bridge/*.nodecheck.mjs
+
+      - name: Exercise atomic user-owned rollout and rollback
+        run: bash ops/letta-bridge/rollout-user-owned.nodecheck.sh
