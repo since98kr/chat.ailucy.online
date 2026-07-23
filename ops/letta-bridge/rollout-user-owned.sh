@@ -12,7 +12,7 @@ HEALTH_ATTEMPTS="${LETTA_ROLLOUT_HEALTH_ATTEMPTS:-30}"
 HEALTH_INTERVAL_SECONDS="${LETTA_ROLLOUT_HEALTH_INTERVAL_SECONDS:-1}"
 SYSTEMCTL_BIN="${SYSTEMCTL_BIN:-systemctl}"
 CURL_BIN="${CURL_BIN:-curl}"
-NODE_BIN="${NODE_BIN:-node}"
+NODE_BIN="${NODE_BIN:-}"
 KILL_BIN="${KILL_BIN:-/bin/kill}"
 
 log() {
@@ -43,8 +43,6 @@ TARGET_REAL="$(realpath -e "${TARGET}")"
 [[ "$(stat -c '%u' "${TARGET}")" == "$(id -u)" ]] \
   || fail 'installed bridge target is not owned by the remote Lucy user'
 
-"${NODE_BIN}" --check "${SOURCE_FILE}" >/dev/null
-
 main_pid() {
   "${SYSTEMCTL_BIN}" show --property MainPID --value "${SERVICE}" 2>/dev/null | tr -d '[:space:]'
 }
@@ -61,10 +59,38 @@ validate_pid() {
     || fail 'bridge service MainPID does not execute the expected installed path'
 }
 
+resolve_node_bin() {
+  local pid="$1"
+  local candidate=''
+
+  if [[ -n "${NODE_BIN}" ]]; then
+    if [[ "${NODE_BIN}" == */* ]]; then
+      [[ "${NODE_BIN}" == /* ]] || fail 'NODE_BIN path must be absolute'
+      candidate="$(realpath -e "${NODE_BIN}" 2>/dev/null || true)"
+    else
+      candidate="$(command -v "${NODE_BIN}" 2>/dev/null || true)"
+    fi
+    [[ -n "${candidate}" ]] || fail 'configured NODE_BIN could not be resolved'
+  else
+    candidate="$(command -v node 2>/dev/null || true)"
+    if [[ -z "${candidate}" ]]; then
+      candidate="$(readlink -f "/proc/${pid}/exe" 2>/dev/null || true)"
+      [[ -n "${candidate}" ]] \
+        || fail 'Node is absent from PATH and the verified bridge process executable could not be resolved'
+      log "Node is absent from PATH; reusing the verified ${SERVICE} MainPID executable."
+    fi
+  fi
+
+  [[ -x "${candidate}" && ! -d "${candidate}" ]] || fail 'resolved Node executable is not executable'
+  "${candidate}" -e 'if (process.release?.name !== "node") process.exit(1)' >/dev/null 2>&1 \
+    || fail 'resolved bridge process executable is not Node.js'
+  NODE_BIN="${candidate}"
+}
+
 health_mode() {
   local expected_mode="$1"
   local payload
-  payload="$(${CURL_BIN} --fail --silent --show-error --max-time 2 "http://127.0.0.1:${PORT}/health" 2>/dev/null)" \
+  payload="$("${CURL_BIN}" --fail --silent --show-error --max-time 2 "http://127.0.0.1:${PORT}/health" 2>/dev/null)" \
     || return 1
   "${NODE_BIN}" -e '
     const value=JSON.parse(process.argv[1]);
@@ -106,6 +132,8 @@ rollback() {
 
 CURRENT_PID="$(main_pid)"
 validate_pid "${CURRENT_PID}"
+resolve_node_bin "${CURRENT_PID}"
+"${NODE_BIN}" --check "${SOURCE_FILE}" >/dev/null
 
 backup_tmp="${INSTALL_DIR}/.letta-bridge.backup.$$"
 incoming_tmp="${INSTALL_DIR}/.letta-bridge.incoming.$$"
