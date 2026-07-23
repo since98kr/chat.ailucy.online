@@ -18,10 +18,17 @@ test('MCP compatibility edits produce validated Git blob payloads', async (t) =>
   const workflow = await readFile(workflowPath, 'utf8');
   const match = workflow.match(/python3 - <<'PY'\n([\s\S]*?)\n {10}PY/);
   assert.ok(match, 'embedded compatibility edit script was not found');
-  const python = match[1]
+  let python = match[1]
     .split('\n')
     .map((line) => line.startsWith('          ') ? line.slice(10) : line)
     .join('\n');
+
+  const ambiguous = `replace_once(bridge, "      tools: [], skillSources: [], slashCommands: [], mcpServers: [],\\n      permissionMode:", "      tools: [], skillSources: [], slashCommands: [], mcpServers: [],\\n      mcpAdvertised: false,\\n      permissionMode:")`;
+  const redundant = `replace_once(bridge, "      tools: [], skillSources: [], slashCommands: [], mcpServers: [],\\n      permissionMode: null, memfsEnabled: null, sessionId: null,\\n    });", "      tools: [], skillSources: [], slashCommands: [], mcpServers: [],\\n      mcpAdvertised: false,\\n      permissionMode: null, memfsEnabled: null, sessionId: null,\\n    });")`;
+  assert.equal(python.split(ambiguous).length - 1, 1);
+  assert.equal(python.split(redundant).length - 1, 1);
+  python = python.replace(ambiguous, `text = Path(bridge).read_text(encoding='utf-8')\nneedle = "      tools: [], skillSources: [], slashCommands: [], mcpServers: [],\\n      permissionMode:"\nreplacement = "      tools: [], skillSources: [], slashCommands: [], mcpServers: [],\\n      mcpAdvertised: false,\\n      permissionMode:"\nif text.count(needle) != 2:\n    raise SystemExit(f'{bridge}: expected two capability defaults, found {text.count(needle)}')\nPath(bridge).write_text(text.replace(needle, replacement), encoding='utf-8')`);
+  python = python.replace(redundant, '');
 
   const sandbox = await mkdtemp(join(tmpdir(), 'chat-mcp-patch-'));
   t.after(() => rm(sandbox, { recursive: true, force: true }));
