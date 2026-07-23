@@ -17,7 +17,7 @@ for command in ssh tar curl node; do
   command -v "${command}" >/dev/null || { echo "${command} is required" >&2; exit 1; }
 done
 [[ -f "${SOURCE_DIR}/letta-cli-bridge.mjs" ]] || { echo 'letta-cli-bridge.mjs not found' >&2; exit 1; }
-[[ -f "${SOURCE_DIR}/install-hni-node-04.sh" ]] || { echo 'install-hni-node-04.sh not found' >&2; exit 1; }
+[[ -f "${SOURCE_DIR}/rollout-user-owned.sh" ]] || { echo 'rollout-user-owned.sh not found' >&2; exit 1; }
 
 SSH=(
   ssh -p "${REMOTE_PORT}"
@@ -29,11 +29,12 @@ SSH=(
   "${REMOTE_USER}@${REMOTE_HOST}"
 )
 
-"${SSH[@]}" true >/dev/null
+printf 'Checking staging-runner SSH access to %s@%s:%s...\n' "${REMOTE_USER}" "${REMOTE_HOST}" "${REMOTE_PORT}"
+"${SSH[@]}" "set -Eeuo pipefail; [[ \"\$(id -un)\" == '${BRIDGE_USER}' ]]; test -r ~/.config/letta-bridge.env; test -w ~/.local/share/letta-bridge/letta-bridge.mjs" >/dev/null
 
-printf 'Deploying full Letta CLI bridge to %s:%s as %s\n' "${REMOTE_HOST}" "${REMOTE_PORT}" "${BRIDGE_USER}"
-tar -C "${SOURCE_DIR}" -cf - letta-cli-bridge.mjs install-hni-node-04.sh \
-  | "${SSH[@]}" "set -Eeuo pipefail; tmp=\$(mktemp -d); trap 'rm -rf \"\${tmp}\"' EXIT; tar -C \"\${tmp}\" -xf -; sudo LETTA_BRIDGE_USER='${BRIDGE_USER}' bash \"\${tmp}/install-hni-node-04.sh\""
+printf 'Deploying exact full Letta CLI bridge without remote sudo...\n'
+tar -C "${SOURCE_DIR}" -cf - letta-cli-bridge.mjs rollout-user-owned.sh \
+  | "${SSH[@]}" "set -Eeuo pipefail; tmp=\$(mktemp -d); trap 'rm -rf \"\${tmp}\"' EXIT; tar -C \"\${tmp}\" -xf -; chmod 0755 \"\${tmp}/rollout-user-owned.sh\"; LETTA_BRIDGE_USER='${BRIDGE_USER}' bash \"\${tmp}/rollout-user-owned.sh\" \"\${tmp}/letta-cli-bridge.mjs\""
 
 BASE_URL="${LETTA_BASE_URL:-http://host.docker.internal:18283}"
 if [[ "${BASE_URL}" == *'host.docker.internal'* ]] && ! getent hosts host.docker.internal >/dev/null 2>&1; then
