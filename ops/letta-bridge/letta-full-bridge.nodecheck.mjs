@@ -19,6 +19,7 @@ const capabilities = {
   tools: ['Read', 'Bash'],
   skillSources: ['bundled', 'global', 'agent', 'project'],
   slashCommands: ['/skills', '/github', '/model'],
+  slashCommandsAdvertised: true,
   mcpServers: [{ name: 'filesystem', status: 'connected' }, { name: 'github', status: 'connected' }],
   mcpAdvertised: true,
   permissionMode: 'acceptEdits',
@@ -100,6 +101,7 @@ test('official SystemInitMessage fields are normalized without arbitrary secret 
     memfsEnabled: true,
     sessionId: 'session-test',
   });
+  assert.equal(parsed.slashCommandsAdvertised, true);
   assert.equal(parsed.mcpAdvertised, true);
   assert.doesNotMatch(JSON.stringify(parsed), /DO_NOT_COPY|private\/workspace/);
 });
@@ -122,9 +124,9 @@ test('incomplete full-runtime capability fails closed', () => {
     config(),
   ), /did not advertise MCP capability metadata/);
   assert.throws(() => validateRuntimeCapabilities(
-    { ...capabilities, slashCommands: [] },
+    { ...capabilities, slashCommands: [], slashCommandsAdvertised: false },
     config(),
-  ), /did not advertise any slash commands/);
+  ), /did not advertise slash command capability metadata/);
   assert.throws(() => validateRuntimeCapabilities(
     { ...capabilities, memfsEnabled: false },
     config(),
@@ -139,6 +141,7 @@ test('turn prompt identifies exact model, permissions, MemFS, tools, skill sourc
   assert.match(prompt, /CLI tools: Read, Bash/);
   assert.match(prompt, /Skill sources: bundled, global, agent, project/);
   assert.match(prompt, /Slash commands and skill invocations: \/skills, \/github, \/model/);
+  assert.match(prompt, /Slash command metadata advertised by headless runtime: true/);
   assert.match(prompt, /MCP servers: filesystem\(connected\), github\(connected\)/);
   assert.match(prompt, /MCP metadata advertised by headless runtime: true/);
   assert.match(prompt, /answer with the exact Runtime model/);
@@ -186,7 +189,7 @@ test('bridge exposes exact runtime capability, streams safe tool progress, and r
       const input = JSON.parse(line);
       if (input.type !== 'user') continue;
       turn += 1;
-      await appendFile(${JSON.stringify(captured)}, input.message.content + '\\n---TURN---\\n');
+      await appendFile(${JSON.stringify(captured)}, input.message.content + '\n---TURN---\n');
       console.log(JSON.stringify({ type: 'message', message_type: 'tool_call_message', tool_call: {
         name: 'Read', tool_call_id: 'call-' + turn, arguments: { path: '/private', token: 'SECRET_ARGUMENT' }
       }}));
@@ -235,6 +238,7 @@ test('bridge exposes exact runtime capability, streams safe tool progress, and r
   assert.ok(firstItems.some((item) => item.status === 'runtime.model:openai/gpt-5.6'));
   assert.ok(firstItems.some((item) => item.status === 'runtime.permission:acceptEdits'));
   assert.ok(firstItems.some((item) => item.status === 'runtime.mcp_advertised:true'));
+  assert.ok(firstItems.some((item) => item.status === 'runtime.slash_commands_advertised:true'));
   assert.ok(firstItems.some((item) => item.status === 'runtime.capabilities:tools=2;skill_sources=4;mcp=2;commands=3;memfs=true'));
   assert.ok(firstItems.some((item) => item.status === 'tool.running:Read'));
   assert.ok(firstItems.some((item) => item.status === 'tool.completed:Read'));
@@ -246,6 +250,7 @@ test('bridge exposes exact runtime capability, streams safe tool progress, and r
   assert.deepEqual(advertised.tools, ['Read', 'Bash']);
   assert.deepEqual(advertised.skill_sources, ['bundled', 'global', 'agent', 'project']);
   assert.deepEqual(advertised.slash_commands, ['/skills', '/github', '/model']);
+  assert.equal(advertised.slash_commands_advertised, true);
   assert.deepEqual(advertised.mcp_servers, [{ name: 'filesystem', status: 'connected' }, { name: 'github', status: 'connected' }]);
   assert.equal(advertised.mcp_advertised, true);
   assert.equal(advertised.permission_mode, 'acceptEdits');
