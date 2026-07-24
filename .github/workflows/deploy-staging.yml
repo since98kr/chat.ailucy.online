@@ -172,7 +172,7 @@ jobs:
           if (!value.model
             || !Array.isArray(value.tools) || value.tools.length === 0
             || !Array.isArray(value.skill_sources) || value.skill_sources.length === 0
-            || !Array.isArray(value.slash_commands) || value.slash_commands.length === 0
+            || !Array.isArray(value.slash_commands) || value.slash_commands_advertised !== true
             || !mcpHealthy
             || !value.permission_mode
             || value.memfs_enabled !== true) {
@@ -213,7 +213,7 @@ jobs:
             echo "- Multimodal QA required: \`${{ vars.CHAT_MULTIMODAL_QA_REQUIRED || 'false' }}\`"
             echo "- Generated artifact QA required: \`${{ vars.CHAT_GENERATED_ARTIFACT_QA_REQUIRED || 'false' }}\`"
             echo "- Full Letta CLI runtime QA required: \`${{ vars.CHAT_LETTA_FULL_RUNTIME_QA_REQUIRED || 'true' }}\`"
-            echo '- Required Letta gates: exact model, permission mode, MemFS, tools, skill sources, slash commands, explicit MCP metadata with any configured servers healthy, and real tool execution'
+            echo '- Required Letta gates: exact model, permission mode, MemFS, tools, skill sources, explicit slash-command metadata, explicit MCP metadata with any configured entries healthy, and real tool execution'
             echo '- Other required gates: deploy, backup/rollback, Hermes, local Chromium, and configured public/multimodal gates'
             for item in last-deployment.json last-preflight.json last-backup.json last-backup-verify.json last-health.json last-ops-status.json; do
               path="/opt/chat-v2/staging/state/${item}"
