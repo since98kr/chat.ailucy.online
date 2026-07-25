@@ -48,6 +48,15 @@ function historyThroughSource(messages: MessageRecord[], sourceMessageId: string
   return index < 0 ? messages : messages.slice(0, index + 1);
 }
 
+function historyForSelectedAgent(
+  history: MessageRecord[],
+  routing: RoutingPlanRecord,
+  selectedAgentId: string,
+) {
+  if (routing.mode !== 'team' || selectedAgentId === routing.leadAgentId) return history;
+  return history.filter((message) => message.role !== 'assistant' || message.authorId === selectedAgentId);
+}
+
 export async function* runCollaborativeReply(input: CollaborationRunInput): AsyncGenerator<StreamEvent> {
   const {
     database,
@@ -124,9 +133,13 @@ export async function* runCollaborativeReply(input: CollaborationRunInput): Asyn
     try {
       const latest = database.getConversation(conversation.id)!;
       const withoutCurrent = latest.messages.filter((message) => message.id !== assistantMessage.id);
-      const history = input.historyEndsAtSourceMessage
+      const availableHistory = input.historyEndsAtSourceMessage
         ? historyThroughSource(withoutCurrent, userMessage.id)
         : withoutCurrent;
+      const history = historyForSelectedAgent(availableHistory, routing, agentId);
+      const visibleParticipants = routing.mode === 'team' && agentId !== routing.leadAgentId
+        ? participants.filter((participant) => participant.agentId === agentId)
+        : participants;
       for await (const item of adapter.streamReply({
         conversation: latest,
         userMessage,
@@ -134,7 +147,7 @@ export async function* runCollaborativeReply(input: CollaborationRunInput): Asyn
         artifacts: attachedArtifacts,
         targetAgentId: agentId,
         routingMode: routing.mode,
-        participants,
+        participants: visibleParticipants,
         signal,
       })) {
         if (!deliveryConfirmed) {

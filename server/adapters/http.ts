@@ -16,6 +16,7 @@ type HttpAdapterConfig = {
   chatPath: string;
   healthPath: string;
   apiKey?: string;
+  provider?: string;
   agentId?: string;
   timeoutMs: number;
   protocol?: HttpAdapterProtocol;
@@ -298,6 +299,7 @@ export class HttpAgentAdapter implements ChatBackendAdapter {
       };
     }
 
+    const selectedAgentId = request.selectedAgentId ?? request.targetAgentId;
     return {
       stream: true,
       system_id: this.systemId,
@@ -343,6 +345,13 @@ export class HttpAgentAdapter implements ChatBackendAdapter {
         memory_policy: request.memoryCapsules ? 'explicit-capsules-only' : undefined,
         artifact_count: artifacts.length,
       },
+      ...(this.systemId === 'hermes' ? {
+        runtime: {
+          provider: this.config.provider ?? 'hermes',
+          model: this.config.modelMap?.[selectedAgentId] ?? request.targetAgentId,
+          selected_agent_id: selectedAgentId,
+        },
+      } : {}),
     };
   }
 
@@ -447,6 +456,7 @@ export function httpAdapterConfig(systemId: SystemId): HttpAdapterConfig | null 
     chatPath: process.env[`${prefix}_CHAT_PATH`] ?? '/v1/chat/stream',
     healthPath: process.env[`${prefix}_HEALTH_PATH`] ?? '/health',
     apiKey: process.env[`${prefix}_API_KEY`],
+    provider: process.env[`${prefix}_PROVIDER`]?.trim() || undefined,
     agentId: process.env[`${prefix}_AGENT_ID`],
     timeoutMs: Number(process.env[`${prefix}_TIMEOUT_MS`] ?? 10_000),
     protocol: parseProtocol(process.env[`${prefix}_PROTOCOL`]),

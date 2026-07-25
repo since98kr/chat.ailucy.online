@@ -35,7 +35,9 @@ function wrapNativeAgentMapping(
         configuredAgentId,
         modelMap,
       );
-      const mapped = targetAgentId === request.targetAgentId ? request : { ...request, targetAgentId };
+      const mapped = targetAgentId === request.targetAgentId
+        ? request
+        : { ...request, selectedAgentId: request.selectedAgentId ?? request.targetAgentId, targetAgentId };
       const withArtifacts = await augmentNativeArtifactContext(adapter.systemId, mapped);
       yield* adapter.streamReply(withArtifacts);
     },
