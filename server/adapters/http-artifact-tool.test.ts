@@ -35,7 +35,19 @@ const userMessage: MessageRecord = {
   createdAt: timestamp,
   updatedAt: timestamp,
 };
-const participants: ConversationParticipantRecord[] = [];
+const participants: ConversationParticipantRecord[] = [{
+  conversationId: conversation.id,
+  agentId: '[Hermes] Lucy',
+  role: 'lead',
+  state: 'active',
+  addedAt: timestamp,
+  updatedAt: timestamp,
+  agent: {
+    id: '[Hermes] Lucy', systemId: 'hermes', displayName: '[Hermes] Lucy', shortName: 'Lucy',
+    role: 'Lead', description: '', capabilities: ['orchestration'], enabled: true,
+    directChatEnabled: true, isLead: true, sortOrder: 1, createdAt: timestamp, updatedAt: timestamp,
+  },
+}];
 let server: Server | null = null;
 
 afterEach(async () => {

@@ -33,6 +33,8 @@ export interface AdapterRequest {
   federatedAgents?: AgentRecord[];
   memoryCapsules?: MemoryCapsuleRecord[];
   workflowRunId?: string;
+  sessionId?: string;
+  idempotencyKey?: string;
   signal?: AbortSignal;
 }
 

@@ -129,6 +129,7 @@ describe('HttpAgentAdapter', () => {
       apiKey: 'secret-test-key',
       agentId: '[Hermes] Lucy',
       timeoutMs: 2_000,
+      modelMap: { Xixi: 'xixi-runtime-model' },
     });
 
     const health = await adapter.health();
@@ -141,7 +142,23 @@ describe('HttpAgentAdapter', () => {
       history: [userMessage],
       targetAgentId: 'Xixi',
       routingMode: 'team',
-      participants,
+      participants: [
+        ...participants,
+        {
+          ...participants[0],
+          agentId: 'Xixi',
+          role: 'participant',
+          agent: {
+            ...participants[0].agent,
+            id: 'Xixi',
+            displayName: 'Xixi',
+            shortName: 'Xixi',
+            role: 'Implementation',
+            capabilities: ['implementation'],
+            isLead: false,
+          },
+        },
+      ],
     })) items.push(item);
 
     expect(items).toEqual([
@@ -169,7 +186,14 @@ describe('HttpAgentAdapter', () => {
       author_id: 'tei',
     });
     const receivedParticipants = receivedBody['participants'] as Array<Record<string, unknown>>;
-    expect(receivedParticipants[0]).toMatchObject({ agent_id: '[Hermes] Lucy', role: 'lead' });
+    expect(receivedParticipants).toEqual([{ agent_id: 'Xixi', capabilities: ['implementation'] }]);
+    expect(receivedBody['capability_handshake']).toEqual({
+      version: 'chat-v2-approved-capabilities-v1',
+      selected_agent_id: 'Xixi',
+      selected_agent_capabilities: ['implementation'],
+      approved_subagents: [],
+      cross_agent_isolation: 'selected-agent-only',
+    });
   });
 
   it('normalizes NDJSON and plain text lines without mixing backend memory', async () => {
@@ -243,6 +267,7 @@ describe('HttpAgentAdapter', () => {
       chatPath: '/chat',
       healthPath: '/health',
       timeoutMs: 2_000,
+      modelMap: { '[Hermes] Lucy': 'lucy-runtime-model' },
     });
     const items = [];
     for await (const item of adapter.streamReply({
