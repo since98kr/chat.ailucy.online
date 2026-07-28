@@ -8,6 +8,11 @@ import type {
 } from './types.js';
 import { extractArtifactText } from './document-text.js';
 import { OpenAiArtifactToolAccumulator, RETURN_ARTIFACT_TOOL } from './openai-artifact-tool.js';
+import {
+  approvedAdapterCapabilities,
+  authorizeSelectedAgentExecution,
+  sanitizeRuntimeIdentity,
+} from './capability-contract.js';
 
 type HttpAdapterProtocol = 'native' | 'openai';
 
@@ -16,6 +21,7 @@ type HttpAdapterConfig = {
   chatPath: string;
   healthPath: string;
   apiKey?: string;
+  provider?: string;
   agentId?: string;
   timeoutMs: number;
   protocol?: HttpAdapterProtocol;
@@ -279,11 +285,30 @@ export class HttpAgentAdapter implements ChatBackendAdapter {
   }
 
   private async requestBody(request: AdapterRequest) {
+    // Build and validate this locally before opening the execution request. The
+    // backend is given only the approved discovery result, never the raw roster.
+    const approvedCapabilities = approvedAdapterCapabilities(request, this.systemId);
+    const selectedAgentId = approvedCapabilities.selectedAgent.agentId;
+    const runtimeModel = this.config.modelMap?.[selectedAgentId];
+    const targetAgentId = authorizeSelectedAgentExecution(
+      selectedAgentId,
+      request.targetAgentId,
+      runtimeModel,
+    );
     const artifacts = await serializeArtifacts(request, this.config);
+    if (this.systemId === 'hermes' && !runtimeModel) {
+      throw new Error(`Hermes runtime model is not approved for selected agent: ${selectedAgentId}`);
+    }
+    const runtime = this.systemId === 'hermes'
+      ? sanitizeRuntimeIdentity({
+        provider: this.config.provider ?? 'hermes',
+        model: runtimeModel!,
+        selectedAgentId,
+      })
+      : undefined;
     if (this.config.protocol === 'openai') {
-      const requestedAgentId = request.targetAgentId || request.conversation.agentId;
-      const model = this.config.modelMap?.[requestedAgentId]
-        ?? requestedAgentId
+      const model = runtimeModel
+        ?? targetAgentId
         ?? this.config.agentId;
       if (!model) throw new Error(`${this.systemId} OpenAI-compatible adapter requires a model`);
 
@@ -295,15 +320,45 @@ export class HttpAgentAdapter implements ChatBackendAdapter {
           tools: [RETURN_ARTIFACT_TOOL],
           tool_choice: 'auto',
         } : {}),
+        ...(runtime ? {
+          // Authorization is carried in a bounded transport extension, not
+          // inferred from prompt prose by an OpenAI-compatible endpoint.
+          hermes_parity: {
+            version: 'chat-v2-hermes-parity-v1',
+            session_id: request.sessionId,
+            idempotency_key: request.idempotencyKey,
+            runtime: {
+              provider: runtime.provider,
+              model: runtime.model,
+              selected_agent_id: runtime.selectedAgentId,
+            },
+            capability_handshake: {
+              version: 'chat-v2-approved-capabilities-v1',
+              selected_agent_id: selectedAgentId,
+              selected_agent_capabilities: approvedCapabilities.selectedAgent.capabilities,
+              approved_subagents: approvedCapabilities.approvedSubagents.map((agent) => ({
+                agent_id: agent.agentId,
+                capabilities: agent.capabilities,
+              })),
+              cross_agent_isolation: 'selected-agent-only',
+            },
+            cross_agent_isolation: 'selected-agent-only',
+          },
+        } : {}),
       };
     }
-
+    const discoverableAgents = [
+      approvedCapabilities.selectedAgent,
+      ...approvedCapabilities.approvedSubagents,
+    ];
     return {
       stream: true,
       system_id: this.systemId,
-      agent_id: request.targetAgentId || this.config.agentId || request.conversation.agentId,
+      agent_id: targetAgentId || this.config.agentId || request.conversation.agentId,
       configured_agent_id: this.config.agentId,
       conversation_id: request.conversation.id,
+      session_id: request.sessionId,
+      idempotency_key: request.idempotencyKey,
       messages: toBackendMessages(request.history),
       artifacts: artifacts.map((artifact) => ({
         artifact_id: artifact.artifactId,
@@ -313,18 +368,27 @@ export class HttpAgentAdapter implements ChatBackendAdapter {
         content_base64: artifact.contentBase64,
         text: artifact.text,
       })),
-      participants: request.participants.map((participant) => ({
-        agent_id: participant.agentId,
-        role: participant.role,
-        state: participant.state,
-        capabilities: participant.agent.capabilities,
-      })),
-      federated_agents: (request.federatedAgents ?? []).map((agent) => ({
-        agent_id: agent.id,
-        system_id: agent.systemId,
-        role: agent.role,
+      participants: discoverableAgents.map((agent) => ({
+        agent_id: agent.agentId,
         capabilities: agent.capabilities,
       })),
+      // Retained for native-backend compatibility, but is now scoped to the
+      // selected agent's approved discovery boundary.
+      federated_agents: discoverableAgents.map((agent) => ({
+        agent_id: agent.agentId,
+        system_id: this.systemId,
+        capabilities: agent.capabilities,
+      })),
+      capability_handshake: {
+        version: 'chat-v2-approved-capabilities-v1',
+        selected_agent_id: selectedAgentId,
+        selected_agent_capabilities: approvedCapabilities.selectedAgent.capabilities,
+        approved_subagents: approvedCapabilities.approvedSubagents.map((agent) => ({
+          agent_id: agent.agentId,
+          capabilities: agent.capabilities,
+        })),
+        cross_agent_isolation: 'selected-agent-only',
+      },
       memory_capsules: (request.memoryCapsules ?? []).map((capsule) => ({
         capsule_id: capsule.id,
         source_system_id: capsule.sourceSystemId,
@@ -340,9 +404,18 @@ export class HttpAgentAdapter implements ChatBackendAdapter {
         routing_mode: request.routingMode,
         target_agent_id: request.targetAgentId,
         workflow_run_id: request.workflowRunId,
+        session_id: request.sessionId,
+        idempotency_key: request.idempotencyKey,
         memory_policy: request.memoryCapsules ? 'explicit-capsules-only' : undefined,
         artifact_count: artifacts.length,
       },
+      ...(runtime ? {
+        runtime: {
+          provider: runtime.provider,
+          model: runtime.model,
+          selected_agent_id: runtime.selectedAgentId,
+        },
+      } : {}),
     };
   }
 
@@ -447,6 +520,7 @@ export function httpAdapterConfig(systemId: SystemId): HttpAdapterConfig | null 
     chatPath: process.env[`${prefix}_CHAT_PATH`] ?? '/v1/chat/stream',
     healthPath: process.env[`${prefix}_HEALTH_PATH`] ?? '/health',
     apiKey: process.env[`${prefix}_API_KEY`],
+    provider: process.env[`${prefix}_PROVIDER`]?.trim() || undefined,
     agentId: process.env[`${prefix}_AGENT_ID`],
     timeoutMs: Number(process.env[`${prefix}_TIMEOUT_MS`] ?? 10_000),
     protocol: parseProtocol(process.env[`${prefix}_PROTOCOL`]),

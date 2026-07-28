@@ -26,6 +26,12 @@ export type CollaborationRunInput = {
   historyEndsAtSourceMessage?: boolean;
   regeneratedFromMessageId?: string;
   retryMode?: 'retry' | 'regenerate';
+  /** Stable provider session identity. Defaults to one session per conversation and agent. */
+  sessionId?: string;
+  /** Stable caller-supplied operation identity for transport-level idempotency. */
+  idempotencyKey?: string;
+  /** Optional durable workflow run identity when this direct runner is resumed by a coordinator. */
+  workflowRunId?: string;
 };
 
 function participantWorkState(agentId: string) {
@@ -46,6 +52,36 @@ function forcedRouting(agentId: string): RoutingPlanRecord {
 function historyThroughSource(messages: MessageRecord[], sourceMessageId: string) {
   const index = messages.findIndex((message) => message.id === sourceMessageId);
   return index < 0 ? messages : messages.slice(0, index + 1);
+}
+
+function historyForSelectedAgent(
+  history: MessageRecord[],
+  routing: RoutingPlanRecord,
+  selectedAgentId: string,
+) {
+  if (routing.mode !== 'team' || selectedAgentId === routing.leadAgentId) return history;
+  return history.filter((message) => message.role !== 'assistant' || message.authorId === selectedAgentId);
+}
+
+export function sessionIdentity(conversation: ConversationRecord, agentId: string, requestedSessionId?: string) {
+  const requested = requestedSessionId?.trim();
+  // A caller identity names a logical conversation request, not a provider
+  // session. Namespace it with the selected agent so team members cannot
+  // resume or overwrite one another's provider session.
+  return requested
+    ? `${conversation.systemId}:${conversation.id}:${agentId}:caller-session:${requested}`
+    : `${conversation.systemId}:${conversation.id}:${agentId}`;
+}
+
+export function operationIdentity(input: CollaborationRunInput, agentId: string, sessionId: string) {
+  const requested = input.idempotencyKey?.trim();
+  // Keep retries/regenerations for one agent stable while preventing a caller
+  // key from deduplicating a sibling agent's authorized work.
+  if (requested) return `${sessionId}:caller-operation:${requested}`;
+  const operation = input.regeneratedFromMessageId
+    ? `${input.retryMode ?? 'regenerate'}:${input.regeneratedFromMessageId}`
+    : `message:${input.userMessage.id}`;
+  return `${sessionId}:${operation}:${agentId}`;
 }
 
 export async function* runCollaborativeReply(input: CollaborationRunInput): AsyncGenerator<StreamEvent> {
@@ -74,6 +110,8 @@ export async function* runCollaborativeReply(input: CollaborationRunInput): Asyn
   for (const agentId of routing.targetAgentIds) {
     if (signal.aborted) return;
     const runId = randomUUID();
+    const sessionId = sessionIdentity(conversation, agentId, input.sessionId);
+    const idempotencyKey = operationIdentity(input, agentId, sessionId);
     const state = participantWorkState(agentId);
     const retryLabel = input.regeneratedFromMessageId
       ? `${input.retryMode === 'retry' ? 'Retry' : 'Regeneration'} requested from response ${input.regeneratedFromMessageId}.`
@@ -121,22 +159,37 @@ export async function* runCollaborativeReply(input: CollaborationRunInput): Asyn
     }
 
     let content = '';
+    let lastStatus: string | null = null;
+    const deliveredArtifactKeys = new Set<string>();
     try {
       const latest = database.getConversation(conversation.id)!;
       const withoutCurrent = latest.messages.filter((message) => message.id !== assistantMessage.id);
-      const history = input.historyEndsAtSourceMessage
+      const availableHistory = input.historyEndsAtSourceMessage
         ? historyThroughSource(withoutCurrent, userMessage.id)
         : withoutCurrent;
-      for await (const item of adapter.streamReply({
+      const history = historyForSelectedAgent(availableHistory, routing, agentId);
+      const visibleParticipants = routing.mode === 'team' && agentId !== routing.leadAgentId
+        ? participants.filter((participant) => participant.agentId === agentId)
+        : participants;
+      // These are intentionally carried independently of provider/model/runtime
+      // selection. A transport can resume this exact agent session and reject a
+      // replayed operation without confusing it with a sibling agent's session.
+      const adapterRequest = {
         conversation: latest,
         userMessage,
         history,
         artifacts: attachedArtifacts,
         targetAgentId: agentId,
         routingMode: routing.mode,
-        participants,
+        participants: visibleParticipants,
+        workflowRunId: input.workflowRunId,
+        sessionId,
+        idempotencyKey,
+        retryMode: input.retryMode,
+        regeneratedFromMessageId: input.regeneratedFromMessageId,
         signal,
-      })) {
+      };
+      for await (const item of adapter.streamReply(adapterRequest)) {
         if (!deliveryConfirmed) {
           deliveryConfirmed = true;
           yield artifactDeliveryEvent({
@@ -151,6 +204,8 @@ export async function* runCollaborativeReply(input: CollaborationRunInput): Asyn
         }
         if (signal.aborted) break;
         if (item.type === 'status') {
+          if (item.status === lastStatus) continue;
+          lastStatus = item.status;
           const statusActivity = collaboration.addActivity({
             conversationId: conversation.id,
             agentId,
@@ -165,13 +220,19 @@ export async function* runCollaborativeReply(input: CollaborationRunInput): Asyn
           continue;
         }
         if (item.type === 'artifact') {
+          const artifactKey = `${item.artifact.filename}\u0000${item.artifact.mimeType}\u0000${item.artifact.contentBase64}`;
+          if (deliveredArtifactKeys.has(artifactKey)) continue;
+          deliveredArtifactKeys.add(artifactKey);
           const stored = await storeGeneratedArtifact(conversation.id, item.artifact);
           const artifact = database.addArtifact({
             conversationId: conversation.id,
             messageId: assistantMessage.id,
             ...stored,
           });
-          yield { type: 'artifact.created', runId, artifact };
+          // Storage locations are server-internal capability data. Persist them for
+          // download handling, but never put them on the event stream.
+          const { storagePath: _storagePath, ...publicArtifact } = artifact;
+          yield { type: 'artifact.created', runId, artifact: publicArtifact as ArtifactRecord };
           continue;
         }
 

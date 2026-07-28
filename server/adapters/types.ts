@@ -27,11 +27,14 @@ export interface AdapterRequest {
   history: MessageRecord[];
   artifacts?: ArtifactRecord[];
   targetAgentId: string;
+  selectedAgentId?: string;
   routingMode: RoutingMode;
   participants: ConversationParticipantRecord[];
   federatedAgents?: AgentRecord[];
   memoryCapsules?: MemoryCapsuleRecord[];
   workflowRunId?: string;
+  sessionId?: string;
+  idempotencyKey?: string;
   signal?: AbortSignal;
 }
 

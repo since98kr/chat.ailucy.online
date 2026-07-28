@@ -99,7 +99,14 @@ describe('HttpAgentAdapter federation payload', () => {
       target_system_id: 'letta',
       content: '승인된 최소 문맥',
     })]);
-    expect(received['federated_agents']).toHaveLength(2);
+    expect(received['federated_agents']).toEqual([{
+      agent_id: '[Letta] Lucy', system_id: 'letta', capabilities: ['memory'],
+    }]);
+    expect(received['capability_handshake']).toMatchObject({
+      selected_agent_id: '[Letta] Lucy',
+      approved_subagents: [],
+      cross_agent_isolation: 'selected-agent-only',
+    });
   });
 
   it('uses the OpenAI chat-completions contract and parses SSE deltas', async () => {
