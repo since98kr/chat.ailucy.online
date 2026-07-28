@@ -335,9 +335,25 @@ describe('HttpAgentAdapter', () => {
       targetAgentId: '[Hermes] Lucy',
       routingMode: 'direct',
       participants,
+      sessionId: 'hermes:conversation-1:[Hermes] Lucy:caller-session:openai-001',
+      idempotencyKey: 'hermes:conversation-1:[Hermes] Lucy:caller-operation:openai-001',
     })) items.push(item);
 
     expect(receivedBody.model).toBe('vision-model');
+    expect(receivedBody.hermes_parity).toEqual({
+      version: 'chat-v2-hermes-parity-v1',
+      session_id: 'hermes:conversation-1:[Hermes] Lucy:caller-session:openai-001',
+      idempotency_key: 'hermes:conversation-1:[Hermes] Lucy:caller-operation:openai-001',
+      runtime: { provider: 'hermes', model: 'vision-model', selected_agent_id: '[Hermes] Lucy' },
+      capability_handshake: {
+        version: 'chat-v2-approved-capabilities-v1',
+        selected_agent_id: '[Hermes] Lucy',
+        selected_agent_capabilities: ['orchestration'],
+        approved_subagents: [],
+        cross_agent_isolation: 'selected-agent-only',
+      },
+      cross_agent_isolation: 'selected-agent-only',
+    });
     const messages = receivedBody.messages as Array<{ role: string; content: string | OpenAiTestPart[] }>;
     const content = messages.at(-1)?.content;
     expect(Array.isArray(content)).toBe(true);

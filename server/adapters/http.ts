@@ -296,6 +296,16 @@ export class HttpAgentAdapter implements ChatBackendAdapter {
       runtimeModel,
     );
     const artifacts = await serializeArtifacts(request, this.config);
+    if (this.systemId === 'hermes' && !runtimeModel) {
+      throw new Error(`Hermes runtime model is not approved for selected agent: ${selectedAgentId}`);
+    }
+    const runtime = this.systemId === 'hermes'
+      ? sanitizeRuntimeIdentity({
+        provider: this.config.provider ?? 'hermes',
+        model: runtimeModel!,
+        selectedAgentId,
+      })
+      : undefined;
     if (this.config.protocol === 'openai') {
       const model = runtimeModel
         ?? targetAgentId
@@ -310,23 +320,37 @@ export class HttpAgentAdapter implements ChatBackendAdapter {
           tools: [RETURN_ARTIFACT_TOOL],
           tool_choice: 'auto',
         } : {}),
+        ...(runtime ? {
+          // Authorization is carried in a bounded transport extension, not
+          // inferred from prompt prose by an OpenAI-compatible endpoint.
+          hermes_parity: {
+            version: 'chat-v2-hermes-parity-v1',
+            session_id: request.sessionId,
+            idempotency_key: request.idempotencyKey,
+            runtime: {
+              provider: runtime.provider,
+              model: runtime.model,
+              selected_agent_id: runtime.selectedAgentId,
+            },
+            capability_handshake: {
+              version: 'chat-v2-approved-capabilities-v1',
+              selected_agent_id: selectedAgentId,
+              selected_agent_capabilities: approvedCapabilities.selectedAgent.capabilities,
+              approved_subagents: approvedCapabilities.approvedSubagents.map((agent) => ({
+                agent_id: agent.agentId,
+                capabilities: agent.capabilities,
+              })),
+              cross_agent_isolation: 'selected-agent-only',
+            },
+            cross_agent_isolation: 'selected-agent-only',
+          },
+        } : {}),
       };
-    }
-
-    if (this.systemId === 'hermes' && !runtimeModel) {
-      throw new Error(`Hermes runtime model is not approved for selected agent: ${selectedAgentId}`);
     }
     const discoverableAgents = [
       approvedCapabilities.selectedAgent,
       ...approvedCapabilities.approvedSubagents,
     ];
-    const runtime = this.systemId === 'hermes'
-      ? sanitizeRuntimeIdentity({
-        provider: this.config.provider ?? 'hermes',
-        model: runtimeModel!,
-        selectedAgentId,
-      })
-      : undefined;
     return {
       stream: true,
       system_id: this.systemId,

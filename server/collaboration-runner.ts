@@ -63,12 +63,21 @@ function historyForSelectedAgent(
   return history.filter((message) => message.role !== 'assistant' || message.authorId === selectedAgentId);
 }
 
-function sessionIdentity(conversation: ConversationRecord, agentId: string, requestedSessionId?: string) {
-  return requestedSessionId?.trim() || `${conversation.systemId}:${conversation.id}:${agentId}`;
+export function sessionIdentity(conversation: ConversationRecord, agentId: string, requestedSessionId?: string) {
+  const requested = requestedSessionId?.trim();
+  // A caller identity names a logical conversation request, not a provider
+  // session. Namespace it with the selected agent so team members cannot
+  // resume or overwrite one another's provider session.
+  return requested
+    ? `${conversation.systemId}:${conversation.id}:${agentId}:caller-session:${requested}`
+    : `${conversation.systemId}:${conversation.id}:${agentId}`;
 }
 
-function operationIdentity(input: CollaborationRunInput, agentId: string, sessionId: string) {
-  if (input.idempotencyKey?.trim()) return input.idempotencyKey.trim();
+export function operationIdentity(input: CollaborationRunInput, agentId: string, sessionId: string) {
+  const requested = input.idempotencyKey?.trim();
+  // Keep retries/regenerations for one agent stable while preventing a caller
+  // key from deduplicating a sibling agent's authorized work.
+  if (requested) return `${sessionId}:caller-operation:${requested}`;
   const operation = input.regeneratedFromMessageId
     ? `${input.retryMode ?? 'regenerate'}:${input.regeneratedFromMessageId}`
     : `message:${input.userMessage.id}`;

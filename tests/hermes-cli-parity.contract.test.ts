@@ -4,6 +4,9 @@ import type { AddressInfo } from 'node:net';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
+import { operationIdentity, sessionIdentity } from '../server/collaboration-runner.js';
+import type { CollaborationRunInput } from '../server/collaboration-runner.js';
+import type { ConversationRecord } from '../shared/contracts.js';
 
 type BackendRequest = {
   agent_id: string;
@@ -30,6 +33,22 @@ describe('Hermes CLI parity and approved subagent conversation contracts', () =>
     if (directory) await rm(directory, { recursive: true, force: true });
     server = undefined;
     directory = undefined;
+  });
+
+  it('scopes caller identities to the selected agent and keeps retries stable', () => {
+    const conversation = { id: 'conversation-scope-test', systemId: 'hermes' } as ConversationRecord;
+    const input = {
+      idempotencyKey: 'caller-operation-001',
+      userMessage: { id: 'message-001' },
+    } as CollaborationRunInput;
+    const xixiSession = sessionIdentity(conversation, 'Xixi', 'caller-session-001');
+    const lynnSession = sessionIdentity(conversation, 'Lynn', 'caller-session-001');
+    const xixiOperation = operationIdentity(input, 'Xixi', xixiSession);
+
+    expect(xixiSession).not.toBe(lynnSession);
+    expect(xixiOperation).not.toBe(operationIdentity(input, 'Lynn', lynnSession));
+    expect(sessionIdentity(conversation, 'Xixi', 'caller-session-001')).toBe(xixiSession);
+    expect(operationIdentity(input, 'Xixi', xixiSession)).toBe(xixiOperation);
   });
 
   it('executes one authenticated Hermes session with capability-scoped agents, runtime identity, and isolated subagent histories', async () => {
