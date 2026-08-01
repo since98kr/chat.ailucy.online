@@ -344,7 +344,7 @@ export function observeToolProbe(probe) {
 export function cleanupToolProbe(probe) {
   if (!probe?.path) return;
   try {
-    rmSync(probe.path, { force: true });
+    rmSync(probe.path, { recursive: true, force: true });
   } catch {
     // Best-effort cleanup is repeated when the session closes.
   }
