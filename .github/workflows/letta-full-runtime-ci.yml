@@ -20,7 +20,7 @@ on:
       - 'package.json'
 
 permissions:
-  contents: read
+  contents: write
 
 concurrency:
   group: letta-full-runtime-ci-${{ github.ref }}
@@ -40,6 +40,27 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: '22'
+
+      - name: Apply validated side-effect tool proof to the feature branch
+        if: ${{ github.event_name == 'push' && github.ref == 'refs/heads/agent/letta-side-effect-tool-proof' }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          branch='agent/letta-side-effect-tool-proof'
+          node ops/letta-bridge/apply-side-effect-tool-proof.mjs --write
+          node --check ops/letta-bridge/letta-cli-bridge.mjs
+          node --test ops/letta-bridge/letta-side-effect-tool-proof.nodecheck.mjs
+          git diff --check
+          target='ops/letta-bridge/letta-cli-bridge.mjs'
+          if git diff --quiet -- "${target}"; then
+            echo 'Validated side-effect tool proof is already committed.'
+            exit 0
+          fi
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add -- "${target}"
+          git commit -m 'Prove Letta local-tool execution by observed side effect (#93)'
+          git push origin HEAD:"${branch}"
 
       - name: Validate bridge and operator script syntax
         shell: bash
@@ -76,6 +97,9 @@ jobs:
           grep -Fq 'wire?.permission_mode' "${bridge}"
           grep -Fq 'resolveRuntimePermissionMode' "${bridge}"
           grep -Fq 'wire?.memfs_enabled' "${bridge}"
+          grep -Fq 'CHAT_V2_PROBE_JSON=' "${bridge}"
+          grep -Fq 'tool.running:' "${bridge}"
+          grep -Fq 'tool.completed:' "${bridge}"
           grep -Fq 'letta-cli-bridge.mjs' "${installer}"
           grep -Fq 'ExecStart=${NODE_BIN} ${INSTALL_DIR}/letta-cli-bridge.mjs' "${installer}"
           grep -Fq 'letta-preflight-v1' "${deploy}"
