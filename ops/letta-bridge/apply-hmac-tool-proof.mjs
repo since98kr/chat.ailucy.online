@@ -25,8 +25,9 @@ const probeBlock = `export function createToolProbe(secret) {
   }
   const challenge = randomUUID().replaceAll('-', '');
   const expected = createHmac('sha256', secret).update(challenge).digest('hex');
-  const command = 'node -e \'const c=require("node:crypto");process.stdout.write(c.createHmac("sha256",process.env.'
-    + TOOL_PROBE_SECRET_ENV + ').update("' + challenge + '").digest("hex"))\'';
+  const script = 'const c=require("node:crypto");process.stdout.write(c.createHmac("sha256",process.env.'
+    + TOOL_PROBE_SECRET_ENV + ').update(' + JSON.stringify(challenge) + ').digest("hex"))';
+  const command = 'node -e ' + JSON.stringify(script);
   return {
     secret,
     challenge,
