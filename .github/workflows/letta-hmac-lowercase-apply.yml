@@ -54,9 +54,9 @@ jobs:
 
           let test = fs.readFileSync(testPath, 'utf8');
           const anchor = "  assert.equal(observeToolProbe(probe, `CHAT_V2_TOOL_PROBE_RESULT=${'b'.repeat(64)}`), false);";
-          const addition = `${anchor}\n  assert.equal(observeToolProbe(probe, `CHAT_V2_TOOL_PROBE_RESULT=${probe.expected.toUpperCase()}`), false);`;
+          const uppercaseLine = "  assert.equal(observeToolProbe(probe, `CHAT_V2_TOOL_PROBE_RESULT=${probe.expected.toUpperCase()}`), false);";
           if (!test.includes(anchor)) throw new Error('uppercase rejection test anchor not found');
-          test = test.replace(anchor, addition);
+          test = test.replace(anchor, anchor + '\n' + uppercaseLine);
           fs.writeFileSync(testPath, test);
           NODE
           node --check ops/letta-bridge/letta-cli-bridge.mjs
