@@ -1,0 +1,74 @@
+name: Apply lowercase HMAC proof contract
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - '.github/workflows/letta-hmac-lowercase-apply.yml'
+      - 'ops/letta-bridge/letta-cli-bridge.mjs'
+      - 'ops/letta-bridge/letta-side-effect-tool-proof.nodecheck.mjs'
+
+permissions:
+  contents: write
+
+concurrency:
+  group: letta-hmac-lowercase-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  apply:
+    if: ${{ github.head_ref == 'agent/letta-hmac-tool-proof' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.ref }}
+          fetch-depth: 0
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Apply lowercase-only HMAC verification
+        shell: bash
+        run: |
+          set -euo pipefail
+          branch='agent/letta-hmac-tool-proof'
+          git fetch origin "${branch}"
+          git rebase "origin/${branch}"
+          node <<'NODE'
+          const fs = require('node:fs');
+          const bridgePath = 'ops/letta-bridge/letta-cli-bridge.mjs';
+          const testPath = 'ops/letta-bridge/letta-side-effect-tool-proof.nodecheck.mjs';
+          let bridge = fs.readFileSync(bridgePath, 'utf8');
+          const beforeRegex = "const match = /CHAT_V2_TOOL_PROBE_RESULT=([a-f0-9]{64})\\b/i.exec(value);";
+          const afterRegex = "const match = /CHAT_V2_TOOL_PROBE_RESULT=([a-f0-9]{64})\\b/.exec(value);";
+          if (!bridge.includes(beforeRegex)) throw new Error('HMAC regex anchor not found');
+          bridge = bridge.replace(beforeRegex, afterRegex);
+          const beforeBuffer = "const supplied = Buffer.from(match[1].toLowerCase(), 'utf8');";
+          const afterBuffer = "const supplied = Buffer.from(match[1], 'utf8');";
+          if (!bridge.includes(beforeBuffer)) throw new Error('HMAC normalization anchor not found');
+          bridge = bridge.replace(beforeBuffer, afterBuffer);
+          fs.writeFileSync(bridgePath, bridge);
+
+          let test = fs.readFileSync(testPath, 'utf8');
+          const anchor = "  assert.equal(observeToolProbe(probe, `CHAT_V2_TOOL_PROBE_RESULT=${'b'.repeat(64)}`), false);";
+          const addition = `${anchor}\n  assert.equal(observeToolProbe(probe, `CHAT_V2_TOOL_PROBE_RESULT=${probe.expected.toUpperCase()}`), false);`;
+          if (!test.includes(anchor)) throw new Error('uppercase rejection test anchor not found');
+          test = test.replace(anchor, addition);
+          fs.writeFileSync(testPath, test);
+          NODE
+          node --check ops/letta-bridge/letta-cli-bridge.mjs
+          node --test ops/letta-bridge/letta-side-effect-tool-proof.nodecheck.mjs
+          git diff --check
+          targets=(ops/letta-bridge/letta-cli-bridge.mjs ops/letta-bridge/letta-side-effect-tool-proof.nodecheck.mjs)
+          if git diff --quiet -- "${targets[@]}"; then
+            echo 'Lowercase-only HMAC contract is already committed.'
+            exit 0
+          fi
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add -- "${targets[@]}"
+          git commit -m 'Reject uppercase HMAC proof output (#93)'
+          git push origin HEAD:"${branch}"
