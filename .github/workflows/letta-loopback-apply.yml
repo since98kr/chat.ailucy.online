@@ -1,0 +1,59 @@
+name: Apply Letta loopback proof
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - '.github/workflows/letta-loopback-apply.yml'
+      - 'ops/letta-bridge/apply-loopback-tool-proof.mjs'
+      - 'ops/letta-bridge/letta-cli-bridge.mjs'
+      - 'ops/letta-bridge/letta-side-effect-tool-proof.nodecheck.mjs'
+      - 'e2e-staging/letta-full-runtime.spec.ts'
+
+permissions:
+  contents: write
+
+concurrency:
+  group: letta-loopback-apply-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  apply:
+    if: ${{ github.head_ref == 'agent/letta-loopback-tool-proof' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.ref }}
+          fetch-depth: 0
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Apply and verify bundled loopback proof
+        shell: bash
+        run: |
+          set -euo pipefail
+          branch='agent/letta-loopback-tool-proof'
+          git fetch origin "${branch}"
+          git rebase "origin/${branch}"
+          node ops/letta-bridge/apply-loopback-tool-proof.mjs --write
+          node --check ops/letta-bridge/letta-cli-bridge.mjs
+          node --test ops/letta-bridge/letta-side-effect-tool-proof.nodecheck.mjs
+          git diff --check
+          targets=(
+            ops/letta-bridge/letta-cli-bridge.mjs
+            ops/letta-bridge/letta-side-effect-tool-proof.nodecheck.mjs
+            e2e-staging/letta-full-runtime.spec.ts
+          )
+          if git diff --quiet -- "${targets[@]}"; then
+            echo 'Loopback proof is already committed.'
+            exit 0
+          fi
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add -- "${targets[@]}"
+          git commit -m 'Prove Letta local-tool execution through loopback callback (#93)'
+          git push origin HEAD:"${branch}"
