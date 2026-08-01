@@ -45,7 +45,7 @@ jobs:
           node-version: '22'
 
       - name: Apply atomic HMAC proof redaction on the feature branch
-        if: ${{ github.event_name == 'pull_request' && github.head_ref == 'agent/letta-hmac-wire-proof' }}
+        if: ${{ (github.event_name == 'pull_request' && github.head_ref == 'agent/letta-hmac-wire-proof') || (github.event_name == 'push' && github.ref == 'refs/heads/agent/letta-hmac-wire-proof') }}
         shell: bash
         run: |
           set -euo pipefail
