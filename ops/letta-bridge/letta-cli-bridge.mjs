@@ -3,6 +3,8 @@ import { createServer } from 'node:http';
 import { spawn } from 'node:child_process';
 import { createInterface } from 'node:readline';
 import { timingSafeEqual } from 'node:crypto';
+import { readFileSync } from 'node:fs';
+import { join, resolve as resolvePath } from 'node:path';
 import { pathToFileURL } from 'node:url';
 
 const MAX_BODY_BYTES = 1_048_576;
@@ -10,6 +12,8 @@ const MAX_CAPABILITY_ITEMS = 200;
 const MAX_PROMPT_ITEMS = 60;
 const SAFE_LABEL = /^[A-Za-z0-9_./:@-][A-Za-z0-9_./:@ -]{0,159}$/;
 const SKILL_SOURCES = new Set(['bundled', 'global', 'agent', 'project']);
+const VALID_PERMISSION_MODES = new Set(['unrestricted', 'standard', 'acceptEdits', 'strict']);
+const DEFAULT_PERMISSION_MODE = 'unrestricted';
 
 function integer(value, fallback, minimum = 1) {
   const parsed = Number.parseInt(String(value ?? ''), 10);
@@ -43,6 +47,58 @@ function safeLabel(value) {
 
 function uniqueLabels(values) {
   return [...new Set(values.map(safeLabel).filter(Boolean))].slice(0, MAX_CAPABILITY_ITEMS);
+}
+
+function migratePermissionMode(value) {
+  if (typeof value !== 'string') return null;
+  const normalized = value.trim();
+  if (VALID_PERMISSION_MODES.has(normalized)) return normalized;
+  if (normalized === 'default') return 'standard';
+  if (normalized === 'bypassPermissions' || normalized === 'fullAccess') return 'unrestricted';
+  return null;
+}
+
+function permissionModeFromArgs(extraArgs) {
+  if (extraArgs.includes('--yolo')) return 'unrestricted';
+  for (let index = 0; index < extraArgs.length; index += 1) {
+    const item = extraArgs[index];
+    if (item === '--permission-mode') return migratePermissionMode(extraArgs[index + 1]);
+    if (item.startsWith('--permission-mode=')) return migratePermissionMode(item.slice('--permission-mode='.length));
+  }
+  return null;
+}
+
+function permissionModeFromSettings(path) {
+  try {
+    const parsed = JSON.parse(readFileSync(path, 'utf8'));
+    return migratePermissionMode(parsed?.permissions?.mode);
+  } catch {
+    return null;
+  }
+}
+
+export function resolveRuntimePermissionMode(options = {}) {
+  const cwd = resolvePath(options.cwd || process.cwd());
+  const homeDir = options.homeDir ?? process.env.HOME ?? '';
+  const xdgConfigHome = options.xdgConfigHome
+    ?? process.env.XDG_CONFIG_HOME
+    ?? (homeDir ? join(homeDir, '.config') : '');
+  const extraArgs = Array.isArray(options.extraArgs) ? options.extraArgs : [];
+  const cliMode = permissionModeFromArgs(extraArgs);
+  if (cliMode) return cliMode;
+
+  const sources = [];
+  if (xdgConfigHome) sources.push(join(xdgConfigHome, 'letta', 'settings.json'));
+  if (homeDir) sources.push(join(homeDir, '.letta', 'settings.json'));
+  sources.push(join(cwd, '.letta', 'settings.json'));
+  sources.push(join(cwd, '.letta', 'settings.local.json'));
+
+  let configuredMode = null;
+  for (const sourcePath of sources) {
+    const mode = permissionModeFromSettings(sourcePath);
+    if (mode) configuredMode = mode;
+  }
+  return configuredMode || DEFAULT_PERMISSION_MODE;
 }
 
 function normalizeMcpServers(value) {
@@ -127,7 +183,7 @@ export function isAuthorized(header, token) {
   return supplied.length === expected.length && timingSafeEqual(supplied, expected);
 }
 
-export function extractRuntimeCapabilities(wire, fallbackModel = '') {
+export function extractRuntimeCapabilities(wire, fallbackModel = '', fallbackPermissionMode = '') {
   const skillSources = Array.isArray(wire?.skill_sources)
     ? [...new Set(wire.skill_sources.filter((source) => SKILL_SOURCES.has(source)))]
     : [];
@@ -137,7 +193,7 @@ export function extractRuntimeCapabilities(wire, fallbackModel = '') {
     skillSources,
     slashCommands: uniqueLabels(Array.isArray(wire?.slash_commands) ? wire.slash_commands : []),
     mcpServers: normalizeMcpServers(wire?.mcp_servers),
-    permissionMode: safeLabel(wire?.permission_mode) || null,
+    permissionMode: safeLabel(wire?.permission_mode) || safeLabel(fallbackPermissionMode) || null,
     memfsEnabled: typeof wire?.memfs_enabled === 'boolean' ? wire.memfs_enabled : null,
     sessionId: safeLabel(wire?.session_id) || null,
   }, Array.isArray(wire?.mcp_servers)), Array.isArray(wire?.slash_commands));
@@ -384,12 +440,16 @@ class LucySession {
     this.stderr = '';
     this.cache = new Map();
     this.toolNames = new Map();
+    const startupPermissionMode = resolveRuntimePermissionMode({
+      cwd: config.cwd,
+      extraArgs: config.extraArgs,
+    });
     this.capabilities = {
       model: safeLabel(config.runtimeModelId),
       tools: [], skillSources: [], slashCommands: [], mcpServers: [],
       mcpAdvertised: false,
       slashCommandsAdvertised: false,
-      permissionMode: null, memfsEnabled: null, sessionId: null,
+      permissionMode: startupPermissionMode, memfsEnabled: null, sessionId: null,
     };
   }
 
@@ -438,7 +498,11 @@ class LucySession {
     }
 
     if (wire?.type === 'system' && wire.subtype === 'init') {
-      this.capabilities = mergeCapabilities(this.capabilities, extractRuntimeCapabilities(wire, this.config.runtimeModelId));
+      this.capabilities = mergeCapabilities(this.capabilities, extractRuntimeCapabilities(
+        wire,
+        this.config.runtimeModelId,
+        this.capabilities.permissionMode,
+      ));
       try {
         validateRuntimeCapabilities(this.capabilities, this.config);
       } catch (error) {
@@ -600,7 +664,11 @@ class SessionManager {
       tools: [], skillSources: [], slashCommands: [], mcpServers: [],
       mcpAdvertised: false,
       slashCommandsAdvertised: false,
-      permissionMode: null, memfsEnabled: null, sessionId: null,
+      permissionMode: resolveRuntimePermissionMode({
+        cwd: this.config.cwd,
+        extraArgs: this.config.extraArgs,
+      }),
+      memfsEnabled: null, sessionId: null,
     });
     return {
       ...capabilitySummary(aggregate),
