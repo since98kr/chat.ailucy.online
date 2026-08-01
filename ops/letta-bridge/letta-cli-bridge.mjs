@@ -2,7 +2,7 @@
 import { createServer } from 'node:http';
 import { spawn } from 'node:child_process';
 import { createInterface } from 'node:readline';
-import { randomUUID, timingSafeEqual } from 'node:crypto';
+import { createHmac, randomUUID, timingSafeEqual } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 import { join, resolve as resolvePath } from 'node:path';
 import { pathToFileURL } from 'node:url';
@@ -15,9 +15,9 @@ const SKILL_SOURCES = new Set(['bundled', 'global', 'agent', 'project']);
 const VALID_PERMISSION_MODES = new Set(['unrestricted', 'standard', 'acceptEdits', 'strict']);
 const DEFAULT_PERMISSION_MODE = 'unrestricted';
 const TOOL_PROBE_MARKER = '<CHAT_V2_VERIFY_LOCAL_TOOL>';
-const TOOL_PROBE_STATUS = 'loopback_callback_probe';
-const TOOL_PROBE_MAX_BODY_BYTES = 128;
-const LOOPBACK_ADDRESSES = new Set(['127.0.0.1', '::1', '::ffff:127.0.0.1']);
+const TOOL_PROBE_STATUS = 'hmac_challenge_probe';
+const TOOL_PROBE_SECRET_ENV = 'CHAT_V2_TOOL_PROBE_SECRET';
+const TOOL_PROBE_RESULT_PREFIX = 'CHAT_V2_TOOL_PROBE_RESULT=';
 
 function integer(value, fallback, minimum = 1) {
   const parsed = Number.parseInt(String(value ?? ''), 10);
@@ -318,111 +318,66 @@ function toolProbeRequested(message) {
   return messageText(message).includes(TOOL_PROBE_MARKER);
 }
 
-export async function createToolProbe() {
-  const id = randomUUID().replaceAll('-', '');
-  const token = randomUUID().replaceAll('-', '');
-  const probe = {
-    id,
-    token,
-    url: '',
-    command: '',
+export function createToolProbe(secret) {
+  if (typeof secret !== 'string' || secret.length < 32) {
+    throw new Error('A session tool-proof secret is required');
+  }
+  const challenge = randomUUID().replaceAll('-', '');
+  const expected = createHmac('sha256', secret).update(challenge).digest('hex');
+  const script = 'const c=require("node:crypto");process.stdout.write(c.createHmac("sha256",process.env.'
+    + TOOL_PROBE_SECRET_ENV + ').update(' + JSON.stringify(challenge) + ').digest("hex"))';
+  const command = 'node -e ' + JSON.stringify(script);
+  return {
+    secret,
+    challenge,
+    expected,
+    command,
     observed: false,
     runningEmitted: false,
     completedEmitted: false,
-    server: null,
-    onObserved: null,
   };
-  const server = createServer((request, response) => {
-    const remoteAddress = String(request.socket.remoteAddress || '');
-    if (!LOOPBACK_ADDRESSES.has(remoteAddress)) {
-      response.writeHead(403).end();
-      return;
-    }
-    if (request.method !== 'POST' || request.url !== '/' + id) {
-      response.writeHead(404).end();
-      return;
-    }
-    const chunks = [];
-    let bytes = 0;
-    let oversized = false;
-    request.on('data', (chunk) => {
-      bytes += chunk.length;
-      if (bytes > TOOL_PROBE_MAX_BODY_BYTES) oversized = true;
-      else chunks.push(Buffer.from(chunk));
-    });
-    request.on('end', () => {
-      if (oversized) {
-        response.writeHead(413).end();
-        return;
-      }
-      const body = Buffer.concat(chunks).toString('utf8');
-      if (body !== token) {
-        response.writeHead(403).end();
-        return;
-      }
-      if (!probe.observed) {
-        probe.observed = true;
-        probe.onObserved?.();
-      }
-      response.writeHead(204).end();
-    });
-    request.on('error', () => {
-      if (!response.headersSent) response.writeHead(400);
-      response.end();
-    });
-  });
-  probe.server = server;
-  await new Promise((resolve, reject) => {
-    const onError = (error) => reject(error);
-    server.once('error', onError);
-    server.listen(0, '127.0.0.1', () => {
-      server.off('error', onError);
-      resolve();
-    });
-  });
-  server.on('error', () => {});
-  server.unref?.();
-  const address = server.address();
-  if (!address || typeof address === 'string') {
-    cleanupToolProbe(probe);
-    throw new Error('Could not allocate the local tool proof endpoint');
-  }
-  probe.url = 'http://127.0.0.1:' + address.port + '/' + id;
-  probe.command = "/usr/bin/curl --fail --silent --show-error --max-time 10 --request POST --header 'Content-Type: text/plain' --data-binary '" + token + "' '" + probe.url + "'";
-  return probe;
 }
 
-export function observeToolProbe(probe) {
-  return probe?.observed === true;
+export function observeToolProbe(probe, value) {
+  if (!probe || typeof value !== 'string') return false;
+  const match = /CHAT_V2_TOOL_PROBE_RESULT=([a-f0-9]{64})\b/i.exec(value);
+  if (!match) return false;
+  const supplied = Buffer.from(match[1].toLowerCase(), 'utf8');
+  const expected = Buffer.from(probe.expected, 'utf8');
+  if (supplied.length !== expected.length || !timingSafeEqual(supplied, expected)) return false;
+  probe.observed = true;
+  return true;
 }
 
 export function cleanupToolProbe(probe) {
   if (!probe) return;
-  probe.onObserved = null;
-  try {
-    probe.server?.closeAllConnections?.();
-    probe.server?.close();
-  } catch {
-    // The listener is loopback-only and best-effort cleanup also runs on session shutdown.
-  }
-  probe.server = null;
+  probe.secret = '';
+  probe.challenge = '';
+  probe.expected = '';
+  probe.command = '';
 }
 
 export function redactToolProbeText(value, probe) {
   if (typeof value !== 'string' || !probe) return value;
-  return value.split(probe.url).join('[tool-probe-url-redacted]')
-    .split(probe.token).join('[tool-probe-token-redacted]')
-    .split(probe.id).join('[tool-probe-id-redacted]');
+  return value.split(probe.command).join('[tool-probe-command-redacted]')
+    .split(probe.secret).join('[tool-probe-secret-redacted]')
+    .split(probe.challenge).join('[tool-probe-challenge-redacted]')
+    .split(probe.expected).join('[verified-tool-hmac-redacted]');
 }
 
 function toolProbeInstructions(probe) {
-  const payload = JSON.stringify({ url: probe.url, token: probe.token, command: probe.command });
+  const payload = JSON.stringify({
+    command: probe.command,
+    description: 'Compute the required verification digest',
+    result_prefix: TOOL_PROBE_RESULT_PREFIX,
+  });
   return [
     '<CHAT_V2_LOCAL_TOOL_PROBE>',
     'This is an automated proof of real local CLI tool execution.',
-    'Before producing any assistant text, invoke the advertised Bash tool and run the exact command from the JSON payload without changing or simulating it.',
-    'The command performs one harmless POST to a bridge-owned loopback endpoint. A textual claim is not accepted as proof.',
-    'Do not mention or reproduce the URL, token, command, port, or callback identifier in your answer.',
+    'The expected result depends on a secret available only in the CLI process environment and cannot be inferred from this prompt.',
+    'Invoke the advertised Bash tool exactly once. Use the command and description from the JSON payload without changing, simulating, or explaining the command.',
+    'After Bash succeeds, copy its stdout exactly after the result_prefix in your final one-sentence answer and also state the exact runtime model identifier.',
+    'A claim without the exact Bash stdout fails verification. Do not reveal the command, environment variable name, challenge, secret, or raw digest except in the required prefixed result.',
     'CHAT_V2_PROBE_JSON=' + payload,
     '</CHAT_V2_LOCAL_TOOL_PROBE>',
   ].join('\n');
@@ -558,6 +513,7 @@ class LucySession {
     this.stderr = '';
     this.cache = new Map();
     this.toolNames = new Map();
+    this.toolProbeSecret = randomUUID().replaceAll('-', '') + randomUUID().replaceAll('-', '');
     const startupPermissionMode = resolveRuntimePermissionMode({
       cwd: config.cwd,
       extraArgs: config.extraArgs,
@@ -591,7 +547,7 @@ class LucySession {
 
     this.child = spawn(this.config.command, spawnArguments(this.config), {
       cwd: this.config.cwd,
-      env: process.env,
+      env: { ...process.env, [TOOL_PROBE_SECRET_ENV]: this.toolProbeSecret },
       stdio: ['pipe', 'pipe', 'pipe'],
       shell: false,
     });
@@ -657,9 +613,10 @@ class LucySession {
         this.completePending(new Error('Lucy CLI runtime request did not complete successfully'));
         return;
       }
+      const rawFinalText = typeof wire.result === 'string' ? wire.result : pending.accumulated;
       if (pending.probe) {
-        if (!observeToolProbe(pending.probe)) {
-          this.completePending(new Error('Lucy CLI runtime did not complete the verified loopback tool probe'));
+        if (!observeToolProbe(pending.probe, rawFinalText)) {
+          this.completePending(new Error('Lucy CLI runtime did not complete the verified HMAC tool probe'));
           return;
         }
         if (!pending.probe.runningEmitted) {
@@ -671,7 +628,6 @@ class LucySession {
           pending.onItem({ status: 'tool.completed:' + TOOL_PROBE_STATUS });
         }
       }
-      const rawFinalText = typeof wire.result === 'string' ? wire.result : pending.accumulated;
       const finalText = pending.probe ? redactToolProbeText(rawFinalText, pending.probe) : rawFinalText;
       if (pending.probe && finalText) pending.onItem({ delta: finalText });
       else if (!pending.accumulated && finalText) pending.onItem({ delta: finalText });
@@ -740,7 +696,7 @@ class LucySession {
     onItem({ status: `runtime.mcp_advertised:${summary.mcp_advertised === true}` });
     onItem({ status: `runtime.slash_commands_advertised:${summary.slash_commands_advertised === true}` });
     onItem({ status: `runtime.capabilities:tools=${summary.tool_count};skill_sources=${summary.skill_source_count};mcp=${summary.mcp_server_count};commands=${summary.slash_command_count};memfs=${summary.memfs_enabled === true}` });
-    const probe = toolProbeRequested(current) ? await createToolProbe() : null;
+    const probe = toolProbeRequested(current) ? createToolProbe(this.toolProbeSecret) : null;
     const prompt = [
       buildTurnPrompt(payload, this.turns === 0, this.capabilities),
       probe ? toolProbeInstructions(probe) : '',
@@ -761,13 +717,6 @@ class LucySession {
         probe,
       };
       this.pending = pending;
-      if (probe) {
-        probe.onObserved = () => {
-          if (this.pending !== pending || probe.runningEmitted) return;
-          probe.runningEmitted = true;
-          pending.onItem({ status: 'tool.running:' + TOOL_PROBE_STATUS });
-        };
-      }
       signal?.addEventListener('abort', abortHandler, { once: true });
       this.child.stdin.write(`${JSON.stringify({ type: 'user', message: { role: 'user', content: prompt } })}\n`, (error) => {
         if (error) this.completePending(new Error('Lucy CLI runtime input failed'));
