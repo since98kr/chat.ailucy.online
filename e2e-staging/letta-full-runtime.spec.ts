@@ -74,10 +74,11 @@ test('real Letta Lucy reports its CLI model, advertises full capability, and exe
       data: {
         content: [
           '<CHAT_V2_VERIFY_LOCAL_TOOL>',
-          'Complete the injected automated local-tool verification before answering.',
-          'Invoke the bridge-provided Bash callback command exactly; a textual claim is not accepted as proof.',
-          'Then answer in one sentence: state the exact runtime model identifier you are using and confirm that the verified local CLI tool operation completed.',
-          'Do not reproduce any callback URL, token, command, port, or identifier. Do not guess the model and do not answer that you do not know.',
+          'Complete the injected environment-keyed local-tool verification before answering.',
+          'Invoke the bridge-provided Bash command exactly with its supplied description, then copy the command stdout into the required result field.',
+          'The expected HMAC depends on a secret that is not present in this prompt, so a textual claim or guessed digest is invalid.',
+          'In the same one-sentence answer, state the exact runtime model identifier you are using.',
+          'Do not reproduce the command, environment variable, challenge, secret, or any unredacted digest beyond the required result field. Do not guess the model.',
         ].join(' '),
         artifactIds: [],
       },
@@ -106,14 +107,15 @@ test('real Letta Lucy reports its CLI model, advertises full capability, and exe
     expect(statuses).toContain('runtime.slash_commands_advertised:true');
     expect(capabilityStatus?.memfs).toBe(true);
 
-    const runningIndex = statuses.indexOf('tool.running:loopback_callback_probe');
-    const completedIndex = statuses.indexOf('tool.completed:loopback_callback_probe');
+    const runningIndex = statuses.indexOf('tool.running:hmac_challenge_probe');
+    const completedIndex = statuses.indexOf('tool.completed:hmac_challenge_probe');
     expect(runningIndex).toBeGreaterThanOrEqual(0);
     expect(completedIndex).toBeGreaterThan(runningIndex);
 
     const answer = responseText(events);
     expect(answer).toContain(model);
-    expect(answer).not.toMatch(/tool-probe-url|tool-probe-token|127\.0\.0\.1:\d+\/[0-9a-f]{32}/i);
+    expect(answer).toContain('[verified-tool-hmac-redacted]');
+    expect(answer).not.toMatch(/CHAT_V2_TOOL_PROBE_SECRET|[a-f0-9]{64}/i);
     expect(answer.toLowerCase()).not.toMatch(/do not know|don't know|모르|알 수 없/);
     expect(events.some((event) => event.type === 'run.completed')).toBe(true);
     expect(events.some((event) => event.type === 'run.failed')).toBe(false);

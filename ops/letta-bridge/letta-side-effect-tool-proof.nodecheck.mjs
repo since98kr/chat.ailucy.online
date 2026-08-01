@@ -41,27 +41,29 @@ function runtimeConfig(cwd, fixture) {
   };
 }
 
-test('loopback proof accepts only an exact bounded POST and closes cleanly', async (t) => {
-  const exact = await createToolProbe();
-  t.after(() => cleanupToolProbe(exact));
-  assert.match(exact.url, /^http:\/\/127\.0\.0\.1:\d+\/[0-9a-f]{32}$/);
-  assert.equal((await fetch(exact.url, { method: 'GET' })).status, 404);
-  assert.equal((await fetch(exact.url, { method: 'POST', body: 'wrong-token' })).status, 403);
-  assert.equal(observeToolProbe(exact), false);
-  assert.equal((await fetch(exact.url, { method: 'POST', body: exact.token })).status, 204);
-  assert.equal(observeToolProbe(exact), true);
-
-  const oversized = await createToolProbe();
-  t.after(() => cleanupToolProbe(oversized));
-  assert.equal((await fetch(oversized.url, { method: 'POST', body: 'x'.repeat(129) })).status, 413);
-  assert.equal(observeToolProbe(oversized), false);
+test('HMAC proof cannot be guessed from the prompt and accepts only the exact Bash result', () => {
+  const secret = 'a'.repeat(64);
+  const probe = createToolProbe(secret);
+  assert.equal(probe.command.includes(secret), false);
+  assert.equal(probe.command.includes(probe.challenge), true);
+  assert.equal(observeToolProbe(probe, 'claimed success'), false);
+  assert.equal(observeToolProbe(probe, `CHAT_V2_TOOL_PROBE_RESULT=${'b'.repeat(64)}`), false);
+  assert.equal(observeToolProbe(probe, `CHAT_V2_TOOL_PROBE_RESULT=${probe.expected.toUpperCase()}`), false);
+  assert.equal(observeToolProbe(probe, `model ok CHAT_V2_TOOL_PROBE_RESULT=${probe.expected}`), true);
+  cleanupToolProbe(probe);
+  assert.equal(probe.secret, '');
+  assert.equal(probe.command, '');
+  assert.equal(probe.expected, '');
 });
 
-test('bridge emits running then completed only after a real loopback tool side effect', async (t) => {
-  const fixtureDir = await mkdtemp(join(tmpdir(), 'letta-loopback-fixture-'));
+test('bridge emits running then completed only after Bash returns the environment-keyed HMAC', async (t) => {
+  const fixtureDir = await mkdtemp(join(tmpdir(), 'letta-hmac-fixture-'));
   const fixture = join(fixtureDir, 'fixture.mjs');
   await writeFile(fixture, `
+    import { execFile } from 'node:child_process';
+    import { promisify } from 'node:util';
     import { createInterface } from 'node:readline';
+    const run = promisify(execFile);
     console.log(JSON.stringify({
       type: 'system', subtype: 'init', agent_id: 'agent-test', conversation_id: 'conversation-test', session_id: 'session-test',
       model: 'openai/gpt-5.6', tools: ['Bash'], cwd: process.cwd(), mcp_servers: [],
@@ -76,8 +78,8 @@ test('bridge emits running then completed only after a real loopback tool side e
       const payloadLine = input.message.content.split('\\n').find((item) => item.startsWith(prefix));
       if (!payloadLine) throw new Error('probe payload missing');
       const probe = JSON.parse(payloadLine.slice(prefix.length));
-      await fetch(probe.url, { method: 'POST', headers: { 'Content-Type': 'text/plain' }, body: probe.token });
-      const output = 'MODEL=openai/gpt-5.6 URL=' + probe.url + ' TOKEN=' + probe.token;
+      const { stdout } = await run('bash', ['-c', probe.command], { env: process.env });
+      const output = 'MODEL=openai/gpt-5.6 ' + probe.result_prefix + stdout.trim();
       console.log(JSON.stringify({ type: 'stream_event', event: { message_type: 'assistant_message', content: [{ type: 'text', text: output }] } }));
       console.log(JSON.stringify({ type: 'result', subtype: 'success', result: output }));
     }
@@ -109,15 +111,14 @@ test('bridge emits running then completed only after a real loopback tool side e
   const body = await response.text();
   const items = body.trim().split('\n').map(JSON.parse);
   const statuses = items.map((item) => item.status).filter(Boolean);
-  assert.ok(statuses.indexOf('tool.running:loopback_callback_probe') >= 0);
-  assert.ok(statuses.indexOf('tool.completed:loopback_callback_probe') > statuses.indexOf('tool.running:loopback_callback_probe'));
-  assert.doesNotMatch(body, /127\.0\.0\.1:\d+\/[0-9a-f]{32}|[0-9a-f]{32}/i);
-  assert.match(body, /tool-probe-url-redacted/);
-  assert.match(body, /tool-probe-token-redacted/);
+  assert.ok(statuses.indexOf('tool.running:hmac_challenge_probe') >= 0);
+  assert.ok(statuses.indexOf('tool.completed:hmac_challenge_probe') > statuses.indexOf('tool.running:hmac_challenge_probe'));
+  assert.doesNotMatch(body, /CHAT_V2_TOOL_PROBE_SECRET|[a-f0-9]{64}/i);
+  assert.match(body, /verified-tool-hmac-redacted/);
 });
 
-test('bridge fails closed when the runtime claims success without a callback', async (t) => {
-  const fixtureDir = await mkdtemp(join(tmpdir(), 'letta-loopback-missing-'));
+test('bridge fails closed when the runtime claims success without the environment-keyed HMAC', async (t) => {
+  const fixtureDir = await mkdtemp(join(tmpdir(), 'letta-hmac-missing-'));
   const fixture = join(fixtureDir, 'fixture.mjs');
   await writeFile(fixture, `
     import { createInterface } from 'node:readline';
@@ -129,7 +130,7 @@ test('bridge fails closed when the runtime claims success without a callback', a
     const lines = createInterface({ input: process.stdin, crlfDelay: Infinity });
     for await (const line of lines) {
       if (JSON.parse(line).type === 'user') {
-        console.log(JSON.stringify({ type: 'result', subtype: 'success', result: 'claimed success' }));
+        console.log(JSON.stringify({ type: 'result', subtype: 'success', result: 'CHAT_V2_TOOL_PROBE_RESULT=' + '0'.repeat(64) }));
       }
     }
   `);
@@ -154,6 +155,6 @@ test('bridge fails closed when the runtime claims success without a callback', a
   });
   assert.equal(response.status, 200);
   const body = await response.text();
-  assert.match(body, /verified loopback tool probe/);
-  assert.doesNotMatch(body, /tool\.completed:loopback_callback_probe/);
+  assert.match(body, /verified HMAC tool probe/);
+  assert.doesNotMatch(body, /tool\.completed:hmac_challenge_probe/);
 });
