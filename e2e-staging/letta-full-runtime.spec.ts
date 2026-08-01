@@ -75,10 +75,10 @@ test('real Letta Lucy reports its CLI model, advertises full capability, and exe
         content: [
           '<CHAT_V2_VERIFY_LOCAL_TOOL>',
           'Complete the injected environment-keyed local-tool verification before answering.',
-          'Invoke the bridge-provided Bash command exactly with its supplied description, then copy the command stdout into the required result field.',
-          'The expected HMAC depends on a secret that is not present in this prompt, so a textual claim or guessed digest is invalid.',
-          'In the same one-sentence answer, state the exact runtime model identifier you are using.',
-          'Do not reproduce the command, environment variable, challenge, secret, or any unredacted digest beyond the required result field. Do not guess the model.',
+          'Invoke the bridge-provided Bash command exactly with its supplied description.',
+          'The expected HMAC depends on a secret that is not present in this prompt, and the bridge verifies Bash output directly from the runtime wire.',
+          'Then answer in one sentence: state the exact runtime model identifier and confirm that the verified local CLI tool operation completed.',
+          'Do not reproduce the command, environment variable, challenge, secret, or raw digest. Do not guess the model.',
         ].join(' '),
         artifactIds: [],
       },
@@ -114,8 +114,7 @@ test('real Letta Lucy reports its CLI model, advertises full capability, and exe
 
     const answer = responseText(events);
     expect(answer).toContain(model);
-    expect(answer).toContain('[verified-tool-hmac-redacted]');
-    expect(answer).not.toMatch(/CHAT_V2_TOOL_PROBE_SECRET|[a-f0-9]{64}/i);
+    expect(answer).not.toMatch(/CHAT_V2_TOOL_PROBE_SECRET|CHAT_V2_TOOL_PROBE_RESULT=|[a-f0-9]{64}/i);
     expect(answer.toLowerCase()).not.toMatch(/do not know|don't know|모르|알 수 없/);
     expect(events.some((event) => event.type === 'run.completed')).toBe(true);
     expect(events.some((event) => event.type === 'run.failed')).toBe(false);
