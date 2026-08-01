@@ -2,8 +2,9 @@
 import { createServer } from 'node:http';
 import { spawn } from 'node:child_process';
 import { createInterface } from 'node:readline';
-import { timingSafeEqual } from 'node:crypto';
-import { readFileSync } from 'node:fs';
+import { randomUUID, timingSafeEqual } from 'node:crypto';
+import { lstatSync, mkdirSync, readFileSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
 import { join, resolve as resolvePath } from 'node:path';
 import { pathToFileURL } from 'node:url';
 
@@ -14,6 +15,9 @@ const SAFE_LABEL = /^[A-Za-z0-9_./:@-][A-Za-z0-9_./:@ -]{0,159}$/;
 const SKILL_SOURCES = new Set(['bundled', 'global', 'agent', 'project']);
 const VALID_PERMISSION_MODES = new Set(['unrestricted', 'standard', 'acceptEdits', 'strict']);
 const DEFAULT_PERMISSION_MODE = 'unrestricted';
+const TOOL_PROBE_MARKER = '<CHAT_V2_VERIFY_LOCAL_TOOL>';
+const TOOL_PROBE_ROOT = join(tmpdir(), 'chat-v2-letta-tool-probes');
+const TOOL_PROBE_STATUS = 'filesystem_probe';
 
 function integer(value, fallback, minimum = 1) {
   const parsed = Number.parseInt(String(value ?? ''), 10);
@@ -310,6 +314,61 @@ function latestUserMessage(messages) {
   return null;
 }
 
+function toolProbeRequested(message) {
+  return messageText(message).includes(TOOL_PROBE_MARKER);
+}
+
+export function createToolProbe() {
+  mkdirSync(TOOL_PROBE_ROOT, { recursive: true, mode: 0o700 });
+  const id = randomUUID();
+  const token = randomUUID().replaceAll('-', '');
+  const path = join(TOOL_PROBE_ROOT, id + '.txt');
+  rmSync(path, { force: true });
+  return { path, token, observed: false, runningEmitted: false, completedEmitted: false };
+}
+
+export function observeToolProbe(probe) {
+  if (!probe?.path || !probe?.token) return false;
+  try {
+    const stat = lstatSync(probe.path);
+    if (stat.isSymbolicLink() || !stat.isFile() || stat.size < 1 || stat.size > 128) return false;
+    const content = readFileSync(probe.path, 'utf8');
+    if (content.trim() !== probe.token) return false;
+    probe.observed = true;
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+export function cleanupToolProbe(probe) {
+  if (!probe?.path) return;
+  try {
+    rmSync(probe.path, { force: true });
+  } catch {
+    // Best-effort cleanup is repeated when the session closes.
+  }
+}
+
+export function redactToolProbeText(value, probe) {
+  if (typeof value !== 'string' || !probe) return value;
+  return value.split(probe.path).join('[tool-probe-path-redacted]')
+    .split(probe.token).join('[tool-probe-token-redacted]');
+}
+
+function toolProbeInstructions(probe) {
+  const payload = JSON.stringify({ path: probe.path, token: probe.token });
+  return [
+    '<CHAT_V2_LOCAL_TOOL_PROBE>',
+    'This is an automated proof of real local CLI tool execution.',
+    'Use an advertised local tool such as Write or Bash to create a regular UTF-8 file at the exact path in the JSON payload.',
+    'The file must contain exactly the token and no other text. Then use an advertised local read tool to read it back before answering.',
+    'Do not mention or reproduce the path or token in your answer. Do not claim completion unless both operations succeeded.',
+    'CHAT_V2_PROBE_JSON=' + payload,
+    '</CHAT_V2_LOCAL_TOOL_PROBE>',
+  ].join('\n');
+}
+
 function capsuleBlock(capsules) {
   if (!Array.isArray(capsules) || capsules.length === 0) return '';
   const rendered = capsules
@@ -528,7 +587,7 @@ class LucySession {
     const delta = extractAssistantDelta(wire);
     if (delta) {
       pending.accumulated += delta;
-      pending.onItem({ delta });
+      if (!pending.probe) pending.onItem({ delta });
     }
     if (wire?.type === 'error') {
       this.completePending(new Error('Lucy CLI runtime returned an error'));
@@ -539,8 +598,24 @@ class LucySession {
         this.completePending(new Error('Lucy CLI runtime request did not complete successfully'));
         return;
       }
-      const finalText = typeof wire.result === 'string' ? wire.result : pending.accumulated;
-      if (!pending.accumulated && finalText) pending.onItem({ delta: finalText });
+      if (pending.probe) {
+        if (!observeToolProbe(pending.probe)) {
+          this.completePending(new Error('Lucy CLI runtime did not complete the verified local tool probe'));
+          return;
+        }
+        if (!pending.probe.runningEmitted) {
+          pending.probe.runningEmitted = true;
+          pending.onItem({ status: 'tool.running:' + TOOL_PROBE_STATUS });
+        }
+        if (!pending.probe.completedEmitted) {
+          pending.probe.completedEmitted = true;
+          pending.onItem({ status: 'tool.completed:' + TOOL_PROBE_STATUS });
+        }
+      }
+      const rawFinalText = typeof wire.result === 'string' ? wire.result : pending.accumulated;
+      const finalText = pending.probe ? redactToolProbeText(rawFinalText, pending.probe) : rawFinalText;
+      if (pending.probe && finalText) pending.onItem({ delta: finalText });
+      else if (!pending.accumulated && finalText) pending.onItem({ delta: finalText });
       if (pending.messageId && finalText) {
         this.cache.set(pending.messageId, finalText);
         while (this.cache.size > 20) this.cache.delete(this.cache.keys().next().value);
@@ -555,6 +630,8 @@ class LucySession {
     if (!pending) return;
     this.pending = null;
     clearTimeout(pending.timeout);
+    if (pending.probeInterval) clearInterval(pending.probeInterval);
+    cleanupToolProbe(pending.probe);
     pending.signal?.removeEventListener('abort', pending.abortHandler);
     this.lastActivity = Date.now();
     if (error) pending.reject(error);
@@ -605,7 +682,11 @@ class LucySession {
     onItem({ status: `runtime.mcp_advertised:${summary.mcp_advertised === true}` });
     onItem({ status: `runtime.slash_commands_advertised:${summary.slash_commands_advertised === true}` });
     onItem({ status: `runtime.capabilities:tools=${summary.tool_count};skill_sources=${summary.skill_source_count};mcp=${summary.mcp_server_count};commands=${summary.slash_command_count};memfs=${summary.memfs_enabled === true}` });
-    const prompt = buildTurnPrompt(payload, this.turns === 0, this.capabilities);
+    const probe = toolProbeRequested(current) ? createToolProbe() : null;
+    const prompt = [
+      buildTurnPrompt(payload, this.turns === 0, this.capabilities),
+      probe ? toolProbeInstructions(probe) : '',
+    ].filter(Boolean).join('\n\n');
     return new Promise((resolve, reject) => {
       const abortHandler = () => {
         this.stop();
@@ -617,9 +698,21 @@ class LucySession {
         reject(new Error('Lucy CLI runtime request timed out'));
       }, this.config.requestTimeoutMs);
       timeout.unref?.();
-      this.pending = {
+      const pending = {
         resolve, reject, onItem, accumulated: '', messageId, timeout, signal, abortHandler, lastStatus: '',
+        probe, probeInterval: null,
       };
+      this.pending = pending;
+      if (probe) {
+        const observe = () => {
+          if (this.pending !== pending || !observeToolProbe(probe) || probe.runningEmitted) return;
+          probe.runningEmitted = true;
+          pending.onItem({ status: 'tool.running:' + TOOL_PROBE_STATUS });
+        };
+        pending.probeInterval = setInterval(observe, 100);
+        pending.probeInterval.unref?.();
+        observe();
+      }
       signal?.addEventListener('abort', abortHandler, { once: true });
       this.child.stdin.write(`${JSON.stringify({ type: 'user', message: { role: 'user', content: prompt } })}\n`, (error) => {
         if (error) this.completePending(new Error('Lucy CLI runtime input failed'));
