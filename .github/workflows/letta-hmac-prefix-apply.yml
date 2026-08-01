@@ -1,6 +1,13 @@
 name: Apply atomic HMAC proof redaction
 
 on:
+  push:
+    branches:
+      - 'agent/letta-hmac-wire-proof'
+    paths:
+      - '.github/workflows/letta-hmac-prefix-apply.yml'
+      - 'ops/letta-bridge/letta-cli-bridge.mjs'
+      - 'ops/letta-bridge/letta-side-effect-tool-proof.nodecheck.mjs'
   pull_request:
     branches: [main]
     paths:
@@ -12,18 +19,18 @@ permissions:
   contents: write
 
 concurrency:
-  group: letta-hmac-prefix-${{ github.event.pull_request.number }}
+  group: letta-hmac-prefix-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
   apply:
-    if: ${{ github.head_ref == 'agent/letta-hmac-wire-proof' }}
+    if: ${{ github.ref == 'refs/heads/agent/letta-hmac-wire-proof' || github.head_ref == 'agent/letta-hmac-wire-proof' }}
     runs-on: ubuntu-latest
     timeout-minutes: 8
     steps:
       - uses: actions/checkout@v4
         with:
-          ref: ${{ github.event.pull_request.head.ref }}
+          ref: agent/letta-hmac-wire-proof
           fetch-depth: 0
 
       - uses: actions/setup-node@v4
