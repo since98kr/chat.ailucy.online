@@ -77,11 +77,16 @@ jobs:
           grep -Fq 'resolveRuntimePermissionMode' "${bridge}"
           grep -Fq 'wire?.memfs_enabled' "${bridge}"
           grep -Fq 'CHAT_V2_PROBE_JSON=' "${bridge}"
+          grep -Fq 'loopback_callback_probe' "${bridge}"
+          grep -Fq 'TOOL_PROBE_MAX_BODY_BYTES' "${bridge}"
+          grep -Fq 'LOOPBACK_ADDRESSES' "${bridge}"
+          grep -Fq "server.listen(0, '127.0.0.1'" "${bridge}"
+          grep -Fq '/usr/bin/curl --fail' "${bridge}"
           grep -Fq 'tool.running:' "${bridge}"
           grep -Fq 'tool.completed:' "${bridge}"
           grep -Fq 'observeToolProbe' "${bridge}"
           grep -Fq 'redactToolProbeText' "${bridge}"
-          grep -Fq "rmSync(probe.path, { recursive: true, force: true })" "${bridge}"
+          grep -Fq 'closeAllConnections' "${bridge}"
           grep -Fq 'letta-cli-bridge.mjs' "${installer}"
           grep -Fq 'ExecStart=${NODE_BIN} ${INSTALL_DIR}/letta-cli-bridge.mjs' "${installer}"
           grep -Fq 'letta-preflight-v1' "${deploy}"
@@ -120,7 +125,7 @@ jobs:
           grep -Fq 'capabilityStatus?.mcp' "${qa}"
           grep -Fq 'capabilityStatus?.commands' "${qa}"
           grep -Fq 'capabilityStatus?.memfs' "${qa}"
-          grep -Fq 'tool.completed:' "${qa}"
+          grep -Fq 'tool.completed:loopback_callback_probe' "${qa}"
 
       - name: Exercise explicit empty slash-command metadata contract
         run: node --test ops/letta-bridge/letta-empty-slash.nodecheck.mjs
