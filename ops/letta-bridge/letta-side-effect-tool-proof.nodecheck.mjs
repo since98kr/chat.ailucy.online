@@ -1,5 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { execFileSync } from 'node:child_process';
 import { once } from 'node:events';
 import { mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
@@ -9,6 +10,7 @@ import {
   createBridgeServer,
   createToolProbe,
   observeToolProbe,
+  toolProbeDiagnostic,
 } from './letta-cli-bridge.mjs';
 
 function runtimeConfig(cwd, fixture) {
@@ -41,23 +43,37 @@ function runtimeConfig(cwd, fixture) {
   };
 }
 
-test('HMAC proof cannot be guessed from the prompt and accepts only the exact Bash result', () => {
+test('HMAC proof uses an absolute Node executable and accepts only the exact lowercase result', () => {
   const secret = 'a'.repeat(64);
   const probe = createToolProbe(secret);
   assert.equal(probe.command.includes(secret), false);
   assert.equal(probe.command.includes(probe.challenge), true);
+  assert.equal(probe.command.startsWith(`${JSON.stringify(process.execPath)} -e `), true);
+
+  const stdout = execFileSync('/bin/bash', ['-c', probe.command], {
+    env: {
+      ...process.env,
+      PATH: '/definitely-not-a-real-path',
+      CHAT_V2_TOOL_PROBE_SECRET: secret,
+    },
+    encoding: 'utf8',
+  });
+  assert.equal(stdout, probe.expected);
+
   assert.equal(observeToolProbe(probe, 'claimed success'), false);
   assert.equal(observeToolProbe(probe, `CHAT_V2_TOOL_PROBE_RESULT=${'b'.repeat(64)}`), false);
   assert.equal(observeToolProbe(probe, `CHAT_V2_TOOL_PROBE_RESULT=${probe.expected.toUpperCase()}`), false);
-  assert.equal(observeToolProbe(probe, `model ok CHAT_V2_TOOL_PROBE_RESULT=${probe.expected}`), true);
+  assert.equal(observeToolProbe(probe, `tool output CHAT_V2_TOOL_PROBE_RESULT=${probe.expected}`), true);
+  assert.equal(toolProbeDiagnostic(probe), 'tool_signal=false;assistant_text=false;prefix=true;hex=true');
+
   cleanupToolProbe(probe);
   assert.equal(probe.secret, '');
   assert.equal(probe.command, '');
   assert.equal(probe.expected, '');
 });
 
-test('bridge emits running then completed only after Bash returns the environment-keyed HMAC', async (t) => {
-  const fixtureDir = await mkdtemp(join(tmpdir(), 'letta-hmac-fixture-'));
+test('bridge verifies HMAC from a hidden tool-return wire and streams only the sanitized final answer', async (t) => {
+  const fixtureDir = await mkdtemp(join(tmpdir(), 'letta-hmac-wire-fixture-'));
   const fixture = join(fixtureDir, 'fixture.mjs');
   await writeFile(fixture, `
     import { execFile } from 'node:child_process';
@@ -78,8 +94,18 @@ test('bridge emits running then completed only after Bash returns the environmen
       const payloadLine = input.message.content.split('\\n').find((item) => item.startsWith(prefix));
       if (!payloadLine) throw new Error('probe payload missing');
       const probe = JSON.parse(payloadLine.slice(prefix.length));
-      const { stdout } = await run('bash', ['-c', probe.command], { env: process.env });
-      const output = 'MODEL=openai/gpt-5.6 ' + probe.result_prefix + stdout.trim();
+      const { stdout } = await run('/bin/bash', ['-c', probe.command], {
+        env: { ...process.env, PATH: '/definitely-not-a-real-path' },
+      });
+      console.log(JSON.stringify({
+        type: 'stream_event',
+        event: {
+          message_type: 'tool_return_message',
+          tool_name: 'Bash',
+          content: probe.result_prefix + stdout.trim(),
+        },
+      }));
+      const output = 'MODEL=openai/gpt-5.6 verified local tool operation completed';
       console.log(JSON.stringify({ type: 'stream_event', event: { message_type: 'assistant_message', content: [{ type: 'text', text: output }] } }));
       console.log(JSON.stringify({ type: 'result', subtype: 'success', result: output }));
     }
@@ -113,12 +139,12 @@ test('bridge emits running then completed only after Bash returns the environmen
   const statuses = items.map((item) => item.status).filter(Boolean);
   assert.ok(statuses.indexOf('tool.running:hmac_challenge_probe') >= 0);
   assert.ok(statuses.indexOf('tool.completed:hmac_challenge_probe') > statuses.indexOf('tool.running:hmac_challenge_probe'));
-  assert.doesNotMatch(body, /CHAT_V2_TOOL_PROBE_SECRET|[a-f0-9]{64}/i);
-  assert.match(body, /verified-tool-hmac-redacted/);
+  assert.match(body, /verified local tool operation completed/);
+  assert.doesNotMatch(body, /CHAT_V2_TOOL_PROBE_SECRET|CHAT_V2_TOOL_PROBE_RESULT=|[a-f0-9]{64}/i);
 });
 
-test('bridge fails closed when the runtime claims success without the environment-keyed HMAC', async (t) => {
-  const fixtureDir = await mkdtemp(join(tmpdir(), 'letta-hmac-missing-'));
+test('bridge fails closed with bounded diagnostics when no valid HMAC appears anywhere in the wire', async (t) => {
+  const fixtureDir = await mkdtemp(join(tmpdir(), 'letta-hmac-wire-missing-'));
   const fixture = join(fixtureDir, 'fixture.mjs');
   await writeFile(fixture, `
     import { createInterface } from 'node:readline';
@@ -129,9 +155,12 @@ test('bridge fails closed when the runtime claims success without the environmen
     }));
     const lines = createInterface({ input: process.stdin, crlfDelay: Infinity });
     for await (const line of lines) {
-      if (JSON.parse(line).type === 'user') {
-        console.log(JSON.stringify({ type: 'result', subtype: 'success', result: 'CHAT_V2_TOOL_PROBE_RESULT=' + '0'.repeat(64) }));
-      }
+      if (JSON.parse(line).type !== 'user') continue;
+      console.log(JSON.stringify({
+        type: 'stream_event',
+        event: { message_type: 'tool_return_message', tool_name: 'Bash', content: 'CHAT_V2_TOOL_PROBE_RESULT=' + '0'.repeat(64) },
+      }));
+      console.log(JSON.stringify({ type: 'result', subtype: 'success', result: 'claimed success' }));
     }
   `);
 
@@ -155,6 +184,7 @@ test('bridge fails closed when the runtime claims success without the environmen
   });
   assert.equal(response.status, 200);
   const body = await response.text();
-  assert.match(body, /verified HMAC tool probe/);
+  assert.match(body, /verified HMAC tool probe \(tool_signal=true;assistant_text=false;prefix=true;hex=true\)/);
   assert.doesNotMatch(body, /tool\.completed:hmac_challenge_probe/);
+  assert.doesNotMatch(body, /CHAT_V2_TOOL_PROBE_RESULT=|[a-f0-9]{64}/i);
 });
