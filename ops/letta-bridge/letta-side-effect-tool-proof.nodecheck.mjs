@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { once } from 'node:events';
-import { access, mkdtemp, mkdir, rm, symlink, writeFile } from 'node:fs/promises';
+import { mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import {
@@ -41,51 +41,31 @@ function runtimeConfig(cwd, fixture) {
   };
 }
 
-test('probe accepts only a bounded exact regular file and removes malformed paths', async (t) => {
-  const root = await mkdtemp(join(tmpdir(), 'letta-tool-proof-contract-'));
-  t.after(() => rm(root, { recursive: true, force: true }));
-
-  const exact = createToolProbe(root);
-  assert.equal(exact.path.startsWith(root + '/.chat-v2-tool-probe-'), true);
+test('loopback proof accepts only an exact bounded POST and closes cleanly', async (t) => {
+  const exact = await createToolProbe();
   t.after(() => cleanupToolProbe(exact));
-  await writeFile(exact.path, `${exact.token}\n`, { mode: 0o600 });
+  assert.match(exact.url, /^http:\/\/127\.0\.0\.1:\d+\/[0-9a-f]{32}$/);
+  assert.equal((await fetch(exact.url, { method: 'GET' })).status, 404);
+  assert.equal((await fetch(exact.url, { method: 'POST', body: 'wrong-token' })).status, 403);
+  assert.equal(observeToolProbe(exact), false);
+  assert.equal((await fetch(exact.url, { method: 'POST', body: exact.token })).status, 204);
   assert.equal(observeToolProbe(exact), true);
 
-  const wrong = createToolProbe(root);
-  t.after(() => cleanupToolProbe(wrong));
-  await writeFile(wrong.path, 'wrong-token', { mode: 0o600 });
-  assert.equal(observeToolProbe(wrong), false);
-
-  const oversized = createToolProbe(root);
+  const oversized = await createToolProbe();
   t.after(() => cleanupToolProbe(oversized));
-  await writeFile(oversized.path, 'x'.repeat(129), { mode: 0o600 });
+  assert.equal((await fetch(oversized.url, { method: 'POST', body: 'x'.repeat(129) })).status, 413);
   assert.equal(observeToolProbe(oversized), false);
-
-  const linked = createToolProbe(root);
-  t.after(() => cleanupToolProbe(linked));
-  const target = join(root, 'target.txt');
-  await writeFile(target, linked.token, { mode: 0o600 });
-  await symlink(target, linked.path);
-  assert.equal(observeToolProbe(linked), false);
-
-  const directory = createToolProbe(root);
-  await mkdir(directory.path, { mode: 0o700 });
-  assert.equal(observeToolProbe(directory), false);
-  cleanupToolProbe(directory);
-  await assert.rejects(access(directory.path));
 });
 
-test('bridge emits running then completed only after observing a real local-tool side effect', async (t) => {
-  const fixtureDir = await mkdtemp(join(tmpdir(), 'letta-side-effect-fixture-'));
+test('bridge emits running then completed only after a real loopback tool side effect', async (t) => {
+  const fixtureDir = await mkdtemp(join(tmpdir(), 'letta-loopback-fixture-'));
   const fixture = join(fixtureDir, 'fixture.mjs');
   await writeFile(fixture, `
     import { createInterface } from 'node:readline';
-    import { mkdir, writeFile } from 'node:fs/promises';
-    import { dirname } from 'node:path';
     console.log(JSON.stringify({
       type: 'system', subtype: 'init', agent_id: 'agent-test', conversation_id: 'conversation-test', session_id: 'session-test',
-      model: 'openai/gpt-5.6', tools: ['Write', 'Read'], cwd: process.cwd(),
-      mcp_servers: [], permission_mode: 'unrestricted', slash_commands: [], memfs_enabled: true,
+      model: 'openai/gpt-5.6', tools: ['Bash'], cwd: process.cwd(), mcp_servers: [],
+      permission_mode: 'unrestricted', slash_commands: [], memfs_enabled: true,
       skill_sources: ['bundled', 'global', 'agent', 'project']
     }));
     const lines = createInterface({ input: process.stdin, crlfDelay: Infinity });
@@ -96,9 +76,8 @@ test('bridge emits running then completed only after observing a real local-tool
       const payloadLine = input.message.content.split('\\n').find((item) => item.startsWith(prefix));
       if (!payloadLine) throw new Error('probe payload missing');
       const probe = JSON.parse(payloadLine.slice(prefix.length));
-      await mkdir(dirname(probe.path), { recursive: true });
-      await writeFile(probe.path, probe.token, { mode: 0o600 });
-      const output = 'MODEL=openai/gpt-5.6 PATH=' + probe.path + ' TOKEN=' + probe.token;
+      await fetch(probe.url, { method: 'POST', headers: { 'Content-Type': 'text/plain' }, body: probe.token });
+      const output = 'MODEL=openai/gpt-5.6 URL=' + probe.url + ' TOKEN=' + probe.token;
       console.log(JSON.stringify({ type: 'stream_event', event: { message_type: 'assistant_message', content: [{ type: 'text', text: output }] } }));
       console.log(JSON.stringify({ type: 'result', subtype: 'success', result: output }));
     }
@@ -130,9 +109,51 @@ test('bridge emits running then completed only after observing a real local-tool
   const body = await response.text();
   const items = body.trim().split('\n').map(JSON.parse);
   const statuses = items.map((item) => item.status).filter(Boolean);
-  assert.ok(statuses.indexOf('tool.running:filesystem_probe') >= 0);
-  assert.ok(statuses.indexOf('tool.completed:filesystem_probe') > statuses.indexOf('tool.running:filesystem_probe'));
-  assert.doesNotMatch(body, /chat-v2-letta-tool-probes|[0-9a-f]{32}/i);
-  assert.match(body, /tool-probe-path-redacted/);
+  assert.ok(statuses.indexOf('tool.running:loopback_callback_probe') >= 0);
+  assert.ok(statuses.indexOf('tool.completed:loopback_callback_probe') > statuses.indexOf('tool.running:loopback_callback_probe'));
+  assert.doesNotMatch(body, /127\.0\.0\.1:\d+\/[0-9a-f]{32}|[0-9a-f]{32}/i);
+  assert.match(body, /tool-probe-url-redacted/);
   assert.match(body, /tool-probe-token-redacted/);
+});
+
+test('bridge fails closed when the runtime claims success without a callback', async (t) => {
+  const fixtureDir = await mkdtemp(join(tmpdir(), 'letta-loopback-missing-'));
+  const fixture = join(fixtureDir, 'fixture.mjs');
+  await writeFile(fixture, `
+    import { createInterface } from 'node:readline';
+    console.log(JSON.stringify({
+      type: 'system', subtype: 'init', model: 'openai/gpt-5.6', tools: ['Bash'],
+      mcp_servers: [], permission_mode: 'unrestricted', slash_commands: [], memfs_enabled: true,
+      skill_sources: ['bundled', 'global', 'agent', 'project']
+    }));
+    const lines = createInterface({ input: process.stdin, crlfDelay: Infinity });
+    for await (const line of lines) {
+      if (JSON.parse(line).type === 'user') {
+        console.log(JSON.stringify({ type: 'result', subtype: 'success', result: 'claimed success' }));
+      }
+    }
+  `);
+
+  const { server } = createBridgeServer(runtimeConfig(fixtureDir, fixture));
+  server.listen(0, '127.0.0.1');
+  await once(server, 'listening');
+  t.after(async () => {
+    await new Promise((resolve) => server.close(resolve));
+    await rm(fixtureDir, { recursive: true, force: true });
+  });
+
+  const address = server.address();
+  const response = await fetch(`http://127.0.0.1:${address.port}/v1/chat/stream`, {
+    method: 'POST',
+    headers: { Authorization: 'Bearer secret', 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      conversation_id: 'conversation-2',
+      agent_id: 'agent-test',
+      messages: [{ role: 'user', content: '<CHAT_V2_VERIFY_LOCAL_TOOL> Verify.', message_id: 'message-2' }],
+    }),
+  });
+  assert.equal(response.status, 200);
+  const body = await response.text();
+  assert.match(body, /verified loopback tool probe/);
+  assert.doesNotMatch(body, /tool\.completed:loopback_callback_probe/);
 });
