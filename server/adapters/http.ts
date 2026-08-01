@@ -252,10 +252,24 @@ function parseBoolean(value: string | undefined) {
   return (value ?? '').trim().toLowerCase() === 'true';
 }
 
+function backendStreamError(payload: unknown) {
+  if (!payload || typeof payload !== 'object') return null;
+  const value = (payload as Record<string, unknown>).error;
+  const raw = typeof value === 'string'
+    ? value
+    : value && typeof value === 'object' && typeof (value as Record<string, unknown>).message === 'string'
+      ? String((value as Record<string, unknown>).message)
+      : '';
+  const sanitized = raw.replace(/[\u0000-\u001f\u007f]/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 500);
+  return sanitized || null;
+}
+
 function processPayload(
   payload: unknown,
   toolAccumulator: OpenAiArtifactToolAccumulator,
 ): AdapterStreamItem[] {
+  const backendError = backendStreamError(payload);
+  if (backendError) throw new Error(`Backend stream error: ${backendError}`);
   toolAccumulator.ingest(payload);
   const items: AdapterStreamItem[] = [];
   const artifact = extractArtifact(payload);
