@@ -16,12 +16,39 @@ export function resolveNativeTargetAgentId(
     ?? (configuredAgentId && requested === conversationAgentId ? configuredAgentId : requested);
 }
 
+export function resolveNativeExecution(
+  requestedAgentId: string,
+  selectedAgentId: string,
+  conversationAgentId: string,
+  configuredAgentId?: string,
+  modelMap?: Record<string, string>,
+) {
+  const targetAgentId = resolveNativeTargetAgentId(
+    requestedAgentId,
+    conversationAgentId,
+    configuredAgentId,
+    modelMap,
+  );
+
+  // A configured native backend target is authorized only for the selected
+  // conversation lead that the wrapper itself mapped. Explicit team targets
+  // continue to require their own model-map entry and arbitrary runtime IDs
+  // never become authorized merely because they were requested.
+  const authorizationModelMap = configuredAgentId
+    && requestedAgentId === conversationAgentId
+    && targetAgentId === configuredAgentId
+    ? { ...modelMap, [selectedAgentId || requestedAgentId]: configuredAgentId }
+    : modelMap;
+
+  return { targetAgentId, authorizationModelMap };
+}
+
 function enabled(value: string | undefined) {
   return (value ?? '').trim().toLowerCase() === 'true';
 }
 
 function wrapNativeAgentMapping(
-  adapter: ChatBackendAdapter,
+  adapter: HttpAgentAdapter,
   configuredAgentId?: string,
   modelMap?: Record<string, string>,
 ): ChatBackendAdapter {
@@ -29,17 +56,25 @@ function wrapNativeAgentMapping(
     systemId: adapter.systemId,
     health: () => adapter.health(),
     async *streamReply(request: AdapterRequest) {
-      const targetAgentId = resolveNativeTargetAgentId(
+      const selectedAgentId = request.selectedAgentId ?? request.targetAgentId;
+      const execution = resolveNativeExecution(
         request.targetAgentId,
+        selectedAgentId,
         request.conversation.agentId,
         configuredAgentId,
         modelMap,
       );
-      const mapped = targetAgentId === request.targetAgentId
+      const mapped = execution.targetAgentId === request.targetAgentId
         ? request
-        : { ...request, selectedAgentId: request.selectedAgentId ?? request.targetAgentId, targetAgentId };
+        : { ...request, selectedAgentId, targetAgentId: execution.targetAgentId };
       const withArtifacts = await augmentNativeArtifactContext(adapter.systemId, mapped);
-      yield* adapter.streamReply(withArtifacts);
+      const executionAdapter = execution.authorizationModelMap === modelMap
+        ? adapter
+        : new HttpAgentAdapter(adapter.systemId, {
+          ...adapter.config,
+          modelMap: execution.authorizationModelMap,
+        });
+      yield* executionAdapter.streamReply(withArtifacts);
     },
   };
 }
