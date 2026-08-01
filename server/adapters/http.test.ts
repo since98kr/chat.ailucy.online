@@ -362,6 +362,59 @@ describe('HttpAgentAdapter', () => {
     expect(parts[1].image_url?.url).toBe(`data:image/png;base64,${imageBytes.toString('base64')}`);
     expect(items).toEqual([{ type: 'delta', delta: 'OPENAI_OK' }]);
   });
+
+  it('fails closed on JSON, NDJSON, and SSE backend error frames', async () => {
+    const baseUrl = await startServer((request, response) => {
+      if (request.url === '/ndjson') {
+        response.writeHead(200, { 'Content-Type': 'application/x-ndjson' });
+        response.write('{"status":"runtime.model:gpt-5.6-terra"}\n');
+        response.end('{"error":"verified local tool probe failed"}\n');
+        return;
+      }
+      if (request.url === '/sse') {
+        response.writeHead(200, { 'Content-Type': 'text/event-stream' });
+        response.end('data: {"error":{"message":"verified local tool probe failed"}}\n\n');
+        return;
+      }
+      response.writeHead(200, { 'Content-Type': 'application/json' });
+      response.end('{"error":"verified local tool probe failed"}');
+    });
+
+    const lettaConversation = { ...conversation, systemId: 'letta' as const, agentId: '[Letta] Lucy' };
+    const lettaParticipant = {
+      ...participants[0],
+      conversationId: lettaConversation.id,
+      agentId: '[Letta] Lucy',
+      agent: {
+        ...participants[0].agent,
+        id: '[Letta] Lucy',
+        systemId: 'letta' as const,
+        displayName: '[Letta] Lucy',
+      },
+    };
+
+    for (const chatPath of ['/json', '/ndjson', '/sse']) {
+      const adapter = new HttpAgentAdapter('letta', {
+        baseUrl,
+        chatPath,
+        healthPath: '/health',
+        timeoutMs: 2_000,
+      });
+      const items = [];
+      const consume = async () => {
+        for await (const item of adapter.streamReply({
+          conversation: lettaConversation,
+          userMessage: { ...userMessage, conversationId: lettaConversation.id },
+          history: [{ ...userMessage, conversationId: lettaConversation.id }],
+          targetAgentId: '[Letta] Lucy',
+          routingMode: 'direct',
+          participants: [lettaParticipant],
+        })) items.push(item);
+      };
+      await expect(consume()).rejects.toThrow('Backend stream error: verified local tool probe failed');
+      expect(items.every((item) => item.type !== 'delta')).toBe(true);
+    }
+  });
 });
 
 type OpenAiTestPart = {

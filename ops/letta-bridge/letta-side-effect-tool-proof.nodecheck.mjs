@@ -45,29 +45,30 @@ test('probe accepts only a bounded exact regular file and removes malformed path
   const root = await mkdtemp(join(tmpdir(), 'letta-tool-proof-contract-'));
   t.after(() => rm(root, { recursive: true, force: true }));
 
-  const exact = createToolProbe();
+  const exact = createToolProbe(root);
+  assert.equal(exact.path.startsWith(root + '/.chat-v2-tool-probe-'), true);
   t.after(() => cleanupToolProbe(exact));
   await writeFile(exact.path, `${exact.token}\n`, { mode: 0o600 });
   assert.equal(observeToolProbe(exact), true);
 
-  const wrong = createToolProbe();
+  const wrong = createToolProbe(root);
   t.after(() => cleanupToolProbe(wrong));
   await writeFile(wrong.path, 'wrong-token', { mode: 0o600 });
   assert.equal(observeToolProbe(wrong), false);
 
-  const oversized = createToolProbe();
+  const oversized = createToolProbe(root);
   t.after(() => cleanupToolProbe(oversized));
   await writeFile(oversized.path, 'x'.repeat(129), { mode: 0o600 });
   assert.equal(observeToolProbe(oversized), false);
 
-  const linked = createToolProbe();
+  const linked = createToolProbe(root);
   t.after(() => cleanupToolProbe(linked));
   const target = join(root, 'target.txt');
   await writeFile(target, linked.token, { mode: 0o600 });
   await symlink(target, linked.path);
   assert.equal(observeToolProbe(linked), false);
 
-  const directory = createToolProbe();
+  const directory = createToolProbe(root);
   await mkdir(directory.path, { mode: 0o700 });
   assert.equal(observeToolProbe(directory), false);
   cleanupToolProbe(directory);

@@ -4,7 +4,6 @@ import { spawn } from 'node:child_process';
 import { createInterface } from 'node:readline';
 import { randomUUID, timingSafeEqual } from 'node:crypto';
 import { lstatSync, mkdirSync, readFileSync, rmSync } from 'node:fs';
-import { tmpdir } from 'node:os';
 import { join, resolve as resolvePath } from 'node:path';
 import { pathToFileURL } from 'node:url';
 
@@ -16,7 +15,6 @@ const SKILL_SOURCES = new Set(['bundled', 'global', 'agent', 'project']);
 const VALID_PERMISSION_MODES = new Set(['unrestricted', 'standard', 'acceptEdits', 'strict']);
 const DEFAULT_PERMISSION_MODE = 'unrestricted';
 const TOOL_PROBE_MARKER = '<CHAT_V2_VERIFY_LOCAL_TOOL>';
-const TOOL_PROBE_ROOT = join(tmpdir(), 'chat-v2-letta-tool-probes');
 const TOOL_PROBE_STATUS = 'filesystem_probe';
 
 function integer(value, fallback, minimum = 1) {
@@ -318,12 +316,12 @@ function toolProbeRequested(message) {
   return messageText(message).includes(TOOL_PROBE_MARKER);
 }
 
-export function createToolProbe() {
-  mkdirSync(TOOL_PROBE_ROOT, { recursive: true, mode: 0o700 });
+export function createToolProbe(root) {
+  const base = resolvePath(root || process.cwd());
   const id = randomUUID();
   const token = randomUUID().replaceAll('-', '');
-  const path = join(TOOL_PROBE_ROOT, id + '.txt');
-  rmSync(path, { force: true });
+  const path = join(base, '.chat-v2-tool-probe-' + id + '.txt');
+  rmSync(path, { recursive: true, force: true });
   return { path, token, observed: false, runningEmitted: false, completedEmitted: false };
 }
 
@@ -361,8 +359,8 @@ function toolProbeInstructions(probe) {
   return [
     '<CHAT_V2_LOCAL_TOOL_PROBE>',
     'This is an automated proof of real local CLI tool execution.',
-    'Use an advertised local tool such as Write or Bash to create a regular UTF-8 file at the exact path in the JSON payload.',
-    'The file must contain exactly the token and no other text. Then use an advertised local read tool to read it back before answering.',
+    'Use the advertised Bash tool to create a regular UTF-8 file at the exact path in the JSON payload. Write exactly the token with no trailing newline.',
+    'Then use the advertised Read tool to read the same file back before answering.',
     'Do not mention or reproduce the path or token in your answer. Do not claim completion unless both operations succeeded.',
     'CHAT_V2_PROBE_JSON=' + payload,
     '</CHAT_V2_LOCAL_TOOL_PROBE>',
@@ -682,7 +680,7 @@ class LucySession {
     onItem({ status: `runtime.mcp_advertised:${summary.mcp_advertised === true}` });
     onItem({ status: `runtime.slash_commands_advertised:${summary.slash_commands_advertised === true}` });
     onItem({ status: `runtime.capabilities:tools=${summary.tool_count};skill_sources=${summary.skill_source_count};mcp=${summary.mcp_server_count};commands=${summary.slash_command_count};memfs=${summary.memfs_enabled === true}` });
-    const probe = toolProbeRequested(current) ? createToolProbe() : null;
+    const probe = toolProbeRequested(current) ? createToolProbe(this.config.cwd) : null;
     const prompt = [
       buildTurnPrompt(payload, this.turns === 0, this.capabilities),
       probe ? toolProbeInstructions(probe) : '',
