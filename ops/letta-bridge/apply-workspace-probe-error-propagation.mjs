@@ -4,29 +4,34 @@ import { resolve } from 'node:path';
 
 const write = process.argv.includes('--write');
 const bridgePath = resolve('ops/letta-bridge/letta-cli-bridge.mjs');
-const httpPath = resolve('server/adapters/http.ts');
 const bridgeTestPath = resolve('ops/letta-bridge/letta-side-effect-tool-proof.nodecheck.mjs');
+const httpPath = resolve('server/adapters/http.ts');
 const httpTestPath = resolve('server/adapters/http.test.ts');
 
-async function transform(path, transformFile) {
-  const before = await readFile(path, 'utf8');
-  const after = transformFile(before);
-  if (after === before) return false;
-  if (write) await writeFile(path, after);
-  return true;
+function replaceOnce(source, before, after, label) {
+  const first = source.indexOf(before);
+  if (first < 0) throw new Error(`Missing ${label}`);
+  if (source.indexOf(before, first + before.length) >= 0) throw new Error(`Ambiguous ${label}`);
+  return source.slice(0, first) + after + source.slice(first + before.length);
 }
 
-function replaceOnce(source, before, after, label) {
-  if (source.includes(after)) return source;
-  const count = source.split(before).length - 1;
-  if (count !== 1) throw new Error(`${label}: expected one source match, found ${count}`);
-  return source.replace(before, after);
+async function transform(path, apply) {
+  const input = await readFile(path, 'utf8');
+  const output = apply(input);
+  if (output === input) throw new Error(`No change produced for ${path}`);
+  if (write) await writeFile(path, output);
 }
 
 await transform(bridgePath, (input) => {
   let source = input;
-  source = source.replace("import { tmpdir } from 'node:os';\n", '');
-  source = source.replace("const TOOL_PROBE_ROOT = join(tmpdir(), 'chat-v2-letta-tool-probes');\n", '');
+  source = replaceOnce(source,
+    "import { tmpdir } from 'node:os';\n",
+    '',
+    'obsolete tmpdir import');
+  source = replaceOnce(source,
+    "const TOOL_PROBE_ROOT = join(tmpdir(), 'chat-v2-letta-tool-probes');\n",
+    '',
+    'obsolete probe root');
   source = replaceOnce(source,
 `export function createToolProbe() {
   mkdirSync(TOOL_PROBE_ROOT, { recursive: true, mode: 0o700 });
@@ -36,42 +41,40 @@ await transform(bridgePath, (input) => {
   rmSync(path, { force: true });
   return { path, token, observed: false, runningEmitted: false, completedEmitted: false };
 }`,
-`export function createToolProbe(cwd = process.cwd()) {
-  const root = resolvePath(cwd);
+`export function createToolProbe(root) {
+  const base = resolvePath(root || process.cwd());
   const id = randomUUID();
   const token = randomUUID().replaceAll('-', '');
-  const path = join(root, '.chat-v2-tool-probe-' + id + '.txt');
+  const path = join(base, '.chat-v2-tool-probe-' + id + '.txt');
   rmSync(path, { recursive: true, force: true });
   return { path, token, observed: false, runningEmitted: false, completedEmitted: false };
 }`,
-  'workspace probe creation');
+    'workspace probe factory');
   source = replaceOnce(source,
-`    'Use an advertised local tool such as Write or Bash to create a regular UTF-8 file at the exact path in the JSON payload.',
-    'The file must contain exactly the token and no other text. Then use an advertised local read tool to read it back before answering.',`,
-`    'Use the advertised Bash tool to create a regular UTF-8 file at the exact path in the JSON payload with exactly the token and no newline or other text.',
-    'Then use an advertised local read tool such as Read to read that exact file back before answering.',`,
-  'workspace tool instructions');
+    "    'Use an advertised local tool such as Write or Bash to create a regular UTF-8 file at the exact path in the JSON payload.',\n    'The file must contain exactly the token and no other text. Then use an advertised local read tool to read it back before answering.',",
+    "    'Use the advertised Bash tool to create a regular UTF-8 file at the exact path in the JSON payload. Write exactly the token with no trailing newline.',\n    'Then use the advertised Read tool to read the same file back before answering.',",
+    'explicit Bash and Read instructions');
   source = replaceOnce(source,
     'const probe = toolProbeRequested(current) ? createToolProbe() : null;',
     'const probe = toolProbeRequested(current) ? createToolProbe(this.config.cwd) : null;',
     'workspace probe call');
-  for (const required of [
-    "join(root, '.chat-v2-tool-probe-' + id + '.txt')",
-    'createToolProbe(this.config.cwd)',
-    'Use the advertised Bash tool',
-  ]) if (!source.includes(required)) throw new Error(`missing bridge contract: ${required}`);
+  return source;
+});
+
+await transform(bridgeTestPath, (input) => {
+  let source = input.replaceAll('createToolProbe();', 'createToolProbe(root);');
+  source = replaceOnce(source,
+`  const exact = createToolProbe(root);
+  t.after(() => cleanupToolProbe(exact));`,
+`  const exact = createToolProbe(root);
+  assert.equal(exact.path.startsWith(root + '/.chat-v2-tool-probe-'), true);
+  t.after(() => cleanupToolProbe(exact));`,
+    'workspace probe assertion');
   return source;
 });
 
 await transform(httpPath, (input) => {
-  let source = input;
-  source = replaceOnce(source,
-`function processPayload(
-  payload: unknown,
-  toolAccumulator: OpenAiArtifactToolAccumulator,
-): AdapterStreamItem[] {
-  toolAccumulator.ingest(payload);`,
-`function backendStreamError(payload: unknown) {
+  const helper = `function backendStreamError(payload: unknown) {
   if (!payload || typeof payload !== 'object') return null;
   const value = (payload as Record<string, unknown>).error;
   const raw = typeof value === 'string'
@@ -83,79 +86,83 @@ await transform(httpPath, (input) => {
   return sanitized || null;
 }
 
-function processPayload(
-  payload: unknown,
-  toolAccumulator: OpenAiArtifactToolAccumulator,
-): AdapterStreamItem[] {
-  const backendError = backendStreamError(payload);
-  if (backendError) throw new Error(`${'${'}thisSystemPlaceholder}`);
-  toolAccumulator.ingest(payload);`,
-  'backend error helper');
-  source = source.replace("if (backendError) throw new Error(`${thisSystemPlaceholder}`);", "if (backendError) throw new Error(`Backend stream error: ${backendError}`);");
-  if (!source.includes('Backend stream error: ${backendError}')) throw new Error('backend stream error throw missing');
-  return source;
-});
-
-await transform(bridgeTestPath, (input) => {
-  let source = input;
-  source = source.replaceAll('createToolProbe();', 'createToolProbe(root);');
+`;
+  let source = replaceOnce(input,
+    'function processPayload(\n',
+    helper + 'function processPayload(\n',
+    'backend error helper insertion');
   source = replaceOnce(source,
-`  const exact = createToolProbe(root);
-  t.after(() => cleanupToolProbe(exact));`,
-`  const exact = createToolProbe(root);
-  assert.equal(exact.path.startsWith(root + '/.chat-v2-tool-probe-'), true);
-  t.after(() => cleanupToolProbe(exact));`,
-  'workspace probe assertion');
-  if (!source.includes("startsWith(root + '/.chat-v2-tool-probe-')")) throw new Error('workspace path assertion missing');
+`): AdapterStreamItem[] {
+  toolAccumulator.ingest(payload);`,
+`): AdapterStreamItem[] {
+  const backendError = backendStreamError(payload);
+  if (backendError) throw new Error(\`Backend stream error: \${backendError}\`);
+  toolAccumulator.ingest(payload);`,
+    'backend error propagation');
   return source;
 });
 
 await transform(httpTestPath, (input) => {
-  let source = input;
   const insertion = `
 
-  it('fails closed on JSON and NDJSON backend error frames', async () => {
-    const baseUrl = await startServer((_request, response) => {
-      response.writeHead(200, { 'Content-Type': 'application/x-ndjson' });
-      response.write('{"status":"runtime.model:gpt-5.6-terra"}\\n');
-      response.end('{"error":"Lucy CLI runtime did not complete the verified local tool probe"}\\n');
+  it('fails closed on JSON, NDJSON, and SSE backend error frames', async () => {
+    const baseUrl = await startServer((request, response) => {
+      if (request.url === '/ndjson') {
+        response.writeHead(200, { 'Content-Type': 'application/x-ndjson' });
+        response.write('{"status":"runtime.model:gpt-5.6-terra"}\\n');
+        response.end('{"error":"verified local tool probe failed"}\\n');
+        return;
+      }
+      if (request.url === '/sse') {
+        response.writeHead(200, { 'Content-Type': 'text/event-stream' });
+        response.end('data: {"error":{"message":"verified local tool probe failed"}}\\n\\n');
+        return;
+      }
+      response.writeHead(200, { 'Content-Type': 'application/json' });
+      response.end('{"error":"verified local tool probe failed"}');
     });
 
-    const adapter = new HttpAgentAdapter('letta', {
-      baseUrl,
-      chatPath: '/chat',
-      healthPath: '/health',
-      timeoutMs: 2_000,
-    });
     const lettaConversation = { ...conversation, systemId: 'letta' as const, agentId: '[Letta] Lucy' };
     const lettaParticipant = {
       ...participants[0],
+      conversationId: lettaConversation.id,
       agentId: '[Letta] Lucy',
-      agent: { ...participants[0].agent, id: '[Letta] Lucy', systemId: 'letta' as const },
+      agent: {
+        ...participants[0].agent,
+        id: '[Letta] Lucy',
+        systemId: 'letta' as const,
+        displayName: '[Letta] Lucy',
+      },
     };
 
-    const consume = async () => {
-      for await (const _item of adapter.streamReply({
-        conversation: lettaConversation,
-        userMessage: { ...userMessage, conversationId: lettaConversation.id },
-        history: [{ ...userMessage, conversationId: lettaConversation.id }],
-        targetAgentId: '[Letta] Lucy',
-        routingMode: 'direct',
-        participants: [lettaParticipant],
-      })) {
-        // Consume the stream until the backend error frame is encountered.
-      }
-    };
-
-    await expect(consume()).rejects.toThrow('Backend stream error: Lucy CLI runtime did not complete the verified local tool probe');
+    for (const chatPath of ['/json', '/ndjson', '/sse']) {
+      const adapter = new HttpAgentAdapter('letta', {
+        baseUrl,
+        chatPath,
+        healthPath: '/health',
+        timeoutMs: 2_000,
+      });
+      const items = [];
+      const consume = async () => {
+        for await (const item of adapter.streamReply({
+          conversation: lettaConversation,
+          userMessage: { ...userMessage, conversationId: lettaConversation.id },
+          history: [{ ...userMessage, conversationId: lettaConversation.id }],
+          targetAgentId: '[Letta] Lucy',
+          routingMode: 'direct',
+          participants: [lettaParticipant],
+        })) items.push(item);
+      };
+      await expect(consume()).rejects.toThrow('Backend stream error: verified local tool probe failed');
+      expect(items.every((item) => item.type !== 'delta')).toBe(true);
+    }
   });`;
-  if (!source.includes("fails closed on JSON and NDJSON backend error frames")) {
-    const marker = "\n});\n\ntype OpenAiTestPart";
-    if (!source.includes(marker)) throw new Error('http test insertion marker missing');
-    source = source.replace(marker, `${insertion}\n});\n\ntype OpenAiTestPart`);
-  }
-  return source;
+  return replaceOnce(input,
+    '\n});\n\ntype OpenAiTestPart = {',
+    insertion + '\n});\n\ntype OpenAiTestPart = {',
+    'HTTP error-frame regression test');
 });
 
-if (write) console.log('Applied workspace probe and backend error propagation.');
-else console.log('Workspace probe and backend error propagation validate.');
+if (!write) {
+  console.log('Workspace probe and backend error propagation patch validated.');
+}
