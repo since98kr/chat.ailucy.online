@@ -1,8 +1,8 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { once } from 'node:events';
-import { mkdtemp, mkdir, readFile, rm, symlink, writeFile } from 'node:fs/promises';
-import { dirname, join } from 'node:path';
+import { access, mkdtemp, mkdir, rm, symlink, writeFile } from 'node:fs/promises';
+import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import {
   cleanupToolProbe,
@@ -41,7 +41,7 @@ function runtimeConfig(cwd, fixture) {
   };
 }
 
-test('probe accepts only a bounded exact regular file and rejects symlinks', async (t) => {
+test('probe accepts only a bounded exact regular file and removes malformed paths', async (t) => {
   const root = await mkdtemp(join(tmpdir(), 'letta-tool-proof-contract-'));
   t.after(() => rm(root, { recursive: true, force: true }));
 
@@ -66,6 +66,12 @@ test('probe accepts only a bounded exact regular file and rejects symlinks', asy
   await writeFile(target, linked.token, { mode: 0o600 });
   await symlink(target, linked.path);
   assert.equal(observeToolProbe(linked), false);
+
+  const directory = createToolProbe();
+  await mkdir(directory.path, { mode: 0o700 });
+  assert.equal(observeToolProbe(directory), false);
+  cleanupToolProbe(directory);
+  await assert.rejects(access(directory.path));
 });
 
 test('bridge emits running then completed only after observing a real local-tool side effect', async (t) => {
