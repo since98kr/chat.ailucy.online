@@ -326,7 +326,7 @@ export function createToolProbe(secret) {
   const expected = createHmac('sha256', secret).update(challenge).digest('hex');
   const script = 'const c=require("node:crypto");process.stdout.write(c.createHmac("sha256",process.env.'
     + TOOL_PROBE_SECRET_ENV + ').update(' + JSON.stringify(challenge) + ').digest("hex"))';
-  const command = 'node -e ' + JSON.stringify(script);
+  const command = JSON.stringify(process.execPath) + ' -e ' + JSON.stringify(script);
   return {
     secret,
     challenge,
@@ -335,11 +335,17 @@ export function createToolProbe(secret) {
     observed: false,
     runningEmitted: false,
     completedEmitted: false,
+    toolSignalSeen: false,
+    assistantTextSeen: false,
+    prefixSeen: false,
+    hexCandidateSeen: false,
   };
 }
 
 export function observeToolProbe(probe, value) {
   if (!probe || typeof value !== 'string') return false;
+  if (value.includes(TOOL_PROBE_RESULT_PREFIX)) probe.prefixSeen = true;
+  if (/CHAT_V2_TOOL_PROBE_RESULT=[a-fA-F0-9]{64}\b/.test(value)) probe.hexCandidateSeen = true;
   const match = /CHAT_V2_TOOL_PROBE_RESULT=([a-f0-9]{64})\b/.exec(value);
   if (!match) return false;
   const supplied = Buffer.from(match[1], 'utf8');
@@ -347,6 +353,15 @@ export function observeToolProbe(probe, value) {
   if (supplied.length !== expected.length || !timingSafeEqual(supplied, expected)) return false;
   probe.observed = true;
   return true;
+}
+
+export function toolProbeDiagnostic(probe) {
+  return [
+    'tool_signal=' + (probe?.toolSignalSeen === true),
+    'assistant_text=' + (probe?.assistantTextSeen === true),
+    'prefix=' + (probe?.prefixSeen === true),
+    'hex=' + (probe?.hexCandidateSeen === true),
+  ].join(';');
 }
 
 export function cleanupToolProbe(probe) {
@@ -376,8 +391,8 @@ function toolProbeInstructions(probe) {
     'This is an automated proof of real local CLI tool execution.',
     'The expected result depends on a secret available only in the CLI process environment and cannot be inferred from this prompt.',
     'Invoke the advertised Bash tool exactly once. Use the command and description from the JSON payload without changing, simulating, or explaining the command.',
-    'After Bash succeeds, copy its stdout exactly after the result_prefix in your final one-sentence answer and also state the exact runtime model identifier.',
-    'A claim without the exact Bash stdout fails verification. Do not reveal the command, environment variable name, challenge, secret, or raw digest except in the required prefixed result.',
+    'After Bash succeeds, answer in one sentence with the exact runtime model identifier and confirm that the verified local tool operation completed.',
+    'The bridge verifies Bash output directly from the runtime wire. Do not reproduce the command, environment variable name, challenge, secret, or raw digest in the final answer.',
     'CHAT_V2_PROBE_JSON=' + payload,
     '</CHAT_V2_LOCAL_TOOL_PROBE>',
   ].join('\n');
@@ -594,7 +609,12 @@ class LucySession {
 
     const pending = this.pending;
     if (!pending) return;
+    if (pending.probe && observeToolProbe(pending.probe, JSON.stringify(wire)) && !pending.probe.runningEmitted) {
+      pending.probe.runningEmitted = true;
+      pending.onItem({ status: 'tool.running:' + TOOL_PROBE_STATUS });
+    }
     const status = extractToolStatus(wire, this.toolNames);
+    if (status && pending.probe) pending.probe.toolSignalSeen = true;
     if (status && status !== pending.lastStatus) {
       pending.lastStatus = status;
       pending.onItem({ status });
@@ -602,7 +622,8 @@ class LucySession {
     const delta = extractAssistantDelta(wire);
     if (delta) {
       pending.accumulated += delta;
-      if (!pending.probe) pending.onItem({ delta });
+      if (pending.probe) pending.probe.assistantTextSeen = true;
+      else pending.onItem({ delta });
     }
     if (wire?.type === 'error') {
       this.completePending(new Error('Lucy CLI runtime returned an error'));
@@ -615,8 +636,12 @@ class LucySession {
       }
       const rawFinalText = typeof wire.result === 'string' ? wire.result : pending.accumulated;
       if (pending.probe) {
-        if (!observeToolProbe(pending.probe, rawFinalText)) {
-          this.completePending(new Error('Lucy CLI runtime did not complete the verified HMAC tool probe'));
+        observeToolProbe(pending.probe, rawFinalText);
+        if (!pending.probe.observed) {
+          this.completePending(new Error(
+            'Lucy CLI runtime did not complete the verified HMAC tool probe ('
+              + toolProbeDiagnostic(pending.probe) + ')',
+          ));
           return;
         }
         if (!pending.probe.runningEmitted) {
