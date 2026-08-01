@@ -48,6 +48,11 @@ function capabilityCounts(status: string) {
   };
 }
 
+function isWireVisibleServerTool(status: string) {
+  const normalized = status.toLowerCase().replace(/[- ]/g, '_');
+  return normalized.includes('web_search') || normalized.includes('fetch_webpage');
+}
+
 test('real Letta Lucy reports its CLI model, advertises full capability, and executes a CLI tool', async () => {
   test.skip(!enabled('CHAT_LETTA_FULL_RUNTIME_QA_REQUIRED'), 'Full Letta CLI runtime QA is not activated.');
   test.setTimeout(300_000);
@@ -73,8 +78,11 @@ test('real Letta Lucy reports its CLI model, advertises full capability, and exe
     const streamed = await api.post(`/api/conversations/${conversationId}/messages/stream`, {
       data: {
         content: [
-          'Before answering, use one harmless CLI tool to inspect the current working directory or list its top-level entries.',
-          'Then answer in one sentence: state the exact runtime model identifier you are using and confirm that the tool completed.',
+          'Before answering, execute exactly one harmless server-side tool whose advertised name is web_search or fetch_webpage.',
+          'Prefer web_search and search only for the official OpenAI homepage; use fetch_webpage on the official OpenAI homepage only when web_search is not advertised.',
+          'Do not use Bash, Read, Grep, Glob, filesystem, shell, or local-execution tools for this check.',
+          'Do not claim that a tool completed unless its real result was returned to you.',
+          'Then answer in one sentence: state the exact runtime model identifier you are using and confirm which server-side tool completed.',
           'Do not guess the model and do not answer that you do not know.',
         ].join(' '),
         artifactIds: [],
@@ -103,11 +111,17 @@ test('real Letta Lucy reports its CLI model, advertises full capability, and exe
     expect(capabilityStatus?.commands).toBeGreaterThanOrEqual(0);
     expect(statuses).toContain('runtime.slash_commands_advertised:true');
     expect(capabilityStatus?.memfs).toBe(true);
-    expect(statuses.some((status) => status.startsWith('tool.running:') || status.startsWith('mcp.running:'))).toBe(true);
-    expect(statuses.some((status) => status.startsWith('tool.completed:'))).toBe(true);
+
+    const runningStatus = statuses.find((status) => status.startsWith('tool.running:') || status.startsWith('mcp.running:'));
+    const completedStatus = statuses.find((status) => status.startsWith('tool.completed:'));
+    expect(runningStatus).toBeTruthy();
+    expect(completedStatus).toBeTruthy();
+    expect(isWireVisibleServerTool(runningStatus ?? '')).toBe(true);
+    expect(isWireVisibleServerTool(completedStatus ?? '')).toBe(true);
 
     const answer = responseText(events);
     expect(answer).toContain(model);
+    expect(answer.toLowerCase()).toMatch(/web.?search|fetch.?webpage/);
     expect(answer.toLowerCase()).not.toMatch(/do not know|don't know|모르|알 수 없/);
     expect(events.some((event) => event.type === 'run.completed')).toBe(true);
     expect(events.some((event) => event.type === 'run.failed')).toBe(false);
