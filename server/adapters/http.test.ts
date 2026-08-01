@@ -400,7 +400,7 @@ describe('HttpAgentAdapter', () => {
         healthPath: '/health',
         timeoutMs: 2_000,
       });
-      const items = [];
+      const items: Array<{ type: string }> = [];
       const consume = async () => {
         for await (const item of adapter.streamReply({
           conversation: lettaConversation,
