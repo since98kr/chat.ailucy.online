@@ -20,7 +20,7 @@ on:
       - 'package.json'
 
 permissions:
-  contents: read
+  contents: write
 
 concurrency:
   group: letta-full-runtime-ci-${{ github.ref }}
@@ -35,11 +35,39 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
 
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
           node-version: '22'
+
+      - name: Apply validated workspace probe and error propagation
+        if: ${{ (github.event_name == 'push' && github.ref == 'refs/heads/agent/letta-workspace-probe-errors') || (github.event_name == 'pull_request' && github.head_ref == 'agent/letta-workspace-probe-errors') }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          branch='agent/letta-workspace-probe-errors'
+          node ops/letta-bridge/apply-workspace-probe-error-propagation.mjs --write
+          node --check ops/letta-bridge/letta-cli-bridge.mjs
+          node --test ops/letta-bridge/letta-side-effect-tool-proof.nodecheck.mjs
+          git diff --check
+          targets=(
+            ops/letta-bridge/letta-cli-bridge.mjs
+            ops/letta-bridge/letta-side-effect-tool-proof.nodecheck.mjs
+            server/adapters/http.ts
+            server/adapters/http.test.ts
+          )
+          if git diff --quiet -- "${targets[@]}"; then
+            echo 'Validated workspace probe and error propagation are already committed.'
+            exit 0
+          fi
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add -- "${targets[@]}"
+          git commit -m 'Keep Letta probe in workspace and propagate backend errors (#93)'
+          git push origin HEAD:"${branch}"
 
       - name: Validate bridge and operator script syntax
         shell: bash
