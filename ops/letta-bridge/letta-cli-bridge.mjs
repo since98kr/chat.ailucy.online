@@ -340,9 +340,9 @@ export function createToolProbe(secret) {
 
 export function observeToolProbe(probe, value) {
   if (!probe || typeof value !== 'string') return false;
-  const match = /CHAT_V2_TOOL_PROBE_RESULT=([a-f0-9]{64})\b/i.exec(value);
+  const match = /CHAT_V2_TOOL_PROBE_RESULT=([a-f0-9]{64})\b/.exec(value);
   if (!match) return false;
-  const supplied = Buffer.from(match[1].toLowerCase(), 'utf8');
+  const supplied = Buffer.from(match[1], 'utf8');
   const expected = Buffer.from(probe.expected, 'utf8');
   if (supplied.length !== expected.length || !timingSafeEqual(supplied, expected)) return false;
   probe.observed = true;

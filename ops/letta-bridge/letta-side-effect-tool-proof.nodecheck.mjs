@@ -48,6 +48,7 @@ test('HMAC proof cannot be guessed from the prompt and accepts only the exact Ba
   assert.equal(probe.command.includes(probe.challenge), true);
   assert.equal(observeToolProbe(probe, 'claimed success'), false);
   assert.equal(observeToolProbe(probe, `CHAT_V2_TOOL_PROBE_RESULT=${'b'.repeat(64)}`), false);
+  assert.equal(observeToolProbe(probe, `CHAT_V2_TOOL_PROBE_RESULT=${probe.expected.toUpperCase()}`), false);
   assert.equal(observeToolProbe(probe, `model ok CHAT_V2_TOOL_PROBE_RESULT=${probe.expected}`), true);
   cleanupToolProbe(probe);
   assert.equal(probe.secret, '');
