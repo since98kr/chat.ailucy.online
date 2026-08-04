@@ -1,0 +1,113 @@
+name: Chat PR98 finalize once
+
+on:
+  push:
+    branches:
+      - agent/letta-hmac-wire-proof
+
+permissions:
+  contents: write
+
+concurrency:
+  group: chat-pr98-finalize-once
+  cancel-in-progress: false
+
+jobs:
+  finalize:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: agent/letta-hmac-wire-proof
+          fetch-depth: 0
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Commit reviewed source and remove temporary write CI
+        shell: bash
+        run: |
+          set -euo pipefail
+          branch='agent/letta-hmac-wire-proof'
+          git fetch origin "${branch}"
+          test "$(git rev-parse HEAD)" = "$(git rev-parse origin/${branch})"
+
+          python3 <<'PY'
+          from pathlib import Path
+
+          bridge_path = Path('ops/letta-bridge/letta-cli-bridge.mjs')
+          bridge = bridge_path.read_text()
+          old = """  return value.split(probe.command).join('[tool-probe-command-redacted]')
+            .split(probe.secret).join('[tool-probe-secret-redacted]')
+            .split(probe.challenge).join('[tool-probe-challenge-redacted]')
+            .split(probe.expected).join('[verified-tool-hmac-redacted]');"""
+          new = """  return value.split(TOOL_PROBE_RESULT_PREFIX + probe.expected).join('[verified-tool-hmac-redacted]')
+            .split(probe.command).join('[tool-probe-command-redacted]')
+            .split(probe.secret).join('[tool-probe-secret-redacted]')
+            .split(probe.challenge).join('[tool-probe-challenge-redacted]')
+            .split(probe.expected).join('[verified-tool-hmac-redacted]');"""
+          if old in bridge:
+              bridge = bridge.replace(old, new, 1)
+          elif new not in bridge:
+              raise SystemExit('bridge redaction anchor missing')
+          bridge_path.write_text(bridge)
+
+          test_path = Path('ops/letta-bridge/letta-side-effect-tool-proof.nodecheck.mjs')
+          test = test_path.read_text()
+          old_import = "  observeToolProbe,\n  toolProbeDiagnostic,"
+          new_import = "  observeToolProbe,\n  redactToolProbeText,\n  toolProbeDiagnostic,"
+          if old_import in test:
+              test = test.replace(old_import, new_import, 1)
+          elif new_import not in test:
+              raise SystemExit('test import anchor missing')
+          anchor = "  assert.equal(toolProbeDiagnostic(probe), 'tool_signal=false;assistant_text=false;prefix=true;hex=true');"
+          addition = """  assert.equal(toolProbeDiagnostic(probe), 'tool_signal=false;assistant_text=false;prefix=true;hex=true');
+          const redacted = redactToolProbeText(`ok CHAT_V2_TOOL_PROBE_RESULT=${probe.expected}`, probe);
+          assert.equal(redacted, 'ok [verified-tool-hmac-redacted]');
+          assert.equal(redacted.includes('CHAT_V2_TOOL_PROBE_RESULT='), false);"""
+          if anchor in test:
+              test = test.replace(anchor, addition, 1)
+          elif addition not in test:
+              raise SystemExit('test assertion anchor missing')
+          test_path.write_text(test)
+
+          workflow_path = Path('.github/workflows/letta-full-runtime-ci.yml')
+          workflow = workflow_path.read_text()
+          workflow = workflow.replace('permissions:\n  contents: write', 'permissions:\n  contents: read', 1)
+          checkout_old = """      - name: Checkout
+                uses: actions/checkout@v4
+                with:
+                  ref: ${{ github.event.pull_request.head.ref || github.ref }}
+                  fetch-depth: 0
+          """
+          checkout_new = """      - name: Checkout
+                uses: actions/checkout@v4
+          """
+          if checkout_old in workflow:
+              workflow = workflow.replace(checkout_old, checkout_new, 1)
+          start = workflow.find('      - name: Apply atomic HMAC proof redaction on the feature branch\n')
+          end = workflow.find('      - name: Validate bridge and operator script syntax\n')
+          if start != -1 and end != -1 and start < end:
+              workflow = workflow[:start] + workflow[end:]
+          elif 'Apply atomic HMAC proof redaction on the feature branch' in workflow:
+              raise SystemExit('temporary workflow step boundaries invalid')
+          workflow_path.write_text(workflow)
+          PY
+
+          rm -f ops/letta-bridge/.hmac-proof-finalize-trigger
+          rm -f .github/workflows/chat-pr98-finalize-once.yml
+
+          node --check ops/letta-bridge/letta-cli-bridge.mjs
+          node --test ops/letta-bridge/letta-side-effect-tool-proof.nodecheck.mjs
+          git diff --check
+          grep -Fq 'contents: read' .github/workflows/letta-full-runtime-ci.yml
+          ! grep -Fq 'Apply atomic HMAC proof redaction on the feature branch' .github/workflows/letta-full-runtime-ci.yml
+          ! grep -Fq 'CHAT_V2_TOOL_PROBE_RESULT=[verified-tool-hmac-redacted]' ops/letta-bridge/letta-cli-bridge.mjs
+
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add -A
+          git commit -m 'Finalize Letta HMAC wire proof and restore read-only CI (#98)'
+          git push origin HEAD:"${branch}"
