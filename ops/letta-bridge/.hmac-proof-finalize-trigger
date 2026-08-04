@@ -1,1 +1,1 @@
-one-shot trigger for committing the reviewed HMAC proof redaction directly to PR #98
+trigger reviewed HMAC proof finalization after workflow registration
