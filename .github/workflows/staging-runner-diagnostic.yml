@@ -1,0 +1,79 @@
+name: Staging runner diagnostic
+
+on:
+  push:
+    branches:
+      - agent/openclaw-host-discovery
+
+permissions:
+  contents: read
+  actions: read
+  statuses: write
+
+jobs:
+  diagnose:
+    name: Inspect staging workflow queue
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+
+    steps:
+      - name: Inspect recent staging and discovery runs
+        id: inspect
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const { data } = await github.rest.actions.listWorkflowRunsForRepo({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              per_page: 40,
+            });
+            const interesting = data.workflow_runs
+              .filter(run => ['Deploy staging', 'OpenClaw host discovery'].includes(run.name))
+              .slice(0, 12)
+              .map(run => ({
+                id: run.id,
+                name: run.name,
+                event: run.event,
+                status: run.status,
+                conclusion: run.conclusion,
+                head_sha: run.head_sha,
+                created_at: run.created_at,
+                updated_at: run.updated_at,
+              }));
+            core.info(JSON.stringify(interesting));
+            core.summary.addHeading('Staging workflow queue');
+            core.summary.addTable([
+              [{data:'Run',header:true},{data:'Workflow',header:true},{data:'Status',header:true},{data:'Conclusion',header:true},{data:'SHA',header:true}],
+              ...interesting.map(run => [String(run.id), run.name, run.status, run.conclusion || '', run.head_sha.slice(0,12)]),
+            ]);
+            await core.summary.write();
+
+            const currentDeploy = interesting.find(run => run.name === 'Deploy staging' && run.head_sha === '5c15b923668b8a1116eb82444814b047e4d4588c')
+              || interesting.find(run => run.name === 'Deploy staging' && run.head_sha === 'b99e4a47acdd104d06da50d747b390aa55478300');
+            const discovery = interesting.find(run => run.name === 'OpenClaw host discovery' && run.head_sha === context.sha);
+            core.setOutput('deploy_run_id', currentDeploy?.id || '');
+            core.setOutput('deploy_status', currentDeploy?.status || 'missing');
+            core.setOutput('discovery_run_id', discovery?.id || '');
+            core.setOutput('discovery_status', discovery?.status || 'missing');
+
+      - name: Publish diagnostic status
+        uses: actions/github-script@v7
+        env:
+          DEPLOY_RUN_ID: ${{ steps.inspect.outputs.deploy_run_id }}
+          DEPLOY_STATUS: ${{ steps.inspect.outputs.deploy_status }}
+          DISCOVERY_RUN_ID: ${{ steps.inspect.outputs.discovery_run_id }}
+          DISCOVERY_STATUS: ${{ steps.inspect.outputs.discovery_status }}
+        with:
+          script: |
+            const desc = `deploy=${process.env.DEPLOY_STATUS}, discovery=${process.env.DISCOVERY_STATUS}`.slice(0,140);
+            await github.rest.repos.createCommitStatus({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              sha: context.sha,
+              state: 'success',
+              context: 'chat-v2/staging-runner-diagnostic',
+              description: desc,
+              target_url: `${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`,
+            });
+            core.info(`deploy_run_id=${process.env.DEPLOY_RUN_ID}`);
+            core.info(`discovery_run_id=${process.env.DISCOVERY_RUN_ID}`);
