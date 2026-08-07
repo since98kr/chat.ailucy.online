@@ -17,16 +17,14 @@ jobs:
     timeout-minutes: 5
 
     steps:
-      - name: Inspect recent staging and discovery runs
+      - name: Inspect recent staging, pending deployment, and runner state
         id: inspect
         uses: actions/github-script@v7
         with:
           script: |
-            const { data } = await github.rest.actions.listWorkflowRunsForRepo({
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              per_page: 40,
-            });
+            const owner = context.repo.owner;
+            const repo = context.repo.repo;
+            const { data } = await github.rest.actions.listWorkflowRunsForRepo({ owner, repo, per_page: 40 });
             const interesting = data.workflow_runs
               .filter(run => ['Deploy staging', 'OpenClaw host discovery'].includes(run.name))
               .slice(0, 12)
@@ -40,32 +38,74 @@ jobs:
                 created_at: run.created_at,
                 updated_at: run.updated_at,
               }));
-            core.info(JSON.stringify(interesting));
+
+            const currentDeploy = interesting.find(run => run.name === 'Deploy staging' && run.head_sha === '5c15b923668b8a1116eb82444814b047e4d4588c')
+              || interesting.find(run => run.name === 'Deploy staging' && run.head_sha === 'b99e4a47acdd104d06da50d747b390aa55478300');
+            const discovery = interesting.find(run => run.name === 'OpenClaw host discovery' && run.head_sha === context.sha)
+              || interesting.find(run => run.name === 'OpenClaw host discovery' && ['22c8e4aa39dd20a2052c891fdefa8482c4105f66','e357ed30f03415d5d0bcf7c6a8d2c4a5c62c8fac'].includes(run.head_sha));
+
+            let pendingDeployments = [];
+            if (currentDeploy) {
+              try {
+                const pending = await github.request('GET /repos/{owner}/{repo}/actions/runs/{run_id}/pending_deployments', {
+                  owner, repo, run_id: currentDeploy.id,
+                });
+                pendingDeployments = (pending.data || []).map(item => ({
+                  environment: item.environment?.name || '',
+                  wait_timer: item.wait_timer ?? null,
+                  current_user_can_approve: item.current_user_can_approve ?? null,
+                  reviewer_count: Array.isArray(item.reviewers) ? item.reviewers.length : 0,
+                }));
+              } catch (error) {
+                core.info(`pending_deployments query unavailable: ${error.status || error.message}`);
+              }
+            }
+
+            let runners = [];
+            try {
+              const response = await github.rest.actions.listSelfHostedRunnersForRepo({ owner, repo, per_page: 100 });
+              runners = response.data.runners
+                .filter(runner => (runner.labels || []).some(label => label.name === 'chat-staging'))
+                .map(runner => ({
+                  status: runner.status,
+                  busy: runner.busy,
+                  labels: (runner.labels || []).map(label => label.name).filter(name => ['self-hosted','linux','x64','chat-staging'].includes(name)),
+                }));
+            } catch (error) {
+              core.info(`runner query unavailable: ${error.status || error.message}`);
+            }
+
+            core.info(`runs=${JSON.stringify(interesting)}`);
+            core.info(`pending_deployments=${JSON.stringify(pendingDeployments)}`);
+            core.info(`chat_staging_runners=${JSON.stringify(runners)}`);
             core.summary.addHeading('Staging workflow queue');
             core.summary.addTable([
               [{data:'Run',header:true},{data:'Workflow',header:true},{data:'Status',header:true},{data:'Conclusion',header:true},{data:'SHA',header:true}],
               ...interesting.map(run => [String(run.id), run.name, run.status, run.conclusion || '', run.head_sha.slice(0,12)]),
             ]);
+            core.summary.addHeading('Pending environment deployments', 2);
+            core.summary.addCodeBlock(JSON.stringify(pendingDeployments, null, 2), 'json');
+            core.summary.addHeading('chat-staging runner state', 2);
+            core.summary.addCodeBlock(JSON.stringify(runners, null, 2), 'json');
             await core.summary.write();
 
-            const currentDeploy = interesting.find(run => run.name === 'Deploy staging' && run.head_sha === '5c15b923668b8a1116eb82444814b047e4d4588c')
-              || interesting.find(run => run.name === 'Deploy staging' && run.head_sha === 'b99e4a47acdd104d06da50d747b390aa55478300');
-            const discovery = interesting.find(run => run.name === 'OpenClaw host discovery' && run.head_sha === context.sha);
             core.setOutput('deploy_run_id', currentDeploy?.id || '');
             core.setOutput('deploy_status', currentDeploy?.status || 'missing');
             core.setOutput('discovery_run_id', discovery?.id || '');
             core.setOutput('discovery_status', discovery?.status || 'missing');
+            core.setOutput('pending_count', String(pendingDeployments.length));
+            core.setOutput('runner_state', runners.length ? `${runners[0].status}/${runners[0].busy ? 'busy' : 'idle'}` : 'unknown');
 
       - name: Publish diagnostic status
         uses: actions/github-script@v7
         env:
-          DEPLOY_RUN_ID: ${{ steps.inspect.outputs.deploy_run_id }}
           DEPLOY_STATUS: ${{ steps.inspect.outputs.deploy_status }}
-          DISCOVERY_RUN_ID: ${{ steps.inspect.outputs.discovery_run_id }}
           DISCOVERY_STATUS: ${{ steps.inspect.outputs.discovery_status }}
+          PENDING_COUNT: ${{ steps.inspect.outputs.pending_count }}
+          RUNNER_STATE: ${{ steps.inspect.outputs.runner_state }}
         with:
           script: |
-            const desc = `deploy=${process.env.DEPLOY_STATUS}, discovery=${process.env.DISCOVERY_STATUS}`.slice(0,140);
+            const desc = `deploy=${process.env.DEPLOY_STATUS}, env=${process.env.PENDING_COUNT}, runner=${process.env.RUNNER_STATE}`.slice(0,140);
             await github.rest.repos.createCommitStatus({
               owner: context.repo.owner,
               repo: context.repo.repo,
@@ -75,5 +115,3 @@ jobs:
               description: desc,
               target_url: `${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`,
             });
-            core.info(`deploy_run_id=${process.env.DEPLOY_RUN_ID}`);
-            core.info(`discovery_run_id=${process.env.DISCOVERY_RUN_ID}`);
