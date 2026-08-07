@@ -59,22 +59,31 @@ jobs:
               sha: process.env.DEPLOY_SHA,
               state: 'pending',
               context: 'chat-v2/staging',
-              description: 'Staging deploy and full QA are running',
+              description: 'OpenClaw-backed staging deploy and QA are running',
               target_url: `${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`,
             });
 
-      - name: Deploy full Letta CLI runtime bridge
+      - name: Require private OpenClaw staging ingress
+        shell: bash
         env:
-          LETTA_BASE_URL: ${{ vars.LETTA_BASE_URL }}
-          LETTA_SSH_HOST: ${{ vars.LETTA_SSH_HOST || 'ax.hni-gl.ai' }}
-          LETTA_SSH_PORT: ${{ vars.LETTA_SSH_PORT || '3004' }}
-          LETTA_SSH_USER: ${{ vars.LETTA_SSH_USER || 'since98kr' }}
-          LETTA_BRIDGE_USER: ${{ vars.LETTA_BRIDGE_USER || 'since98kr' }}
-          LETTA_SSH_PRIVATE_KEY: ${{ secrets.LETTA_SSH_PRIVATE_KEY }}
-          LETTA_SSH_KNOWN_HOSTS: ${{ secrets.LETTA_SSH_KNOWN_HOSTS }}
-          LETTA_BRIDGE_EVIDENCE_PATH: ${{ runner.temp }}/letta-full-runtime-health.json
-          LETTA_BRIDGE_DEPLOY_DIAGNOSTIC_PATH: ${{ runner.temp }}/letta-bridge-deploy-diagnostic.json
-        run: bash ops/letta-bridge/deploy-from-agentlucy.sh
+          OPENCLAW_GATEWAY_BASE_URL: ${{ vars.OPENCLAW_GATEWAY_BASE_URL }}
+          OPENCLAW_GATEWAY_TOKEN: ${{ secrets.OPENCLAW_GATEWAY_TOKEN }}
+        run: |
+          set -euo pipefail
+          [[ -n "${OPENCLAW_GATEWAY_BASE_URL}" ]] || { echo 'OPENCLAW_GATEWAY_BASE_URL is required for staging cutover.' >&2; exit 1; }
+          [[ -n "${OPENCLAW_GATEWAY_TOKEN}" ]] || { echo 'OPENCLAW_GATEWAY_TOKEN is required for staging cutover.' >&2; exit 1; }
+          case "${OPENCLAW_GATEWAY_BASE_URL}" in
+            http://127.0.0.1:*|http://localhost:*)
+              echo 'OpenClaw Gateway loopback URL is not reachable from the staging container; provide a private host/container-reachable ingress.' >&2
+              exit 1
+              ;;
+          esac
+          echo 'Private authenticated OpenClaw staging ingress is configured.'
+
+      - name: Legacy Letta bridge rollout is not used in OpenClaw mode
+        run: |
+          echo 'SKIP: Letta Lucy cognition remains in Letta, while Chat side-effect execution is now routed through the OpenClaw Gateway.'
+          echo 'The legacy full-CLI bridge files remain in the repository for rollback investigation only.'
 
       - name: Deploy with strict preflight, backup, health check, and rollback
         env:
@@ -98,18 +107,20 @@ jobs:
           CHAT_MAX_UPLOAD_BYTES: ${{ vars.CHAT_MAX_UPLOAD_BYTES }}
           CHAT_MAX_GENERATED_ARTIFACT_BYTES: ${{ vars.CHAT_MAX_GENERATED_ARTIFACT_BYTES }}
           CHAT_MAX_INLINE_GENERATED_ARTIFACT_PAYLOAD_BYTES: ${{ vars.CHAT_MAX_INLINE_GENERATED_ARTIFACT_PAYLOAD_BYTES }}
-          LETTA_BASE_URL: ${{ vars.LETTA_BASE_URL }}
-          LETTA_CHAT_PATH: ${{ vars.LETTA_CHAT_PATH }}
-          LETTA_HEALTH_PATH: ${{ vars.LETTA_HEALTH_PATH }}
+          LETTA_BASE_URL: ${{ vars.OPENCLAW_GATEWAY_BASE_URL }}
+          LETTA_CHAT_PATH: /v1/chat/completions
+          LETTA_HEALTH_PATH: /health
           LETTA_AGENT_ID: ${{ vars.LETTA_AGENT_ID }}
-          LETTA_API_KEY: ${{ secrets.LETTA_API_KEY }}
+          LETTA_API_KEY: ${{ secrets.OPENCLAW_GATEWAY_TOKEN }}
           LETTA_TIMEOUT_MS: ${{ vars.LETTA_TIMEOUT_MS }}
-          LETTA_PROTOCOL: ${{ vars.LETTA_PROTOCOL }}
-          LETTA_MODEL_MAP_JSON: ${{ vars.LETTA_MODEL_MAP_JSON }}
+          LETTA_PROTOCOL: openclaw
+          LETTA_OPENCLAW_AGENT_TARGET: ${{ vars.LETTA_OPENCLAW_AGENT_TARGET || 'openclaw/main' }}
+          LETTA_OPENCLAW_SESSION_PREFIX: ${{ vars.LETTA_OPENCLAW_SESSION_PREFIX || 'chat-v2' }}
+          LETTA_MODEL_MAP_JSON: ''
           LETTA_MAX_ARTIFACT_BYTES: ${{ vars.LETTA_MAX_ARTIFACT_BYTES }}
           LETTA_MAX_ARTIFACT_TOTAL_BYTES: ${{ vars.LETTA_MAX_ARTIFACT_TOTAL_BYTES }}
           LETTA_MAX_TEXT_ARTIFACT_BYTES: ${{ vars.LETTA_MAX_TEXT_ARTIFACT_BYTES }}
-          LETTA_NATIVE_BINARY_ARTIFACTS: ${{ vars.LETTA_NATIVE_BINARY_ARTIFACTS }}
+          LETTA_NATIVE_BINARY_ARTIFACTS: 'false'
           LETTA_ARTIFACT_TOOL_ENABLED: ${{ vars.LETTA_ARTIFACT_TOOL_ENABLED }}
           HERMES_BASE_URL: ${{ vars.HERMES_BASE_URL }}
           HERMES_CHAT_PATH: ${{ vars.HERMES_CHAT_PATH }}
@@ -132,61 +143,56 @@ jobs:
           CHAT_STAGING_EMAIL: ${{ vars.CHAT_ALLOWED_EMAILS }}
         run: bash scripts/ops/staging-smoke.sh
 
-      - name: Verify real browser links, artifacts, and full Letta CLI runtime
+      - name: Verify OpenClaw-backed Letta session continuity
+        env:
+          CHAT_STAGING_BASE_URL: http://127.0.0.1:14174
+          CHAT_STAGING_EMAIL: ${{ vars.CHAT_ALLOWED_EMAILS }}
+        run: bash scripts/ops/openclaw-letta-staging-smoke.sh
+
+      - name: Verify real browser links and configured artifacts
         env:
           CHAT_STAGING_BASE_URL: http://127.0.0.1:14174
           CHAT_STAGING_EMAIL: ${{ vars.CHAT_ALLOWED_EMAILS }}
           CHAT_MULTIMODAL_QA_REQUIRED: ${{ vars.CHAT_MULTIMODAL_QA_REQUIRED }}
           CHAT_GENERATED_ARTIFACT_QA_REQUIRED: ${{ vars.CHAT_GENERATED_ARTIFACT_QA_REQUIRED }}
-          CHAT_LETTA_FULL_RUNTIME_QA_REQUIRED: ${{ vars.CHAT_LETTA_FULL_RUNTIME_QA_REQUIRED || 'true' }}
+          CHAT_LETTA_FULL_RUNTIME_QA_REQUIRED: 'false'
           CHAT_HERMES_VISION_AGENT_ID: ${{ vars.CHAT_HERMES_VISION_AGENT_ID }}
         run: bash scripts/ops/staging-browser-smoke.sh
 
-      - name: Capture authenticated Letta runtime capabilities
+      - name: Capture authenticated OpenClaw Lucy target evidence
         shell: bash
         env:
-          LETTA_BASE_URL: ${{ vars.LETTA_BASE_URL }}
-          LETTA_API_KEY: ${{ secrets.LETTA_API_KEY }}
-          LETTA_CAPABILITY_EVIDENCE_PATH: ${{ runner.temp }}/letta-full-runtime-capabilities.json
+          OPENCLAW_GATEWAY_BASE_URL: ${{ vars.OPENCLAW_GATEWAY_BASE_URL }}
+          OPENCLAW_GATEWAY_TOKEN: ${{ secrets.OPENCLAW_GATEWAY_TOKEN }}
+          OPENCLAW_LUCY_TARGET: ${{ vars.LETTA_OPENCLAW_AGENT_TARGET || 'openclaw/main' }}
+          OPENCLAW_MODELS_EVIDENCE_PATH: ${{ runner.temp }}/openclaw-models.json
         run: |
           set -euo pipefail
-          [[ -n "${LETTA_API_KEY}" ]] || { echo 'LETTA_API_KEY is required.' >&2; exit 1; }
-          base_url="${LETTA_BASE_URL:-http://host.docker.internal:18283}"
-          if [[ "${base_url}" == *'host.docker.internal'* ]] && ! getent hosts host.docker.internal >/dev/null 2>&1; then
-            gateway="$(docker network inspect bridge --format '{{(index .IPAM.Config 0).Gateway}}')"
-            [[ -n "${gateway}" ]]
-            base_url="${base_url/host.docker.internal/${gateway}}"
-          fi
+          [[ -n "${OPENCLAW_GATEWAY_BASE_URL}" && -n "${OPENCLAW_GATEWAY_TOKEN}" ]]
           umask 077
           curl --fail --silent --show-error \
-            --header "Authorization: Bearer ${LETTA_API_KEY}" \
-            "${base_url%/}/capabilities" >"${LETTA_CAPABILITY_EVIDENCE_PATH}"
-          node - "${LETTA_CAPABILITY_EVIDENCE_PATH}" <<'NODE'
+            --header "Authorization: Bearer ${OPENCLAW_GATEWAY_TOKEN}" \
+            "${OPENCLAW_GATEWAY_BASE_URL%/}/v1/models" >"${OPENCLAW_MODELS_EVIDENCE_PATH}"
+          node - "${OPENCLAW_MODELS_EVIDENCE_PATH}" "${OPENCLAW_LUCY_TARGET}" <<'NODE'
           const fs = require('node:fs');
-          const path = process.argv[2];
+          const [path, target] = process.argv.slice(2);
           const value = JSON.parse(fs.readFileSync(path, 'utf8'));
-          const mcpHealthy = Array.isArray(value.mcp_servers)
-            && value.mcp_advertised === true
-            && value.mcp_servers.every((server) => server && typeof server.name === 'string'
-              && !['error', 'failed', 'disconnected'].includes(String(server.status || '').toLowerCase()));
-          if (!value.model
-            || !Array.isArray(value.tools) || value.tools.length === 0
-            || !Array.isArray(value.skill_sources) || value.skill_sources.length === 0
-            || !Array.isArray(value.slash_commands) || value.slash_commands_advertised !== true
-            || !mcpHealthy
-            || !value.permission_mode
-            || value.memfs_enabled !== true) {
+          const items = Array.isArray(value.data) ? value.data : Array.isArray(value.models) ? value.models : [];
+          const ids = items.map((item) => typeof item === 'string' ? item : item && typeof item.id === 'string' ? item.id : '').filter(Boolean);
+          if (!ids.includes(target)) {
+            console.error(`Configured OpenClaw Lucy target is not advertised: ${target}`);
             process.exit(1);
           }
+          fs.writeFileSync(path, JSON.stringify({ object: value.object || 'list', targetAdvertised: true, target }, null, 2) + '\n');
           NODE
-          echo 'Authenticated Letta runtime capability evidence captured without secret values.'
+          echo 'Authenticated OpenClaw Lucy target evidence captured without credential or provider-model disclosure.'
 
       - name: Verify public Cloudflare Access and artifact transport
         env:
           CHAT_EXTERNAL_QA_REQUIRED: ${{ vars.CHAT_EXTERNAL_QA_REQUIRED }}
           CHAT_MULTIMODAL_QA_REQUIRED: ${{ vars.CHAT_MULTIMODAL_QA_REQUIRED }}
           CHAT_GENERATED_ARTIFACT_QA_REQUIRED: ${{ vars.CHAT_GENERATED_ARTIFACT_QA_REQUIRED }}
-          CHAT_LETTA_FULL_RUNTIME_QA_REQUIRED: ${{ vars.CHAT_LETTA_FULL_RUNTIME_QA_REQUIRED || 'true' }}
+          CHAT_LETTA_FULL_RUNTIME_QA_REQUIRED: 'false'
           CHAT_HERMES_VISION_AGENT_ID: ${{ vars.CHAT_HERMES_VISION_AGENT_ID }}
           CHAT_STAGING_BASE_URL: ${{ vars.CHAT_PUBLIC_ORIGIN }}
           CF_ACCESS_CLIENT_ID: ${{ vars.CF_ACCESS_CLIENT_ID }}
@@ -209,12 +215,13 @@ jobs:
             echo "- Requested revision: \`$(git rev-parse HEAD)\`"
             echo '- Local endpoint: `http://127.0.0.1:14174`'
             echo "- Public endpoint: \`${{ vars.CHAT_PUBLIC_ORIGIN }}\`"
+            echo '- Letta transport: `openclaw`'
+            echo "- OpenClaw Lucy target: \`${{ vars.LETTA_OPENCLAW_AGENT_TARGET || 'openclaw/main' }}\`"
             echo "- External QA required: \`${{ vars.CHAT_EXTERNAL_QA_REQUIRED || 'false' }}\`"
             echo "- Multimodal QA required: \`${{ vars.CHAT_MULTIMODAL_QA_REQUIRED || 'false' }}\`"
             echo "- Generated artifact QA required: \`${{ vars.CHAT_GENERATED_ARTIFACT_QA_REQUIRED || 'false' }}\`"
-            echo "- Full Letta CLI runtime QA required: \`${{ vars.CHAT_LETTA_FULL_RUNTIME_QA_REQUIRED || 'true' }}\`"
-            echo '- Required Letta gates: exact model, permission mode, MemFS, tools, skill sources, explicit slash-command metadata, explicit MCP metadata with any configured entries healthy, and real tool execution'
-            echo '- Other required gates: deploy, backup/rollback, Hermes, local Chromium, and configured public/multimodal gates'
+            echo '- Required Letta/OpenClaw gates: private Gateway health, explicit Lucy agent target, real Chat transport, two-turn same-Conversation session continuity, redaction, and configured artifact/browser gates'
+            echo '- Legacy direct Letta CLI/HMAC tool proof is not a release gate in OpenClaw mode.'
             for item in last-deployment.json last-preflight.json last-backup.json last-backup-verify.json last-health.json last-ops-status.json; do
               path="/opt/chat-v2/staging/state/${item}"
               if [[ -f "${path}" ]]; then
@@ -226,16 +233,14 @@ jobs:
                 echo '```'
               fi
             done
-            for path in "${RUNNER_TEMP}/letta-bridge-deploy-diagnostic.json" "${RUNNER_TEMP}/letta-full-runtime-health.json" "${RUNNER_TEMP}/letta-full-runtime-capabilities.json"; do
-              if [[ -f "${path}" ]]; then
-                echo
-                echo "### $(basename "${path}")"
-                echo '```json'
-                cat "${path}"
-                echo
-                echo '```'
-              fi
-            done
+            if [[ -f "${RUNNER_TEMP}/openclaw-models.json" ]]; then
+              echo
+              echo '### openclaw-models.json'
+              echo '```json'
+              cat "${RUNNER_TEMP}/openclaw-models.json"
+              echo
+              echo '```'
+            fi
           } >> "$GITHUB_STEP_SUMMARY"
 
       - name: Upload deployment and browser evidence
@@ -251,9 +256,7 @@ jobs:
             /opt/chat-v2/staging/state/last-backup-verify.json
             /opt/chat-v2/staging/state/last-health.json
             /opt/chat-v2/staging/state/last-ops-status.json
-            ${{ runner.temp }}/letta-bridge-deploy-diagnostic.json
-            ${{ runner.temp }}/letta-full-runtime-health.json
-            ${{ runner.temp }}/letta-full-runtime-capabilities.json
+            ${{ runner.temp }}/openclaw-models.json
             test-results-staging-browser
             playwright-staging-report
             test-results-external-staging-browser
@@ -277,7 +280,7 @@ jobs:
               state: success ? 'success' : 'failure',
               context: 'chat-v2/staging',
               description: success
-                ? 'Staging full CLI runtime and configured QA gates passed'
-                : 'Staging deploy, full CLI runtime, or QA failed',
+                ? 'OpenClaw-backed staging and configured QA gates passed'
+                : 'OpenClaw staging deploy or QA failed',
               target_url: `${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`,
             });
