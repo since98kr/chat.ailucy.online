@@ -1,10 +1,14 @@
-name: Letta full CLI runtime CI
+name: Letta legacy bridge and OpenClaw staging CI
 
 on:
   pull_request:
     paths:
       - '.github/workflows/deploy-staging.yml'
+      - '.github/workflows/staging-preflight.yml'
       - '.github/workflows/letta-full-runtime-ci.yml'
+      - 'compose.staging.yml'
+      - 'scripts/ops/openclaw-letta-staging-smoke.sh'
+      - 'scripts/ops/staging-preflight.sh'
       - 'ops/letta-bridge/**'
       - 'e2e-staging/letta-full-runtime.spec.ts'
       - 'package.json'
@@ -14,7 +18,11 @@ on:
       - 'agent/**'
     paths:
       - '.github/workflows/deploy-staging.yml'
+      - '.github/workflows/staging-preflight.yml'
       - '.github/workflows/letta-full-runtime-ci.yml'
+      - 'compose.staging.yml'
+      - 'scripts/ops/openclaw-letta-staging-smoke.sh'
+      - 'scripts/ops/staging-preflight.sh'
       - 'ops/letta-bridge/**'
       - 'e2e-staging/letta-full-runtime.spec.ts'
       - 'package.json'
@@ -23,12 +31,12 @@ permissions:
   contents: read
 
 concurrency:
-  group: letta-full-runtime-ci-${{ github.ref }}
+  group: letta-openclaw-runtime-ci-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
   bridge:
-    name: CLI identity, capabilities, redaction, rollout, restricted SSH, and staging wiring
+    name: Legacy bridge preservation and OpenClaw staging wiring
     runs-on: ubuntu-latest
     timeout-minutes: 12
 
@@ -41,7 +49,7 @@ jobs:
         with:
           node-version: '22'
 
-      - name: Validate bridge and operator script syntax
+      - name: Validate bridge, staging, and operator script syntax
         shell: bash
         run: |
           set -euo pipefail
@@ -55,8 +63,10 @@ jobs:
           bash -n ops/letta-bridge/authorized-rollout-gate.nodecheck.sh
           bash -n ops/letta-bridge/bootstrap-staging-ssh-access.sh
           bash -n ops/letta-bridge/configure-github-staging.sh
+          bash -n scripts/ops/staging-preflight.sh
+          bash -n scripts/ops/openclaw-letta-staging-smoke.sh
 
-      - name: Validate full-runtime static guards
+      - name: Validate legacy bridge preservation and OpenClaw staging guards
         shell: bash
         run: |
           set -euo pipefail
@@ -67,8 +77,13 @@ jobs:
           gate='ops/letta-bridge/authorized-rollout-gate.sh'
           bootstrap='ops/letta-bridge/bootstrap-staging-ssh-access.sh'
           workflow='.github/workflows/deploy-staging.yml'
+          preflight_workflow='.github/workflows/staging-preflight.yml'
+          compose='compose.staging.yml'
+          preflight='scripts/ops/staging-preflight.sh'
+          continuity='scripts/ops/openclaw-letta-staging-smoke.sh'
           qa='e2e-staging/letta-full-runtime.spec.ts'
 
+          # Legacy bridge implementation remains intact as rollback/debugging evidence.
           grep -Fq 'full-cli-runtime' "${bridge}"
           grep -Fq 'wire?.skill_sources' "${bridge}"
           grep -Fq 'wire?.slash_commands' "${bridge}"
@@ -99,28 +114,44 @@ jobs:
           grep -Fq 'ssh-keygen -F' "${bootstrap}"
           grep -Fq 'gh secret set LETTA_SSH_PRIVATE_KEY' "${bootstrap}"
           grep -Fq 'gh secret set LETTA_SSH_KNOWN_HOSTS' "${bootstrap}"
-          grep -Fq 'gh workflow run deploy-staging.yml' "${bootstrap}"
           grep -Fq 'ssh-authentication' "${deploy}"
           grep -Fq 'ssh-host-key-verification' "${deploy}"
           grep -Fq 'ssh-connectivity' "${deploy}"
-          grep -Fq 'LETTA_SSH_PRIVATE_KEY' "${workflow}"
-          grep -Fq 'LETTA_SSH_KNOWN_HOSTS' "${workflow}"
-          grep -Fq 'letta-bridge-deploy-diagnostic.json' "${workflow}"
           if grep -Eq '[[:space:]]sudo[[:space:]]' "${deploy}" "${gate}" "${bootstrap}"; then
-            echo 'restricted staging SSH path must not use sudo' >&2
+            echo 'restricted legacy SSH path must not use sudo' >&2
             exit 1
           fi
           if grep -Fq 'ssh-keyscan' "${bootstrap}"; then
-            echo 'bootstrap must reuse an existing trusted known_hosts entry, not trust ssh-keyscan output' >&2
+            echo 'legacy bootstrap must reuse an existing trusted known_hosts entry, not trust ssh-keyscan output' >&2
             exit 1
           fi
           if grep -Fq "'--memfs-startup', 'skip'" "${bridge}"; then
-            echo 'full bridge must not force MemFS startup to skip' >&2
+            echo 'legacy full bridge must not force MemFS startup to skip' >&2
             exit 1
           fi
-          grep -Fq 'Deploy full Letta CLI runtime bridge' "${workflow}"
-          grep -Fq 'CHAT_LETTA_FULL_RUNTIME_QA_REQUIRED' "${workflow}"
-          grep -Fq 'Capture authenticated Letta runtime capabilities' "${workflow}"
+
+          # OpenClaw staging is the active acceptance boundary.
+          grep -Fq 'OPENCLAW_GATEWAY_BASE_URL' "${workflow}"
+          grep -Fq 'OPENCLAW_GATEWAY_TOKEN' "${workflow}"
+          grep -Fq 'LETTA_PROTOCOL: openclaw' "${workflow}"
+          grep -Fq 'LETTA_OPENCLAW_AGENT_TARGET' "${workflow}"
+          grep -Fq '/v1/chat/completions' "${workflow}"
+          grep -Fq 'Verify OpenClaw-backed Letta session continuity' "${workflow}"
+          grep -Fq 'Capture authenticated OpenClaw Lucy target evidence' "${workflow}"
+          grep -Fq 'CHAT_LETTA_FULL_RUNTIME_QA_REQUIRED: '\''false'\''' "${workflow}"
+          grep -Fq 'OPENCLAW_GATEWAY_BASE_URL' "${preflight_workflow}"
+          grep -Fq 'LETTA_PROTOCOL: openclaw' "${preflight_workflow}"
+          grep -Fq 'LETTA_OPENCLAW_AGENT_TARGET' "${compose}"
+          grep -Fq 'LETTA_OPENCLAW_SESSION_PREFIX' "${compose}"
+          grep -Fq 'LETTA_OPENCLAW_AGENT_TARGET' "${preflight}"
+          grep -Fq 'LETTA_OPENCLAW_SESSION_PREFIX' "${preflight}"
+          grep -Fq 'two-turn OpenClaw session proof' "${continuity}"
+          grep -Fq 'immediately previous turn' "${continuity}"
+          ! grep -Fq 'LETTA_SSH_PRIVATE_KEY' "${workflow}"
+          ! grep -Fq 'LETTA_SSH_KNOWN_HOSTS' "${workflow}"
+          ! grep -Fq 'Capture authenticated Letta runtime capabilities' "${workflow}"
+
+          # The old browser spec is retained only for explicit legacy runs.
           grep -Fq 'capabilityStatus?.tools' "${qa}"
           grep -Fq 'capabilityStatus?.skillSources' "${qa}"
           grep -Fq 'capabilityStatus?.mcp' "${qa}"
@@ -131,7 +162,7 @@ jobs:
       - name: Exercise explicit empty slash-command metadata contract
         run: node --test ops/letta-bridge/letta-empty-slash.nodecheck.mjs
 
-      - name: Exercise full bridge capability contract
+      - name: Exercise preserved full bridge capability contract
         id: full_bridge
         continue-on-error: true
         shell: bash
@@ -139,7 +170,7 @@ jobs:
           set -o pipefail
           node --test ops/letta-bridge/letta-full-bridge.nodecheck.mjs 2>&1 | tee full-bridge-contract.log
 
-      - name: Upload full bridge contract diagnostics
+      - name: Upload preserved bridge contract diagnostics
         if: always()
         uses: actions/upload-artifact@v4
         with:
@@ -148,11 +179,11 @@ jobs:
           if-no-files-found: error
           retention-days: 7
 
-      - name: Require full bridge capability contract
+      - name: Require preserved bridge capability contract
         if: ${{ steps.full_bridge.outcome != 'success' }}
         run: exit 1
 
-      - name: Exercise remaining runtime identity, capability, session, and redaction contracts
+      - name: Exercise remaining legacy runtime identity, session, and redaction contracts
         run: |
           set -euo pipefail
           files=()
