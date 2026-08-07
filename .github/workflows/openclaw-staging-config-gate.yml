@@ -1,0 +1,88 @@
+name: OpenClaw staging config gate
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  statuses: write
+
+concurrency:
+  group: chat-v2-openclaw-staging-config
+  cancel-in-progress: true
+
+jobs:
+  config:
+    name: Validate OpenClaw staging environment contract
+    runs-on: ubuntu-latest
+    environment: staging
+    timeout-minutes: 5
+
+    steps:
+      - name: Mark configuration check pending
+        uses: actions/github-script@v7
+        with:
+          script: |
+            await github.rest.repos.createCommitStatus({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              sha: context.sha,
+              state: 'pending',
+              context: 'chat-v2/openclaw-config',
+              description: 'Validating OpenClaw staging Environment contract',
+              target_url: `${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`,
+            });
+
+      - name: Validate non-secret configuration and secret presence
+        id: validate
+        shell: bash
+        env:
+          OPENCLAW_GATEWAY_BASE_URL: ${{ vars.OPENCLAW_GATEWAY_BASE_URL }}
+          OPENCLAW_GATEWAY_TOKEN: ${{ secrets.OPENCLAW_GATEWAY_TOKEN }}
+          LETTA_OPENCLAW_AGENT_TARGET: ${{ vars.LETTA_OPENCLAW_AGENT_TARGET || 'openclaw/main' }}
+          LETTA_OPENCLAW_SESSION_PREFIX: ${{ vars.LETTA_OPENCLAW_SESSION_PREFIX || 'chat-v2' }}
+        run: |
+          set -euo pipefail
+          [[ -n "${OPENCLAW_GATEWAY_BASE_URL}" ]] || { echo 'OPENCLAW_GATEWAY_BASE_URL is not configured.' >&2; exit 1; }
+          [[ -n "${OPENCLAW_GATEWAY_TOKEN}" ]] || { echo 'OPENCLAW_GATEWAY_TOKEN is not configured.' >&2; exit 1; }
+          [[ "${LETTA_OPENCLAW_AGENT_TARGET}" == openclaw/* || "${LETTA_OPENCLAW_AGENT_TARGET}" == openclaw:* || "${LETTA_OPENCLAW_AGENT_TARGET}" == agent:* ]] \
+            || { echo 'LETTA_OPENCLAW_AGENT_TARGET is not a valid explicit OpenClaw target.' >&2; exit 1; }
+          [[ -n "${LETTA_OPENCLAW_SESSION_PREFIX}" ]] || { echo 'LETTA_OPENCLAW_SESSION_PREFIX is empty.' >&2; exit 1; }
+          case "${OPENCLAW_GATEWAY_BASE_URL}" in
+            http://127.0.0.1:*|https://127.0.0.1:*|http://localhost:*|https://localhost:*)
+              echo 'OPENCLAW_GATEWAY_BASE_URL is loopback-only; the Chat staging container needs a private host/container-reachable ingress.' >&2
+              exit 1
+              ;;
+          esac
+          echo 'OpenClaw staging Environment contract is present.'
+          {
+            echo '## OpenClaw staging configuration'
+            echo
+            echo '- Gateway base URL: configured (value intentionally omitted)'
+            echo '- Gateway credential: configured (value intentionally omitted)'
+            echo "- Agent target: \`${LETTA_OPENCLAW_AGENT_TARGET}\`"
+            echo "- Session prefix: \`${LETTA_OPENCLAW_SESSION_PREFIX}\`"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Publish configuration status
+        if: always()
+        uses: actions/github-script@v7
+        env:
+          VALIDATION_OUTCOME: ${{ steps.validate.outcome }}
+        with:
+          script: |
+            const success = process.env.VALIDATION_OUTCOME === 'success';
+            await github.rest.repos.createCommitStatus({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              sha: context.sha,
+              state: success ? 'success' : 'failure',
+              context: 'chat-v2/openclaw-config',
+              description: success
+                ? 'OpenClaw staging Environment contract is configured'
+                : 'OpenClaw staging Environment contract is incomplete',
+              target_url: `${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`,
+            });
