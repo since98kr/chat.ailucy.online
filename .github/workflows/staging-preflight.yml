@@ -55,6 +55,23 @@ jobs:
           echo "CHAT_PREFLIGHT_IMAGE=chat-ailucy-v2:preflight-${REVISION}" >> "$GITHUB_ENV"
           echo "CHAT_PREFLIGHT_REVISION=${REVISION}" >> "$GITHUB_ENV"
 
+      - name: Require private OpenClaw staging ingress
+        shell: bash
+        env:
+          OPENCLAW_GATEWAY_BASE_URL: ${{ vars.OPENCLAW_GATEWAY_BASE_URL }}
+          OPENCLAW_GATEWAY_TOKEN: ${{ secrets.OPENCLAW_GATEWAY_TOKEN }}
+        run: |
+          set -euo pipefail
+          [[ -n "${OPENCLAW_GATEWAY_BASE_URL}" ]] || { echo 'OPENCLAW_GATEWAY_BASE_URL is required for staging cutover.' >&2; exit 1; }
+          [[ -n "${OPENCLAW_GATEWAY_TOKEN}" ]] || { echo 'OPENCLAW_GATEWAY_TOKEN is required for staging cutover.' >&2; exit 1; }
+          case "${OPENCLAW_GATEWAY_BASE_URL}" in
+            http://127.0.0.1:*|http://localhost:*)
+              echo 'OpenClaw Gateway loopback URL is not reachable from the staging container; provide a private host/container-reachable ingress.' >&2
+              exit 1
+              ;;
+          esac
+          echo 'Private OpenClaw staging ingress is configured.'
+
       - name: Run exact-runtime preflight
         env:
           CHAT_STAGING_ROOT: /opt/chat-v2/staging
@@ -70,14 +87,19 @@ jobs:
           CHAT_RATE_LIMIT_GENERAL: ${{ vars.CHAT_RATE_LIMIT_GENERAL }}
           CHAT_RATE_LIMIT_CHAT: ${{ vars.CHAT_RATE_LIMIT_CHAT }}
           CHAT_RATE_LIMIT_UPLOAD: ${{ vars.CHAT_RATE_LIMIT_UPLOAD }}
-          LETTA_BASE_URL: ${{ vars.LETTA_BASE_URL }}
-          LETTA_CHAT_PATH: ${{ vars.LETTA_CHAT_PATH }}
-          LETTA_HEALTH_PATH: ${{ vars.LETTA_HEALTH_PATH }}
+          LETTA_BASE_URL: ${{ vars.OPENCLAW_GATEWAY_BASE_URL }}
+          LETTA_CHAT_PATH: /v1/chat/completions
+          LETTA_HEALTH_PATH: /health
           LETTA_AGENT_ID: ${{ vars.LETTA_AGENT_ID }}
-          LETTA_API_KEY: ${{ secrets.LETTA_API_KEY }}
+          LETTA_API_KEY: ${{ secrets.OPENCLAW_GATEWAY_TOKEN }}
           LETTA_TIMEOUT_MS: ${{ vars.LETTA_TIMEOUT_MS }}
-          LETTA_PROTOCOL: ${{ vars.LETTA_PROTOCOL }}
-          LETTA_MODEL_MAP_JSON: ${{ vars.LETTA_MODEL_MAP_JSON }}
+          LETTA_PROTOCOL: openclaw
+          LETTA_OPENCLAW_AGENT_TARGET: ${{ vars.LETTA_OPENCLAW_AGENT_TARGET || 'openclaw/main' }}
+          LETTA_OPENCLAW_SESSION_PREFIX: ${{ vars.LETTA_OPENCLAW_SESSION_PREFIX || 'chat-v2' }}
+          LETTA_MODEL_MAP_JSON: ''
+          LETTA_MAX_ARTIFACT_BYTES: ${{ vars.LETTA_MAX_ARTIFACT_BYTES }}
+          LETTA_MAX_ARTIFACT_TOTAL_BYTES: ${{ vars.LETTA_MAX_ARTIFACT_TOTAL_BYTES }}
+          LETTA_ARTIFACT_TOOL_ENABLED: ${{ vars.LETTA_ARTIFACT_TOOL_ENABLED }}
           HERMES_BASE_URL: ${{ vars.HERMES_BASE_URL }}
           HERMES_CHAT_PATH: ${{ vars.HERMES_CHAT_PATH }}
           HERMES_HEALTH_PATH: ${{ vars.HERMES_HEALTH_PATH }}
@@ -98,6 +120,8 @@ jobs:
             echo
             echo "- Revision: \`${CHAT_PREFLIGHT_REVISION:-unknown}\`"
             echo "- Strict mode: \`${{ inputs.strict }}\`"
+            echo '- Letta transport: `openclaw`'
+            echo "- OpenClaw target: \`${{ vars.LETTA_OPENCLAW_AGENT_TARGET || 'openclaw/main' }}\`"
             if [[ -f /opt/chat-v2/staging/state/last-preflight.json ]]; then
               echo '- Runtime report:'
               echo '```json'
