@@ -1,0 +1,77 @@
+name: OpenClaw host discovery
+
+on:
+  push:
+    branches:
+      - agent/openclaw-host-discovery
+
+permissions:
+  contents: read
+
+jobs:
+  discover:
+    name: Read-only Gateway reachability discovery
+    runs-on: [self-hosted, linux, x64, chat-staging]
+    timeout-minutes: 8
+
+    steps:
+      - name: Discover Gateway without reading credentials
+        shell: bash
+        run: |
+          set -euo pipefail
+          PORT=18789
+          host_health=false
+          container_health=false
+          listener='absent'
+
+          if curl --silent --show-error --fail --max-time 3 "http://127.0.0.1:${PORT}/health" >/tmp/openclaw-health.json 2>/dev/null; then
+            host_health=true
+          fi
+
+          if command -v ss >/dev/null 2>&1; then
+            sockets="$(ss -ltnH "sport = :${PORT}" 2>/dev/null || true)"
+            if [[ -n "${sockets}" ]]; then
+              if grep -Eq '(^|[[:space:]])127\.0\.0\.1:18789([[:space:]]|$)' <<<"${sockets}"; then
+                listener='loopback'
+              elif grep -Eq '(^|[[:space:]])0\.0\.0\.0:18789([[:space:]]|$)|(^|[[:space:]])\*:18789([[:space:]]|$)' <<<"${sockets}"; then
+                listener='all-interfaces'
+              else
+                listener='private-interface'
+              fi
+            fi
+          fi
+
+          if docker info >/dev/null 2>&1; then
+            if docker run --rm --add-host host.docker.internal:host-gateway curlimages/curl:8.12.1 \
+              --silent --show-error --fail --max-time 3 \
+              "http://host.docker.internal:${PORT}/health" >/tmp/openclaw-container-health.json 2>/dev/null; then
+              container_health=true
+            fi
+          fi
+
+          python3 - "${host_health}" "${container_health}" "${listener}" <<'PY'
+          import json, sys
+          print(json.dumps({
+              'gateway_default_port': 18789,
+              'host_loopback_health': sys.argv[1] == 'true',
+              'chat_container_host_gateway_health': sys.argv[2] == 'true',
+              'listener_class': sys.argv[3],
+              'credentials_read': False,
+              'config_files_read': False,
+          }, indent=2))
+          PY
+
+          {
+            echo '## OpenClaw read-only host discovery'
+            echo
+            echo "- Default Gateway port: \`${PORT}\`"
+            echo "- Host loopback health: \`${host_health}\`"
+            echo "- Chat-container host-gateway health: \`${container_health}\`"
+            echo "- Listener class: \`${listener}\`"
+            echo '- Credentials/config files read: `false`'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+          if [[ "${host_health}" != true ]]; then
+            echo 'Gateway health was not reachable at the default host loopback endpoint.' >&2
+            exit 2
+          fi
