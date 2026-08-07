@@ -3,6 +3,7 @@ import type { AdapterRequest, ChatBackendAdapter } from './types.js';
 import { wrapArtifactEnvelopeFallback } from './artifact-envelope.js';
 import { MockAdapter } from './mock.js';
 import { HttpAgentAdapter, httpAdapterConfig } from './http.js';
+import { OpenClawLettaAdapter, openClawLettaConfigFromEnv } from './openclaw-letta.js';
 import { augmentNativeArtifactContext } from './native-artifacts.js';
 
 export function resolveNativeTargetAgentId(
@@ -47,6 +48,10 @@ function enabled(value: string | undefined) {
   return (value ?? '').trim().toLowerCase() === 'true';
 }
 
+function protocol(value: string | undefined) {
+  return (value ?? '').trim().toLowerCase();
+}
+
 function wrapNativeAgentMapping(
   adapter: HttpAgentAdapter,
   configuredAgentId?: string,
@@ -80,6 +85,10 @@ function wrapNativeAgentMapping(
 }
 
 function createAdapter(systemId: SystemId): ChatBackendAdapter {
+  if (systemId === 'letta' && protocol(process.env.LETTA_PROTOCOL) === 'openclaw') {
+    return new OpenClawLettaAdapter(openClawLettaConfigFromEnv());
+  }
+
   const config = httpAdapterConfig(systemId);
   if (!config) return new MockAdapter(systemId);
   const httpAdapter = new HttpAgentAdapter(systemId, config);
