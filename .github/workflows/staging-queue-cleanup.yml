@@ -1,0 +1,41 @@
+name: Staging queue cleanup
+
+on:
+  push:
+    branches:
+      - agent/openclaw-host-discovery
+
+permissions:
+  contents: read
+  actions: write
+
+jobs:
+  cleanup:
+    name: Cancel stale queued staging runs
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+
+    steps:
+      - name: Keep only current main deploy and current discovery
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const owner = context.repo.owner;
+            const repo = context.repo.repo;
+            const main = await github.rest.repos.getBranch({ owner, repo, branch: 'main' });
+            const mainSha = main.data.commit.sha;
+            const { data } = await github.rest.actions.listWorkflowRunsForRepo({ owner, repo, per_page: 60 });
+            const stale = data.workflow_runs.filter(run => {
+              if (!['queued','pending','waiting','requested'].includes(run.status)) return false;
+              if (run.name === 'Deploy staging') return run.head_sha !== mainSha;
+              if (run.name === 'OpenClaw host discovery') return run.head_sha !== context.sha;
+              return false;
+            });
+            for (const run of stale) {
+              core.info(`cancel stale run ${run.id} ${run.name} ${run.head_sha}`);
+              await github.rest.actions.cancelWorkflowRun({ owner, repo, run_id: run.id });
+            }
+            core.summary.addHeading('Stale staging queue cleanup');
+            core.summary.addRaw(`Kept main deploy SHA: \`${mainSha}\`\n\n`);
+            core.summary.addRaw(`Canceled stale queued/pending runs: **${stale.length}**\n`);
+            await core.summary.write();
