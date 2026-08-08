@@ -41,6 +41,29 @@ Hermes
 
 Each Hermes Conversation starts with `[Hermes] Lucy`. Subagents may be added per Conversation in Phase 2. Registration in Hermes does not imply participation in every Conversation.
 
+## Execution runtime
+
+Identity and transport are separate concerns. The information architecture above describes identity and is not changed by the execution runtime.
+
+`[Letta] Lucy` owns identity, memory, judgment, planning, orchestration and acceptance. When `LETTA_PROTOCOL=openclaw` is configured, Chat reaches that identity through a private OpenClaw Gateway agent endpoint, and OpenClaw owns execution-runtime concerns: workers, tools, tasks, scheduling, approvals and audit.
+
+```text
+Chat V2
+  -> [Letta] Lucy conversation identity
+  -> private OpenClaw Gateway agent endpoint
+  -> Letta-backed Lucy cognition/session
+  -> OpenClaw execution fabric
+```
+
+Consequences for this specification:
+
+- OpenClaw is a runtime, never a Participant or a persona in the product model.
+- A Conversation maps to one stable OpenClaw session key, independent from workflow run and idempotency identifiers.
+- Side-effecting work is denied or approved by OpenClaw policy; Chat never fabricates approval success.
+- The legacy native Letta bridge stays available as a fallback until the OpenClaw path passes exact-main staging.
+
+See `docs/OPENCLAW_LETTA_CHAT_MIGRATION.md` and `docs/OPENCLAW_LETTA_CHAT_ACCEPTANCE.md`.
+
 ## Approved UI direction
 
 - Compact dark UI based on design concept 5.
@@ -140,5 +163,7 @@ Machine-enforced boundaries include:
 - Delete and overwrite operations.
 - Commit, push, deployment, and service restart.
 - Evidence, test results, and rollback.
+
+Under the OpenClaw execution runtime these boundaries are enforced by OpenClaw policy, approval and audit surfaces. Approvals are never weakened to make Chat tests pass, and raw tool arguments, credentials, private paths and audit payloads are never streamed to the browser.
 
 Letta prioritizes efficient production through one responsible Lucy. Hermes preserves cognitive autonomy and independent disagreement while restricting irreversible execution.
