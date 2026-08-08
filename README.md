@@ -16,7 +16,24 @@ System
 - Hermes participation is explicit per Conversation; registration never means automatic invocation.
 - Federated Conversations are explicitly enabled and coordinate selected Letta/Hermes lanes without unrestricted memory sharing.
 
-OpenClaw is not part of V2.
+## Runtime boundary
+
+`[Letta] Lucy` is the cognitive identity. OpenClaw is the execution fabric behind that identity. OpenClaw is not a persona, and it does not own Lucy's long-term identity or memory.
+
+```text
+Chat V2
+  -> [Letta] Lucy conversation identity
+  -> private OpenClaw Gateway agent endpoint
+  -> Letta-backed Lucy cognition/session
+  -> OpenClaw execution fabric
+       workers / tools / tasks / scheduler / approvals / audit
+```
+
+- Selected explicitly with `LETTA_PROTOCOL=openclaw`; the Gateway stays on loopback, tailnet, or another private authenticated ingress.
+- `LETTA_OPENCLAW_AGENT_TARGET` is mandatory, so `[Letta] Lucy` is never routed to whichever OpenClaw agent happens to be the current default.
+- Side-effecting execution belongs to the OpenClaw policy, approval, and audit surfaces rather than to a direct Letta shell.
+- The legacy native Letta bridge remains available as a fallback and is not removed until the OpenClaw path passes exact-main staging.
+- Acceptance criteria and rollout order: [`docs/OPENCLAW_LETTA_CHAT_MIGRATION.md`](docs/OPENCLAW_LETTA_CHAT_MIGRATION.md), [`docs/OPENCLAW_LETTA_CHAT_ACCEPTANCE.md`](docs/OPENCLAW_LETTA_CHAT_ACCEPTANCE.md).
 
 ## Current capabilities
 
@@ -67,6 +84,9 @@ OpenClaw is not part of V2.
 ### Backend systems
 
 - Independent Letta and Hermes adapter boundaries.
+- OpenClaw Gateway transport for `[Letta] Lucy` with a stable per-Conversation session key.
+- Only the current user turn, approved memory capsules, and current attachments are sent; the full transcript is not replayed into a persistent session.
+- Hosted OpenClaw staging configuration gate surfaces a missing Gateway URL or token and loopback-only ingress.
 - Deterministic mock mode for local development.
 - Configurable HTTP mode with health probes.
 - Target-agent, participant capability, routing, workflow, and approved-Capsule metadata.
@@ -89,6 +109,7 @@ OpenClaw is not part of V2.
 - The raw access value is not retained in browser JavaScript storage after login.
 - The browser session covers chat, streaming, uploads, inline images, downloads, Markdown export, and workflow controls.
 - Bearer-token compatibility remains available for controlled automation.
+- The OpenClaw Gateway credential is server-side only and is never exposed to the browser.
 - Cross-origin mutation protection, route-class rate limits, and browser security headers.
 - Online SQLite backup plus artifact checksum manifest.
 - Pre-deployment backup verification before staging replacement.
@@ -148,12 +169,33 @@ node dist-server/backup.js verify /data/backups/<backup-id>
 
 ## Documentation
 
+Product and scope:
+
 - [`docs/PRODUCT_SPEC_V2.md`](docs/PRODUCT_SPEC_V2.md)
 - [`docs/GS7_SCOPE.md`](docs/GS7_SCOPE.md)
 - [`docs/GS8_FEDERATED_WORKFLOW.md`](docs/GS8_FEDERATED_WORKFLOW.md)
+- [`docs/V1_5_RELEASE_PLAN.md`](docs/V1_5_RELEASE_PLAN.md)
+
+Backends and execution runtime:
+
 - [`docs/BACKEND_ADAPTERS.md`](docs/BACKEND_ADAPTERS.md)
+- [`docs/OPENCLAW_LETTA_CHAT_MIGRATION.md`](docs/OPENCLAW_LETTA_CHAT_MIGRATION.md)
+- [`docs/OPENCLAW_LETTA_CHAT_ACCEPTANCE.md`](docs/OPENCLAW_LETTA_CHAT_ACCEPTANCE.md)
+- [`docs/MULTIMODAL_ARTIFACT_PROTOCOL.md`](docs/MULTIMODAL_ARTIFACT_PROTOCOL.md)
+- [`docs/HERMES_GENERATED_ARTIFACT_FALLBACK.md`](docs/HERMES_GENERATED_ARTIFACT_FALLBACK.md)
+
+Access, operations, and release:
+
 - [`docs/BROWSER_AUTH_AND_STATUS.md`](docs/BROWSER_AUTH_AND_STATUS.md)
+- [`docs/SECURITY_AND_RECOVERY.md`](docs/SECURITY_AND_RECOVERY.md)
 - [`docs/GITHUB_ACTIONS_AND_DEPLOYMENT.md`](docs/GITHUB_ACTIONS_AND_DEPLOYMENT.md)
 - [`docs/HOME_SERVER_STAGING_SETUP.md`](docs/HOME_SERVER_STAGING_SETUP.md)
-- [`docs/SECURITY_AND_RECOVERY.md`](docs/SECURITY_AND_RECOVERY.md)
+- [`docs/HOME_SERVER_PRODUCTION_SETUP.md`](docs/HOME_SERVER_PRODUCTION_SETUP.md)
+- [`docs/PRODUCTION_CONTROL_PLANE_CLI.md`](docs/PRODUCTION_CONTROL_PLANE_CLI.md)
+- [`docs/PRODUCTION_PREFLIGHT_EVIDENCE.md`](docs/PRODUCTION_PREFLIGHT_EVIDENCE.md)
+- [`docs/PRODUCTION_RELEASE.md`](docs/PRODUCTION_RELEASE.md)
+- [`docs/PRODUCTION_RELEASE_EVIDENCE.md`](docs/PRODUCTION_RELEASE_EVIDENCE.md)
+
+Configuration:
+
 - [`config/adapters.env.example`](config/adapters.env.example)
