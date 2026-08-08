@@ -1,0 +1,109 @@
+name: Agentlucy Runner Service Diagnostic
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+    paths:
+      - '.github/workflows/agentlucy-runner-service-diagnostic.yml'
+      - 'ops/diagnostics/agentlucy-runner-service-diagnostic'
+
+permissions:
+  contents: read
+  issues: write
+
+concurrency:
+  group: agentlucy-runner-service-diagnostic-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  contract:
+    if: >-
+      github.event_name == 'pull_request' &&
+      github.event.pull_request.user.login == github.repository_owner &&
+      github.event.pull_request.head.repo.full_name == github.repository &&
+      github.event.pull_request.head.ref == 'ops/agentlucy-runner-service-diagnostic'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - name: Static read-only contract
+        shell: bash
+        run: |
+          set -euo pipefail
+          workflow='.github/workflows/agentlucy-runner-service-diagnostic.yml'
+          grep -Fq 'systemctl show' "$workflow"
+          grep -Fq 'LoadState,ActiveState,SubState,UnitFileState' "$workflow"
+          ! grep -Eq 'systemctl (start|stop|restart|enable|disable|daemon-reload)|sudo |journalctl|cat /etc|printenv|env |/proc/.*/cmdline' "$workflow"
+          git diff --check
+
+  diagnose:
+    needs: contract
+    if: needs.contract.result == 'success'
+    runs-on: [self-hosted, linux, x64, chat-staging]
+    timeout-minutes: 5
+    steps:
+      - name: Read exact runner service states only
+        id: state
+        shell: bash
+        run: |
+          set -euo pipefail
+          [[ "$(hostname -s)" == 'agentlucy' ]] || { echo 'host mismatch' >&2; exit 2; }
+
+          ai_unit='actions.runner.since98kr-ai-assistant.agentlucy-ai-assistant.service'
+          chat_unit='actions.runner.since98kr-chat.ailucy.online.agentlucy-chat-staging.service'
+
+          read_state() {
+            local unit="$1"
+            systemctl show "$unit" \
+              --property=LoadState,ActiveState,SubState,UnitFileState \
+              --value 2>/dev/null | paste -sd'|' - || true
+          }
+
+          ai_state="$(read_state "$ai_unit")"
+          chat_state="$(read_state "$chat_unit")"
+
+          python3 - "$GITHUB_STEP_SUMMARY" "$(hostname -s)" "$(id -un)" "$ai_state" "$chat_state" <<'PY'
+          import sys
+          path, host, user, ai_state, chat_state = sys.argv[1:]
+          def normalize(value):
+              parts = value.split('|') if value else []
+              while len(parts) < 4:
+                  parts.append('unknown')
+              return {
+                  'load': parts[0] or 'unknown',
+                  'active': parts[1] or 'unknown',
+                  'sub': parts[2] or 'unknown',
+                  'unit_file': parts[3] or 'unknown',
+              }
+          ai = normalize(ai_state)
+          chat = normalize(chat_state)
+          with open(path, 'a', encoding='utf-8') as handle:
+              handle.write('## Agentlucy runner service diagnostic\n\n')
+              handle.write(f'- Host: `{host}`\n')
+              handle.write(f'- Diagnostic user: `{user}`\n')
+              handle.write(f"- ai-assistant runner: load=`{ai['load']}`, active=`{ai['active']}`, sub=`{ai['sub']}`, unit-file=`{ai['unit_file']}`\n")
+              handle.write(f"- chat staging runner: load=`{chat['load']}`, active=`{chat['active']}`, sub=`{chat['sub']}`, unit-file=`{chat['unit_file']}`\n")
+              handle.write('- Mutation performed: `false`\n')
+          print(f"ai_assistant={ai['load']},{ai['active']},{ai['sub']},{ai['unit_file']}")
+          print(f"chat_staging={chat['load']},{chat['active']},{chat['sub']},{chat['unit_file']}")
+          PY
+
+      - name: Record sanitized diagnostic result
+        if: always()
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const body = [
+              '[AGENTLUCY RUNNER SERVICE DIAGNOSTIC]',
+              '',
+              `- Run: ${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`,
+              '- Scope: exact systemd runner state properties only',
+              '- Mutation performed: `false`',
+              '- No logs, unit contents, argv, environment, credentials, or secrets were read.',
+            ].join('\n');
+            await github.rest.issues.createComment({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: context.issue.number,
+              body,
+            });
