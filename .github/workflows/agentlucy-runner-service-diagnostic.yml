@@ -12,7 +12,7 @@ permissions:
   issues: write
 
 concurrency:
-  group: agentlucy-runner-service-diagnostic-${{ github.event.pull_request.number || github.ref }}
+  group: agentlucy-runner-service-diagnostic-${{ github.event.pull_request.number || github.ref }}-${{ github.sha }}
   cancel-in-progress: false
 
 jobs:
@@ -33,13 +33,14 @@ jobs:
           workflow='.github/workflows/agentlucy-runner-service-diagnostic.yml'
           grep -Fq 'systemctl show' "$workflow"
           grep -Fq 'LoadState,ActiveState,SubState,UnitFileState' "$workflow"
+          grep -Fq 'runs-on: [self-hosted]' "$workflow"
           ! grep -Eq 'systemctl (start|stop|restart|enable|disable|daemon-reload)|sudo |journalctl|cat /etc|printenv|env |/proc/.*/cmdline' "$workflow"
           git diff --check
 
   diagnose:
     needs: contract
     if: needs.contract.result == 'success'
-    runs-on: [self-hosted, linux, x64, chat-staging]
+    runs-on: [self-hosted]
     timeout-minutes: 5
     steps:
       - name: Read exact runner service states only
@@ -48,6 +49,7 @@ jobs:
         run: |
           set -euo pipefail
           [[ "$(hostname -s)" == 'agentlucy' ]] || { echo 'host mismatch' >&2; exit 2; }
+          [[ "$(id -un)" == 'chat-runner' ]] || { echo 'runner user mismatch' >&2; exit 2; }
 
           ai_unit='actions.runner.since98kr-ai-assistant.agentlucy-ai-assistant.service'
           chat_unit='actions.runner.since98kr-chat.ailucy.online.agentlucy-chat-staging.service'
