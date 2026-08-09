@@ -24,6 +24,8 @@ import {
   uploadArtifact,
 } from './api';
 import { emitCollaborationEvent } from './collaboration-events';
+import type { TranscriptState } from './run-transcript';
+import { emptyTranscriptState, reduceTranscript } from './run-transcript';
 
 const defaultAgent: Record<SystemId, string> = {
   letta: '[Letta] Lucy',
@@ -57,6 +59,7 @@ export function useChat() {
   const [uploads, setUploads] = useState<UploadProgressRecord[]>([]);
   const [pendingArtifactIds, setPendingArtifactIds] = useState<string[]>([]);
   const [artifactDeliveries, setArtifactDeliveries] = useState<ArtifactDeliveryRecord[]>([]);
+  const [transcripts, setTranscripts] = useState<TranscriptState>(emptyTranscriptState);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [runStatus, setRunStatus] = useState<string | null>(null);
@@ -68,6 +71,12 @@ export function useChat() {
 
   useEffect(() => {
     activeIdRef.current = activeConversation?.id ?? null;
+  }, [activeConversation?.id]);
+
+  // Run transcripts belong to a single conversation. `applyDetail` also runs
+  // after every send (via refreshList), so the reset is keyed on the id itself.
+  useEffect(() => {
+    setTranscripts(emptyTranscriptState);
   }, [activeConversation?.id]);
 
   const applyDetail = useCallback((detail: ConversationDetail) => {
@@ -266,6 +275,9 @@ export function useChat() {
   }, [selectedStatus, selectedSystem]);
 
   const handleStreamEvent = useCallback((event: StreamEvent) => {
+    // Keep a durable per-run execution history. `runStatus` below is a single
+    // transient line that is cleared when the stream ends.
+    setTranscripts((current) => reduceTranscript(current, event));
     if (
       event.type === 'routing.resolved' ||
       event.type === 'participants.updated' ||
@@ -468,6 +480,7 @@ export function useChat() {
     uploads,
     pendingArtifactIds,
     artifactDeliveries,
+    transcripts,
     loading,
     error,
     runStatus,
