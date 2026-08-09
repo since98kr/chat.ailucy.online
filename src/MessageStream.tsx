@@ -70,7 +70,7 @@ export default function MessageStream({
       <div className="conversation-canvas">
         <div className="empty-conversation">
           <div className="empty-icon"><Bot size={26} /></div>
-          <strong>새 아젤다를 시작하세요.</strong>
+          <strong>새 아젠다를 시작하세요.</strong>
           <p>Conversation은 Tei님의 생각과 프로젝트 문맥을 분리해 보존합니다.</p>
           <button onClick={onCreate}>새 Conversation</button>
         </div>
