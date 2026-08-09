@@ -108,8 +108,8 @@ jobs:
           CHAT_MAX_GENERATED_ARTIFACT_BYTES: ${{ vars.CHAT_MAX_GENERATED_ARTIFACT_BYTES }}
           CHAT_MAX_INLINE_GENERATED_ARTIFACT_PAYLOAD_BYTES: ${{ vars.CHAT_MAX_INLINE_GENERATED_ARTIFACT_PAYLOAD_BYTES }}
           LETTA_BASE_URL: ${{ vars.OPENCLAW_GATEWAY_BASE_URL }}
-          LETTA_CHAT_PATH: /v1/chat/completions
-          LETTA_HEALTH_PATH: /health
+          LETTA_CHAT_PATH: ${{ vars.LETTA_CHAT_PATH || '/v1/chat/completions' }}
+          LETTA_HEALTH_PATH: ${{ vars.LETTA_HEALTH_PATH || '/health' }}
           LETTA_AGENT_ID: ${{ vars.LETTA_AGENT_ID }}
           LETTA_API_KEY: ${{ secrets.OPENCLAW_GATEWAY_TOKEN }}
           LETTA_TIMEOUT_MS: ${{ vars.LETTA_TIMEOUT_MS }}
