@@ -4,6 +4,9 @@ import type { ArtifactDeliveryRecord, ArtifactRecord, ConversationDetail, Messag
 import { isInlineImageMime } from '../shared/artifact-mime';
 import { artifactContentUrl, artifactDownloadUrl } from './api';
 import { renderMessageContent } from './message-content';
+import MessageTranscript from './MessageTranscript';
+import type { RunTranscript, TranscriptState } from './run-transcript';
+import { selectTranscripts } from './run-transcript';
 
 const sourceBadgeStyle = {
   display: 'inline-block',
@@ -41,6 +44,7 @@ export default function MessageStream({
   loading,
   runStatus,
   artifactDeliveries,
+  transcripts,
   streamEndRef,
   onCreate,
   onBranch,
@@ -53,6 +57,7 @@ export default function MessageStream({
   loading: boolean;
   runStatus: string | null;
   artifactDeliveries: ArtifactDeliveryRecord[];
+  transcripts: TranscriptState;
   streamEndRef: React.RefObject<HTMLDivElement | null>;
   onCreate: () => void;
   onBranch: (messageId: string) => void;
@@ -99,6 +104,7 @@ export default function MessageStream({
               artifacts={artifacts}
               liveDeliveries={liveDeliveries}
               deliveryResponses={deliveryResponses}
+              transcripts={selectTranscripts(transcripts, message.id)}
               attemptNumber={siblingAttempts.length}
               onBranch={() => onBranch(message.id)}
               onRetry={(mode) => onRetry(message.id, mode)}
@@ -114,12 +120,13 @@ export default function MessageStream({
   );
 }
 
-function MessageItem({ message, system, artifacts, liveDeliveries, deliveryResponses, attemptNumber, onBranch, onRetry, retryEnabled, retrying }: {
+function MessageItem({ message, system, artifacts, liveDeliveries, deliveryResponses, transcripts, attemptNumber, onBranch, onRetry, retryEnabled, retrying }: {
   message: MessageRecord;
   system: SystemId;
   artifacts: ArtifactRecord[];
   liveDeliveries: ArtifactDeliveryRecord[];
   deliveryResponses: MessageRecord[];
+  transcripts: RunTranscript[];
   attemptNumber: number;
   onBranch: () => void;
   onRetry: (mode: 'retry' | 'regenerate') => void;
@@ -174,6 +181,7 @@ function MessageItem({ message, system, artifacts, liveDeliveries, deliveryRespo
         <button className="message-branch" onClick={onBranch} title="이 메시지까지 새 Conversation으로 분기" aria-label="이 메시지에서 분기"><GitBranch size={13} /></button>
       </div>
       <p>{renderMessageContent(message.content || ' ')}{message.state === 'streaming' && <span className="stream-cursor" />}</p>
+      <MessageTranscript transcripts={transcripts} />
       {artifacts.map((artifact) => <ArtifactItem key={artifact.id} artifact={artifact} />)}
       {isUser && artifacts.length > 0 && <DeliveryLifecycle deliveries={liveDeliveries} responses={deliveryResponses} />}
     </article>
