@@ -2,6 +2,7 @@ import Database from 'better-sqlite3';
 import { accessSync, constants, existsSync, mkdirSync, statfsSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
 import { adapterHealth } from './adapters/index.js';
+import { adapterReadiness } from './adapters/readiness.js';
 import { getBuildInfo } from './build-info.js';
 import { securityConfigFromEnv } from './security.js';
 
@@ -21,6 +22,7 @@ type PreflightReport = {
   build: ReturnType<typeof getBuildInfo>;
   checks: PreflightCheck[];
   adapters: Awaited<ReturnType<typeof adapterHealth>>;
+  readiness: Awaited<ReturnType<typeof adapterReadiness>>;
 };
 
 function boolEnv(name: string, fallback: boolean) {
@@ -228,6 +230,25 @@ export async function runPreflight(options?: { strict?: boolean }): Promise<Pref
     });
   }
 
+  const readiness = await adapterReadiness();
+  for (const [system, record] of Object.entries(readiness)) {
+    if (!record) {
+      addCheck(checks, {
+        name: `adapter-${system}-generation`,
+        ok: true,
+        level: requireRealAdapters ? 'warning' : 'info',
+        detail: `generation readiness probe is disabled; set ${system.toUpperCase()}_READINESS_PROBE_ENABLED=true to fail closed on expired backend credentials`,
+      });
+      continue;
+    }
+    addCheck(checks, {
+      name: `adapter-${system}-generation`,
+      ok: record.ok,
+      level: record.ok ? 'info' : 'error',
+      detail: `${record.detail}; latency=${record.latencyMs}ms`,
+    });
+  }
+
   return {
     ok: checks.every((check) => check.ok || check.level !== 'error'),
     strict,
@@ -235,6 +256,7 @@ export async function runPreflight(options?: { strict?: boolean }): Promise<Pref
     build: getBuildInfo(),
     checks,
     adapters,
+    readiness,
   };
 }
 
