@@ -101,12 +101,20 @@ The backend-neutral `artifacts.delivery` contract is implemented and verified in
 
 ## Remaining release gates
 
-- render the integrated delivery lifecycle in the browser transcript;
-- run exact-head integration CI;
-- deploy to isolated staging only after explicit approval;
-- verify real Letta PDF understanding and Hermes image understanding;
-- verify generated-file return with the actual selected model;
-- repeat required tests through Cloudflare Access.
+- [x] render the integrated delivery lifecycle in the browser transcript
+      — delivered by the inline transcript rendering work (PR #106).
+- [x] deploy to isolated staging only after explicit approval
+      — `Deploy staging` completed on `main` @ `877f5d55`, 2026-08-11, with
+      pre-deployment backup, health wait, and rollback image retained.
+- [ ] run exact-head integration CI
+      — not independently verifiable from this repository: GitHub Actions
+      reports through check runs, and check-run reads currently return 403.
+- [ ] verify real Letta PDF understanding and Hermes image understanding
+      — blocked by the hardcoded `CHAT_LETTA_FULL_RUNTIME_QA_REQUIRED: 'false'`.
+- [ ] verify generated-file return with the actual selected model
+      — skipped while `CHAT_GENERATED_ARTIFACT_QA_REQUIRED` is undefined.
+- [ ] repeat required tests through Cloudflare Access
+      — skipped while `CHAT_EXTERNAL_QA_REQUIRED` is undefined.
 
 ## Out of scope
 
