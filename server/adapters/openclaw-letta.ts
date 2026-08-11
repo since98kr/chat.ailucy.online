@@ -241,6 +241,12 @@ export class OpenClawLettaAdapter implements ChatBackendAdapter {
       'Content-Type': 'application/json',
       Accept: 'text/event-stream, application/json',
       ...(this.config.apiKey ? { Authorization: `Bearer ${this.config.apiKey}` } : {}),
+      ...(process.env.CF_ACCESS_CLIENT_ID && process.env.CF_ACCESS_CLIENT_SECRET
+      ? {
+          'CF-Access-Client-Id': process.env.CF_ACCESS_CLIENT_ID,
+          'CF-Access-Client-Secret': process.env.CF_ACCESS_CLIENT_SECRET,
+        }
+      : {}),
     };
   }
 
