@@ -164,6 +164,8 @@ jobs:
         env:
           OPENCLAW_GATEWAY_BASE_URL: ${{ vars.OPENCLAW_GATEWAY_BASE_URL }}
           OPENCLAW_GATEWAY_TOKEN: ${{ secrets.OPENCLAW_GATEWAY_TOKEN }}
+          CF_ACCESS_CLIENT_ID: ${{ vars.CF_ACCESS_CLIENT_ID }}
+          CF_ACCESS_CLIENT_SECRET: ${{ secrets.CF_ACCESS_CLIENT_SECRET }}
           OPENCLAW_LUCY_TARGET: ${{ vars.LETTA_OPENCLAW_AGENT_TARGET }}
           OPENCLAW_MODELS_EVIDENCE_PATH: ${{ runner.temp }}/openclaw-models.json
         run: |
@@ -172,6 +174,8 @@ jobs:
           umask 077
           curl --fail --silent --show-error \
             --header "Authorization: Bearer ${OPENCLAW_GATEWAY_TOKEN}" \
+            --header "CF-Access-Client-Id: ${CF_ACCESS_CLIENT_ID}" \
+            --header "CF-Access-Client-Secret: ${CF_ACCESS_CLIENT_SECRET}" \
             "${OPENCLAW_GATEWAY_BASE_URL%/}/v1/models" >"${OPENCLAW_MODELS_EVIDENCE_PATH}"
           node - "${OPENCLAW_MODELS_EVIDENCE_PATH}" "${OPENCLAW_LUCY_TARGET}" <<'NODE'
           const fs = require('node:fs');
