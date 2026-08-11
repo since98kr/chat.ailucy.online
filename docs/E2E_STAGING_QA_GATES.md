@@ -1,4 +1,4 @@
-     # Staging QA gates: what each one actually verifies
+# Staging QA gates: what each one actually verifies
 
 `scripts/ops/staging-browser-smoke.sh` runs `npm run test:e2e:staging`
 unconditionally. It does not read any `CHAT_*_QA_REQUIRED` variable. The gating
