@@ -86,7 +86,6 @@ jobs:
           echo 'The legacy full-CLI bridge files remain in the repository for rollback investigation only.'
 
       - name: Deploy with strict preflight, backup, health check, and rollback
-          HERMES_BASE_URL_MAP_JSON: ${{ vars.HERMES_BASE_URL_MAP_JSON }}
         env:
           CHAT_STAGING_ROOT: /opt/chat-v2/staging
           CHAT_STAGING_DATA_DIR: /opt/chat-v2/staging/data
@@ -126,6 +125,7 @@ jobs:
           LETTA_NATIVE_BINARY_ARTIFACTS: 'false'
           LETTA_ARTIFACT_TOOL_ENABLED: ${{ vars.LETTA_ARTIFACT_TOOL_ENABLED }}
           HERMES_BASE_URL: ${{ vars.HERMES_BASE_URL }}
+          HERMES_BASE_URL_MAP_JSON: ${{ vars.HERMES_BASE_URL_MAP_JSON }}
           HERMES_CHAT_PATH: ${{ vars.HERMES_CHAT_PATH }}
           HERMES_HEALTH_PATH: ${{ vars.HERMES_HEALTH_PATH }}
           HERMES_AGENT_ID: ${{ vars.HERMES_AGENT_ID }}
