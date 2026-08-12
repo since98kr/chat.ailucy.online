@@ -18,6 +18,7 @@ type HttpAdapterProtocol = 'native' | 'openai';
 
 type HttpAdapterConfig = {
   baseUrl: string;
+  baseUrlMap?: Record<string, string>;
   chatPath: string;
   healthPath: string;
   apiKey?: string;
@@ -248,6 +249,23 @@ function parseModelMap(value: string | undefined): Record<string, string> | unde
   return map;
 }
 
+function parseBaseUrlMap(value: string | undefined): Record<string, string> | undefined {
+  if (!value?.trim()) return undefined;
+  const parsed = JSON.parse(value) as unknown;
+  if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+    throw new Error('HTTP adapter base URL map must be a JSON object');
+  }
+
+  const map: Record<string, string> = {};
+  for (const [key, url] of Object.entries(parsed)) {
+    if (typeof url !== 'string' || !url.trim()) {
+      throw new Error(`HTTP adapter base URL map entry must be a non-empty string: ${key}`);
+    }
+    map[key] = url.trim();
+  }
+  return map;
+}
+
 function parseBoolean(value: string | undefined) {
   return (value ?? '').trim().toLowerCase() === 'true';
 }
@@ -296,6 +314,15 @@ export class HttpAgentAdapter implements ChatBackendAdapter {
       Accept: 'application/x-ndjson, text/event-stream, application/json',
       ...(this.config.apiKey ? { Authorization: `Bearer ${this.config.apiKey}` } : {}),
     };
+  }
+
+  // Hermes exposes one model per profile, and each profile listens on its own
+  // port. When a base URL map is configured, the selected agent picks the
+  // endpoint; otherwise the single configured baseUrl is used unchanged.
+  private resolveBaseUrl(request: AdapterRequest) {
+    if (!this.config.baseUrlMap) return this.config.baseUrl;
+    const selectedAgentId = approvedAdapterCapabilities(request, this.systemId).selectedAgent.agentId;
+    return this.config.baseUrlMap[selectedAgentId] ?? this.config.baseUrl;
   }
 
   private async requestBody(request: AdapterRequest) {
@@ -462,7 +489,7 @@ export class HttpAgentAdapter implements ChatBackendAdapter {
 
   async *streamReply(request: AdapterRequest): AsyncGenerator<AdapterStreamItem> {
     const response = await fetch(
-      `${trimSlash(this.config.baseUrl)}${normalizePath(this.config.chatPath)}`,
+      `${trimSlash(this.resolveBaseUrl(request))}${normalizePath(this.config.chatPath)}`,
       {
         method: 'POST',
         headers: this.headers(),
@@ -531,6 +558,7 @@ export function httpAdapterConfig(systemId: SystemId): HttpAdapterConfig | null 
   if (!baseUrl) return null;
   return {
     baseUrl,
+    baseUrlMap: parseBaseUrlMap(process.env[`${prefix}_BASE_URL_MAP_JSON`]),
     chatPath: process.env[`${prefix}_CHAT_PATH`] ?? '/v1/chat/stream',
     healthPath: process.env[`${prefix}_HEALTH_PATH`] ?? '/health',
     apiKey: process.env[`${prefix}_API_KEY`],
