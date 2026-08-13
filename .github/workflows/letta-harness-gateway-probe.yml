@@ -1,0 +1,191 @@
+name: LETTA-HARNESS-LIVE-001 gateway probe
+
+on:
+  push:
+    branches:
+      - test/letta-harness-gateway-probe
+    paths:
+      - .github/workflows/letta-harness-gateway-probe.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: letta-harness-gateway-probe
+  cancel-in-progress: false
+
+jobs:
+  probe:
+    name: Read-only hni-node-04 OpenClaw probe
+    runs-on: [self-hosted, linux, x64, chat-staging]
+    environment: staging
+    timeout-minutes: 15
+
+    env:
+      OPENCLAW_GATEWAY_BASE_URL: ${{ vars.OPENCLAW_GATEWAY_BASE_URL }}
+      OPENCLAW_GATEWAY_TOKEN: ${{ secrets.OPENCLAW_GATEWAY_TOKEN }}
+      CF_ACCESS_CLIENT_ID: ${{ vars.CF_ACCESS_CLIENT_ID }}
+      CF_ACCESS_CLIENT_SECRET: ${{ secrets.CF_ACCESS_CLIENT_SECRET }}
+      PROBE_MODELS_PATH: ${{ runner.temp }}/letta-harness-models.raw.json
+      PROBE_REQUEST_PATH: ${{ runner.temp }}/letta-harness-request.raw.json
+      PROBE_RESPONSE_PATH: ${{ runner.temp }}/letta-harness-response.raw.json
+      PROBE_STATUS_PATH: ${{ runner.temp }}/letta-harness-http-status.txt
+      PROBE_EVIDENCE_PATH: ${{ runner.temp }}/LETTA-HARNESS-GATEWAY-PROBE-001.json
+
+    steps:
+      - name: Call default OpenClaw agent in read-only mode
+        shell: bash
+        run: |
+          set -euo pipefail
+          [[ -n "${OPENCLAW_GATEWAY_BASE_URL}" ]] || { echo 'Missing OPENCLAW_GATEWAY_BASE_URL.' >&2; exit 1; }
+          [[ -n "${OPENCLAW_GATEWAY_TOKEN}" ]] || { echo 'Missing OPENCLAW_GATEWAY_TOKEN.' >&2; exit 1; }
+          umask 077
+
+          node - "${PROBE_REQUEST_PATH}" <<'NODE'
+          const fs = require('node:fs');
+          const path = process.argv[2];
+          const prompt = [
+            'Run the read-only preflight for LETTA-HARNESS-LIVE-001.',
+            'Do not create, edit, move, or delete files. Do not install packages. Do not change config, services, processes, git refs, or GitHub state. Do not restart anything.',
+            'You may use read-only local commands only: hostname, version checks, git status, git rev-parse, test -e, ls, and bounded path inspection in existing OpenClaw workspaces.',
+            'Inspect whether hni-node-04 already has the since98kr/lucy-openclaw-control checkout and the feature/letta-agent-harness candidate at commit 9bdc7046b6cffc8a08c1397582e5d18d491672ec.',
+            'Also inspect whether plugins/letta-agent-harness exists, whether the corrected isolated response is PASS, and whether collaboration/responses/LETTA-HARNESS-LIVE-001.md exists.',
+            'Return JSON only with exactly these keys: probe, mode, hostname, openclawVersion, agentId, controlRepoPresent, candidateBranch, candidateHead, candidateHeadMatchesExpected, workingTreeClean, pluginPathExists, isolatedEvidenceStatus, liveResponseEvidenceExists, toolNamesUsed, blocker.',
+            'Use null when unknown. Do not include credentials, environment values, file contents, or additional paths.'
+          ].join(' ');
+          fs.writeFileSync(path, JSON.stringify({
+            model: 'openclaw/default',
+            stream: false,
+            messages: [{ role: 'user', content: prompt }]
+          }));
+          NODE
+
+          headers=(
+            --header "Authorization: Bearer ${OPENCLAW_GATEWAY_TOKEN}"
+            --header "Content-Type: application/json"
+            --header "CF-Access-Client-Id: ${CF_ACCESS_CLIENT_ID}"
+            --header "CF-Access-Client-Secret: ${CF_ACCESS_CLIENT_SECRET}"
+          )
+
+          set +e
+          models_status="$(curl --silent --show-error --location             --connect-timeout 20 --max-time 60             --output "${PROBE_MODELS_PATH}" --write-out '%{http_code}'             "${headers[@]}"             "${OPENCLAW_GATEWAY_BASE_URL%/}/v1/models")"
+          models_rc=$?
+
+          chat_status="$(curl --silent --show-error --location             --connect-timeout 20 --max-time 600             --output "${PROBE_RESPONSE_PATH}" --write-out '%{http_code}'             "${headers[@]}"             --header "x-openclaw-session-key: letta-harness-live-001-probe-${GITHUB_RUN_ID}"             --request POST             --data-binary "@${PROBE_REQUEST_PATH}"             "${OPENCLAW_GATEWAY_BASE_URL%/}/v1/chat/completions")"
+          chat_rc=$?
+          set -e
+
+          {
+            echo "models_rc=${models_rc}"
+            echo "models_status=${models_status}"
+            echo "chat_rc=${chat_rc}"
+            echo "chat_status=${chat_status}"
+          } >"${PROBE_STATUS_PATH}"
+
+      - name: Produce sanitized probe evidence
+        if: always()
+        shell: bash
+        run: |
+          set -euo pipefail
+          node - "${PROBE_MODELS_PATH}" "${PROBE_RESPONSE_PATH}" "${PROBE_STATUS_PATH}" "${PROBE_EVIDENCE_PATH}" <<'NODE'
+          const fs = require('node:fs');
+          const [modelsPath, responsePath, statusPath, evidencePath] = process.argv.slice(2);
+
+          const readJson = (path) => {
+            try { return JSON.parse(fs.readFileSync(path, 'utf8')); }
+            catch { return null; }
+          };
+          const safeText = (value, max = 160) => {
+            if (typeof value !== 'string') return null;
+            const sanitized = value
+              .replace(/(bearer|token|secret|password|api[_-]?key)\s*[:=]\s*\S+/gi, '$1=[REDACTED]')
+              .replace(/(gh[pousr]_[A-Za-z0-9_]+|github_pat_[A-Za-z0-9_]+|sk-[A-Za-z0-9_-]+)/g, '[REDACTED]')
+              .slice(0, max);
+            return sanitized || null;
+          };
+          const status = {};
+          try {
+            for (const line of fs.readFileSync(statusPath, 'utf8').split(/\r?\n/)) {
+              const at = line.indexOf('=');
+              if (at > 0) status[line.slice(0, at)] = line.slice(at + 1);
+            }
+          } catch {}
+
+          const models = readJson(modelsPath);
+          const items = Array.isArray(models?.data) ? models.data : Array.isArray(models?.models) ? models.models : [];
+          const ids = items.map((item) => typeof item === 'string' ? item : item?.id).filter((id) => typeof id === 'string');
+
+          const response = readJson(responsePath);
+          let content = response?.choices?.[0]?.message?.content;
+          if (Array.isArray(content)) {
+            content = content.map((part) => typeof part === 'string' ? part : part?.text || '').join('');
+          }
+          let parsed = null;
+          if (typeof content === 'string') {
+            const cleaned = content.trim().replace(/^\`\`\`(?:json)?\s*/i, '').replace(/\s*\`\`\`$/, '');
+            try { parsed = JSON.parse(cleaned); } catch {}
+          }
+
+          const expectedHead = '9bdc7046b6cffc8a08c1397582e5d18d491672ec';
+          const evidence = {
+            probe: 'LETTA-HARNESS-GATEWAY-PROBE-001',
+            generatedAt: new Date().toISOString(),
+            transport: {
+              modelsHttpStatus: Number(status.models_status || 0),
+              chatHttpStatus: Number(status.chat_status || 0),
+              modelsRequestOk: status.models_rc === '0',
+              chatRequestOk: status.chat_rc === '0'
+            },
+            catalog: {
+              targetCount: ids.length,
+              defaultAdvertised: ids.includes('openclaw/default') || ids.includes('openclaw'),
+              lucyAdvertised: ids.includes('agent:lucy') || ids.includes('openclaw/lucy')
+            },
+            agentResponseParsed: Boolean(parsed),
+            result: parsed ? {
+              mode: parsed.mode === 'read-only' ? 'read-only' : safeText(parsed.mode),
+              hostname: safeText(parsed.hostname),
+              hostnameMatchesExpected: parsed.hostname === 'hni-node-04',
+              openclawVersion: safeText(parsed.openclawVersion),
+              agentId: safeText(parsed.agentId),
+              controlRepoPresent: typeof parsed.controlRepoPresent === 'boolean' ? parsed.controlRepoPresent : null,
+              candidateBranch: safeText(parsed.candidateBranch),
+              candidateHead: /^[0-9a-f]{7,40}$/i.test(parsed.candidateHead || '') ? parsed.candidateHead : null,
+              candidateHeadMatchesExpected: parsed.candidateHead === expectedHead || parsed.candidateHeadMatchesExpected === true,
+              workingTreeClean: typeof parsed.workingTreeClean === 'boolean' ? parsed.workingTreeClean : null,
+              pluginPathExists: typeof parsed.pluginPathExists === 'boolean' ? parsed.pluginPathExists : null,
+              isolatedEvidenceStatus: safeText(parsed.isolatedEvidenceStatus),
+              liveResponseEvidenceExists: typeof parsed.liveResponseEvidenceExists === 'boolean' ? parsed.liveResponseEvidenceExists : null,
+              toolNamesUsed: Array.isArray(parsed.toolNamesUsed)
+                ? parsed.toolNamesUsed.map((item) => safeText(item, 64)).filter(Boolean).slice(0, 20)
+                : [],
+              blocker: safeText(parsed.blocker, 500)
+            } : null
+          };
+
+          evidence.gatePassed = evidence.transport.modelsRequestOk
+            && evidence.transport.chatRequestOk
+            && evidence.transport.chatHttpStatus === 200
+            && evidence.agentResponseParsed
+            && evidence.result?.mode === 'read-only'
+            && evidence.result?.hostnameMatchesExpected === true;
+
+          fs.writeFileSync(evidencePath, JSON.stringify(evidence, null, 2) + '\n', { mode: 0o600 });
+          if (!evidence.gatePassed) process.exitCode = 1;
+          NODE
+
+      - name: Upload sanitized evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: letta-harness-gateway-probe-${{ github.run_id }}
+          path: ${{ runner.temp }}/LETTA-HARNESS-GATEWAY-PROBE-001.json
+          if-no-files-found: warn
+          retention-days: 7
+
+      - name: Remove raw probe payloads
+        if: always()
+        shell: bash
+        run: |
+          rm -f             "${PROBE_MODELS_PATH}"             "${PROBE_REQUEST_PATH}"             "${PROBE_RESPONSE_PATH}"             "${PROBE_STATUS_PATH}"
