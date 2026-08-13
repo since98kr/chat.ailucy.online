@@ -35,8 +35,8 @@ jobs:
         run: |
           set -euo pipefail
           umask 077
-          node <<'NODE'
-          const fs = require('node:fs');
+          node --input-type=module <<'NODE'
+          import fs from 'node:fs';
 
           const outputPath = process.env.PROBE_EVIDENCE_PATH;
           const baseUrl = (process.env.OPENCLAW_GATEWAY_BASE_URL || '').replace(/\/$/, '');
