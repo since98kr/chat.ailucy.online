@@ -170,6 +170,67 @@ jobs:
           fs.writeFileSync(outputPath, JSON.stringify(evidence, null, 2) + '\n', { mode: 0o600 });
           NODE
 
+      - name: Verify existing restricted hni-node-04 preflight gate
+        if: always()
+        shell: bash
+        env:
+          LETTA_SSH_PRIVATE_KEY: ${{ secrets.LETTA_SSH_PRIVATE_KEY }}
+          LETTA_SSH_KNOWN_HOSTS: ${{ secrets.LETTA_SSH_KNOWN_HOSTS }}
+          LETTA_SSH_RESTRICTED_MODE: ${{ vars.LETTA_SSH_RESTRICTED_MODE }}
+          LETTA_SSH_HOST: ${{ vars.LETTA_SSH_HOST }}
+          LETTA_SSH_PORT: ${{ vars.LETTA_SSH_PORT }}
+          LETTA_SSH_USER: ${{ vars.LETTA_SSH_USER }}
+          PROBE_EVIDENCE_PATH: ${{ runner.temp }}/LETTA-HARNESS-GATEWAY-PROBE-001.json
+        run: |
+          set -u
+          key_path="${RUNNER_TEMP}/letta-harness-restricted-key"
+          known_hosts_path="${RUNNER_TEMP}/letta-harness-known-hosts"
+          stdout_path="${RUNNER_TEMP}/letta-harness-ssh.stdout"
+          stderr_path="${RUNNER_TEMP}/letta-harness-ssh.stderr"
+          cleanup() {
+            rm -f "${key_path}" "${known_hosts_path}" "${stdout_path}" "${stderr_path}"
+          }
+          trap cleanup EXIT
+          umask 077
+
+          host="${LETTA_SSH_HOST:-ax.hni-gl.ai}"
+          port="${LETTA_SSH_PORT:-3004}"
+          user="${LETTA_SSH_USER:-since98kr}"
+          status=125
+          response=''
+
+          if [[ "${LETTA_SSH_RESTRICTED_MODE:-}" == 'true' && -n "${LETTA_SSH_PRIVATE_KEY:-}" && -n "${LETTA_SSH_KNOWN_HOSTS:-}" ]]; then
+            printf '%s\n' "${LETTA_SSH_PRIVATE_KEY}" >"${key_path}"
+            printf '%s\n' "${LETTA_SSH_KNOWN_HOSTS}" >"${known_hosts_path}"
+            chmod 0600 "${key_path}" "${known_hosts_path}"
+
+            set +e
+            ssh -p "${port}"               -i "${key_path}"               -o IdentitiesOnly=yes               -o BatchMode=yes               -o ConnectTimeout=20               -o StrictHostKeyChecking=yes               -o "UserKnownHostsFile=${known_hosts_path}"               "${user}@${host}" letta-preflight-v1               >"${stdout_path}" 2>"${stderr_path}"
+            status=$?
+            set -e
+            if [[ -f "${stdout_path}" ]]; then
+              response="$(tr -d '\r\n' <"${stdout_path}")"
+            fi
+          fi
+
+          SSH_STATUS="${status}" SSH_RESPONSE="${response}"             node --input-type=module <<'NODE'
+          import fs from 'node:fs';
+          const path = process.env.PROBE_EVIDENCE_PATH;
+          let evidence = {};
+          try { evidence = JSON.parse(fs.readFileSync(path, 'utf8')); } catch {}
+          const status = Number(process.env.SSH_STATUS || 125);
+          const response = process.env.SSH_RESPONSE || '';
+          evidence.restrictedSsh = {
+            configured: process.env.LETTA_SSH_RESTRICTED_MODE === 'true'
+              && Boolean(process.env.LETTA_SSH_PRIVATE_KEY)
+              && Boolean(process.env.LETTA_SSH_KNOWN_HOSTS),
+            exitCode: status,
+            canonicalResponse: response === 'letta-preflight-v1:ok',
+            gatePassed: status === 0 && response === 'letta-preflight-v1:ok'
+          };
+          fs.writeFileSync(path, JSON.stringify(evidence, null, 2) + '\n', { mode: 0o600 });
+          NODE
+
       - name: Upload sanitized probe evidence
         if: always()
         uses: actions/upload-artifact@v4
