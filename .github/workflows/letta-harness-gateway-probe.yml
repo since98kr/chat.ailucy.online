@@ -37,6 +37,8 @@ jobs:
           umask 077
           node --input-type=module <<'NODE'
           import fs from 'node:fs';
+          import os from 'node:os';
+          import { execFileSync } from 'node:child_process';
 
           const outputPath = process.env.PROBE_EVIDENCE_PATH;
           const baseUrl = (process.env.OPENCLAW_GATEWAY_BASE_URL || '').replace(/\/$/, '');
@@ -56,10 +58,22 @@ jobs:
             generatedAt: new Date().toISOString(),
             transport: {},
             catalog: {},
+            runner: {
+              hostname: os.hostname(),
+              hostnameMatchesExpected: os.hostname() === 'hni-node-04',
+              openclawAvailable: false,
+              openclawVersion: null
+            },
             agentResponseParsed: false,
             result: null,
             gatePassed: false
           };
+
+          try {
+            const version = execFileSync('openclaw', ['--version'], { encoding: 'utf8', timeout: 10000 }).trim();
+            evidence.runner.openclawAvailable = true;
+            evidence.runner.openclawVersion = safeText(version);
+          } catch {}
 
           const headers = {
             authorization: 'Bearer ' + token,
@@ -82,7 +96,8 @@ jobs:
             evidence.catalog = {
               targetCount: ids.length,
               defaultAdvertised: ids.includes('openclaw/default') || ids.includes('openclaw'),
-              lucyAdvertised: ids.includes('agent:lucy') || ids.includes('openclaw/lucy')
+              lucyAdvertised: ids.includes('agent:lucy') || ids.includes('openclaw/lucy'),
+              mainAdvertised: ids.includes('agent:main') || ids.includes('openclaw/main')
             };
 
             const prompt = [
@@ -102,7 +117,7 @@ jobs:
                 'x-openclaw-session-key': 'letta-harness-live-001-probe-' + process.env.GITHUB_RUN_ID
               },
               body: JSON.stringify({
-                model: 'openclaw/default',
+                model: 'openclaw/main',
                 stream: false,
                 messages: [{ role: 'user', content: prompt }]
               }),
@@ -124,7 +139,7 @@ jobs:
 
             evidence.agentResponseParsed = Boolean(parsed);
             evidence.result = parsed ? {
-              mode: parsed.mode === 'read-only' ? 'read-only' : safeText(parsed.mode),
+              mode: typeof parsed.mode === 'string' && /^read[-_ ]?only/i.test(parsed.mode) ? 'read-only' : safeText(parsed.mode),
               hostname: safeText(parsed.hostname),
               hostnameMatchesExpected: parsed.hostname === 'hni-node-04',
               openclawVersion: safeText(parsed.openclawVersion),
