@@ -1,149 +1,129 @@
-name: LETTA-HARNESS-LIVE-001 gateway probe
+name: letta-harness-gateway-probe
 
 on:
   push:
     branches:
       - test/letta-harness-gateway-probe
-    paths:
-      - .github/workflows/letta-harness-gateway-probe.yml
-  workflow_dispatch:
 
 permissions:
   contents: read
 
-concurrency:
-  group: letta-harness-gateway-probe
-  cancel-in-progress: false
-
 jobs:
   probe:
-    name: Read-only hni-node-04 OpenClaw probe
-    runs-on: [self-hosted, linux, x64, chat-staging]
+    runs-on:
+      - self-hosted
+      - linux
+      - x64
+      - chat-staging
     environment: staging
     timeout-minutes: 15
 
-    env:
-      OPENCLAW_GATEWAY_BASE_URL: ${{ vars.OPENCLAW_GATEWAY_BASE_URL }}
-      OPENCLAW_GATEWAY_TOKEN: ${{ secrets.OPENCLAW_GATEWAY_TOKEN }}
-      CF_ACCESS_CLIENT_ID: ${{ vars.CF_ACCESS_CLIENT_ID }}
-      CF_ACCESS_CLIENT_SECRET: ${{ secrets.CF_ACCESS_CLIENT_SECRET }}
-      PROBE_MODELS_PATH: ${{ runner.temp }}/letta-harness-models.raw.json
-      PROBE_REQUEST_PATH: ${{ runner.temp }}/letta-harness-request.raw.json
-      PROBE_RESPONSE_PATH: ${{ runner.temp }}/letta-harness-response.raw.json
-      PROBE_STATUS_PATH: ${{ runner.temp }}/letta-harness-http-status.txt
-      PROBE_EVIDENCE_PATH: ${{ runner.temp }}/LETTA-HARNESS-GATEWAY-PROBE-001.json
-
     steps:
-      - name: Call default OpenClaw agent in read-only mode
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - name: Run read-only Gateway probe
         shell: bash
+        env:
+          OPENCLAW_GATEWAY_BASE_URL: ${{ vars.OPENCLAW_GATEWAY_BASE_URL }}
+          OPENCLAW_GATEWAY_TOKEN: ${{ secrets.OPENCLAW_GATEWAY_TOKEN }}
+          CF_ACCESS_CLIENT_ID: ${{ vars.CF_ACCESS_CLIENT_ID }}
+          CF_ACCESS_CLIENT_SECRET: ${{ secrets.CF_ACCESS_CLIENT_SECRET }}
+          PROBE_EVIDENCE_PATH: ${{ runner.temp }}/LETTA-HARNESS-GATEWAY-PROBE-001.json
         run: |
           set -euo pipefail
-          [[ -n "${OPENCLAW_GATEWAY_BASE_URL}" ]] || { echo 'Missing OPENCLAW_GATEWAY_BASE_URL.' >&2; exit 1; }
-          [[ -n "${OPENCLAW_GATEWAY_TOKEN}" ]] || { echo 'Missing OPENCLAW_GATEWAY_TOKEN.' >&2; exit 1; }
           umask 077
-
-          node - "${PROBE_REQUEST_PATH}" <<'NODE'
+          node <<'NODE'
           const fs = require('node:fs');
-          const path = process.argv[2];
-          const prompt = [
-            'Run the read-only preflight for LETTA-HARNESS-LIVE-001.',
-            'Do not create, edit, move, or delete files. Do not install packages. Do not change config, services, processes, git refs, or GitHub state. Do not restart anything.',
-            'You may use read-only local commands only: hostname, version checks, git status, git rev-parse, test -e, ls, and bounded path inspection in existing OpenClaw workspaces.',
-            'Inspect whether hni-node-04 already has the since98kr/lucy-openclaw-control checkout and the feature/letta-agent-harness candidate at commit 9bdc7046b6cffc8a08c1397582e5d18d491672ec.',
-            'Also inspect whether plugins/letta-agent-harness exists, whether the corrected isolated response is PASS, and whether collaboration/responses/LETTA-HARNESS-LIVE-001.md exists.',
-            'Return JSON only with exactly these keys: probe, mode, hostname, openclawVersion, agentId, controlRepoPresent, candidateBranch, candidateHead, candidateHeadMatchesExpected, workingTreeClean, pluginPathExists, isolatedEvidenceStatus, liveResponseEvidenceExists, toolNamesUsed, blocker.',
-            'Use null when unknown. Do not include credentials, environment values, file contents, or additional paths.'
-          ].join(' ');
-          fs.writeFileSync(path, JSON.stringify({
-            model: 'openclaw/default',
-            stream: false,
-            messages: [{ role: 'user', content: prompt }]
-          }));
-          NODE
 
-          headers=(
-            --header "Authorization: Bearer ${OPENCLAW_GATEWAY_TOKEN}"
-            --header "Content-Type: application/json"
-            --header "CF-Access-Client-Id: ${CF_ACCESS_CLIENT_ID}"
-            --header "CF-Access-Client-Secret: ${CF_ACCESS_CLIENT_SECRET}"
-          )
+          const outputPath = process.env.PROBE_EVIDENCE_PATH;
+          const baseUrl = (process.env.OPENCLAW_GATEWAY_BASE_URL || '').replace(/\/$/, '');
+          const token = process.env.OPENCLAW_GATEWAY_TOKEN || '';
+          const expectedHead = '9bdc7046b6cffc8a08c1397582e5d18d491672ec';
 
-          set +e
-          models_status="$(curl --silent --show-error --location             --connect-timeout 20 --max-time 60             --output "${PROBE_MODELS_PATH}" --write-out '%{http_code}'             "${headers[@]}"             "${OPENCLAW_GATEWAY_BASE_URL%/}/v1/models")"
-          models_rc=$?
-
-          chat_status="$(curl --silent --show-error --location             --connect-timeout 20 --max-time 600             --output "${PROBE_RESPONSE_PATH}" --write-out '%{http_code}'             "${headers[@]}"             --header "x-openclaw-session-key: letta-harness-live-001-probe-${GITHUB_RUN_ID}"             --request POST             --data-binary "@${PROBE_REQUEST_PATH}"             "${OPENCLAW_GATEWAY_BASE_URL%/}/v1/chat/completions")"
-          chat_rc=$?
-          set -e
-
-          {
-            echo "models_rc=${models_rc}"
-            echo "models_status=${models_status}"
-            echo "chat_rc=${chat_rc}"
-            echo "chat_status=${chat_status}"
-          } >"${PROBE_STATUS_PATH}"
-
-      - name: Produce sanitized probe evidence
-        if: always()
-        shell: bash
-        run: |
-          set -euo pipefail
-          node - "${PROBE_MODELS_PATH}" "${PROBE_RESPONSE_PATH}" "${PROBE_STATUS_PATH}" "${PROBE_EVIDENCE_PATH}" <<'NODE'
-          const fs = require('node:fs');
-          const [modelsPath, responsePath, statusPath, evidencePath] = process.argv.slice(2);
-
-          const readJson = (path) => {
-            try { return JSON.parse(fs.readFileSync(path, 'utf8')); }
-            catch { return null; }
-          };
           const safeText = (value, max = 160) => {
             if (typeof value !== 'string') return null;
-            const sanitized = value
+            return value
               .replace(/(bearer|token|secret|password|api[_-]?key)\s*[:=]\s*\S+/gi, '$1=[REDACTED]')
               .replace(/(gh[pousr]_[A-Za-z0-9_]+|github_pat_[A-Za-z0-9_]+|sk-[A-Za-z0-9_-]+)/g, '[REDACTED]')
-              .slice(0, max);
-            return sanitized || null;
+              .slice(0, max) || null;
           };
-          const status = {};
-          try {
-            for (const line of fs.readFileSync(statusPath, 'utf8').split(/\r?\n/)) {
-              const at = line.indexOf('=');
-              if (at > 0) status[line.slice(0, at)] = line.slice(at + 1);
-            }
-          } catch {}
 
-          const models = readJson(modelsPath);
-          const items = Array.isArray(models?.data) ? models.data : Array.isArray(models?.models) ? models.models : [];
-          const ids = items.map((item) => typeof item === 'string' ? item : item?.id).filter((id) => typeof id === 'string');
-
-          const response = readJson(responsePath);
-          let content = response?.choices?.[0]?.message?.content;
-          if (Array.isArray(content)) {
-            content = content.map((part) => typeof part === 'string' ? part : part?.text || '').join('');
-          }
-          let parsed = null;
-          if (typeof content === 'string') {
-            const cleaned = content.trim().replace(/^\`\`\`(?:json)?\s*/i, '').replace(/\s*\`\`\`$/, '');
-            try { parsed = JSON.parse(cleaned); } catch {}
-          }
-
-          const expectedHead = '9bdc7046b6cffc8a08c1397582e5d18d491672ec';
           const evidence = {
             probe: 'LETTA-HARNESS-GATEWAY-PROBE-001',
             generatedAt: new Date().toISOString(),
-            transport: {
-              modelsHttpStatus: Number(status.models_status || 0),
-              chatHttpStatus: Number(status.chat_status || 0),
-              modelsRequestOk: status.models_rc === '0',
-              chatRequestOk: status.chat_rc === '0'
-            },
-            catalog: {
+            transport: {},
+            catalog: {},
+            agentResponseParsed: false,
+            result: null,
+            gatePassed: false
+          };
+
+          const headers = {
+            authorization: 'Bearer ' + token,
+            'content-type': 'application/json',
+            'cf-access-client-id': process.env.CF_ACCESS_CLIENT_ID || '',
+            'cf-access-client-secret': process.env.CF_ACCESS_CLIENT_SECRET || ''
+          };
+
+          try {
+            if (!baseUrl || !token) throw new Error('staging Gateway configuration is missing');
+
+            const modelsResponse = await fetch(baseUrl + '/v1/models', {
+              headers,
+              signal: AbortSignal.timeout(60000)
+            });
+            evidence.transport.modelsHttpStatus = modelsResponse.status;
+            const models = await modelsResponse.json();
+            const items = Array.isArray(models.data) ? models.data : Array.isArray(models.models) ? models.models : [];
+            const ids = items.map((item) => typeof item === 'string' ? item : item && item.id).filter((id) => typeof id === 'string');
+            evidence.catalog = {
               targetCount: ids.length,
               defaultAdvertised: ids.includes('openclaw/default') || ids.includes('openclaw'),
               lucyAdvertised: ids.includes('agent:lucy') || ids.includes('openclaw/lucy')
-            },
-            agentResponseParsed: Boolean(parsed),
-            result: parsed ? {
+            };
+
+            const prompt = [
+              'Run the read-only preflight for LETTA-HARNESS-LIVE-001.',
+              'Do not create, edit, move, or delete files. Do not install packages. Do not change config, services, processes, git refs, or GitHub state. Do not restart anything.',
+              'Use only read-only local inspection in existing OpenClaw workspaces.',
+              'Inspect whether this host is hni-node-04 and whether the since98kr/lucy-openclaw-control checkout has feature/letta-agent-harness at commit ' + expectedHead + '.',
+              'Check whether plugins/letta-agent-harness exists, whether the corrected isolated response is PASS, and whether collaboration/responses/LETTA-HARNESS-LIVE-001.md exists.',
+              'Return JSON only with exactly these keys: probe, mode, hostname, openclawVersion, agentId, controlRepoPresent, candidateBranch, candidateHead, candidateHeadMatchesExpected, workingTreeClean, pluginPathExists, isolatedEvidenceStatus, liveResponseEvidenceExists, toolNamesUsed, blocker.',
+              'Use null when unknown. Do not include credentials, environment values, file contents, or additional paths.'
+            ].join(' ');
+
+            const chatResponse = await fetch(baseUrl + '/v1/chat/completions', {
+              method: 'POST',
+              headers: {
+                ...headers,
+                'x-openclaw-session-key': 'letta-harness-live-001-probe-' + process.env.GITHUB_RUN_ID
+              },
+              body: JSON.stringify({
+                model: 'openclaw/default',
+                stream: false,
+                messages: [{ role: 'user', content: prompt }]
+              }),
+              signal: AbortSignal.timeout(600000)
+            });
+            evidence.transport.chatHttpStatus = chatResponse.status;
+            const response = await chatResponse.json();
+
+            let content = response && response.choices && response.choices[0] && response.choices[0].message && response.choices[0].message.content;
+            if (Array.isArray(content)) {
+              content = content.map((part) => typeof part === 'string' ? part : part && part.text || '').join('');
+            }
+
+            let parsed = null;
+            if (typeof content === 'string') {
+              const cleaned = content.trim().replace(/^\`\`\`(?:json)?\s*/i, '').replace(/\s*\`\`\`$/, '');
+              try { parsed = JSON.parse(cleaned); } catch {}
+            }
+
+            evidence.agentResponseParsed = Boolean(parsed);
+            evidence.result = parsed ? {
               mode: parsed.mode === 'read-only' ? 'read-only' : safeText(parsed.mode),
               hostname: safeText(parsed.hostname),
               hostnameMatchesExpected: parsed.hostname === 'hni-node-04',
@@ -161,21 +141,21 @@ jobs:
                 ? parsed.toolNamesUsed.map((item) => safeText(item, 64)).filter(Boolean).slice(0, 20)
                 : [],
               blocker: safeText(parsed.blocker, 500)
-            } : null
-          };
+            } : null;
 
-          evidence.gatePassed = evidence.transport.modelsRequestOk
-            && evidence.transport.chatRequestOk
-            && evidence.transport.chatHttpStatus === 200
-            && evidence.agentResponseParsed
-            && evidence.result?.mode === 'read-only'
-            && evidence.result?.hostnameMatchesExpected === true;
+            evidence.gatePassed = modelsResponse.ok
+              && chatResponse.ok
+              && evidence.agentResponseParsed
+              && evidence.result.mode === 'read-only'
+              && evidence.result.hostnameMatchesExpected === true;
+          } catch (error) {
+            evidence.error = safeText(error && error.message, 500) || 'probe failed';
+          }
 
-          fs.writeFileSync(evidencePath, JSON.stringify(evidence, null, 2) + '\n', { mode: 0o600 });
-          if (!evidence.gatePassed) process.exitCode = 1;
+          fs.writeFileSync(outputPath, JSON.stringify(evidence, null, 2) + '\n', { mode: 0o600 });
           NODE
 
-      - name: Upload sanitized evidence
+      - name: Upload sanitized probe evidence
         if: always()
         uses: actions/upload-artifact@v4
         with:
@@ -184,8 +164,10 @@ jobs:
           if-no-files-found: warn
           retention-days: 7
 
-      - name: Remove raw probe payloads
+      - name: Enforce probe gate
         if: always()
         shell: bash
+        env:
+          PROBE_EVIDENCE_PATH: ${{ runner.temp }}/LETTA-HARNESS-GATEWAY-PROBE-001.json
         run: |
-          rm -f             "${PROBE_MODELS_PATH}"             "${PROBE_REQUEST_PATH}"             "${PROBE_RESPONSE_PATH}"             "${PROBE_STATUS_PATH}"
+          node -e "const e=require(process.env.PROBE_EVIDENCE_PATH); if (!e.gatePassed) process.exit(1)"
