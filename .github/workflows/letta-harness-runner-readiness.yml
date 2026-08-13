@@ -25,7 +25,7 @@ jobs:
     timeout-minutes: 15
 
     steps:
-      - name: Probe trusted bootstrap prerequisites
+      - name: Probe direct or delegated trusted context
         shell: bash
         env:
           APPROVED_HEAD: a83f3a949baf0198dcdd0745116ba55cbf36b195
@@ -42,42 +42,37 @@ jobs:
           remote_port="${LETTA_SSH_PORT:-3004}"
           remote_user="${LETTA_SSH_USER:-since98kr}"
           tunnel_service="${LETTA_TUNNEL_SERVICE:-letta-bridge-tunnel.service}"
-          trusted_known_hosts="${HOME}/.ssh/known_hosts"
-          tmp_root="$(mktemp -d "${RUNNER_TEMP}/letta-harness-readiness.XXXXXX")"
-          trap 'rm -rf -- "${tmp_root}"' EXIT
+          runner_user="$(id -un 2>/dev/null || true)"
+          runner_home="${HOME}"
 
           runner_identity=false
           non_root=false
           commands_ready=true
-          gh_auth=false
-          control_repo_read=false
-          control_head_checked_out=false
           tunnel_active=false
-          tunnel_user_matches=false
           tunnel_strict_host_key=false
           tunnel_target_matches=false
-          known_hosts_entry=false
-          trusted_ssh=false
+          tunnel_user_valid=false
+
+          direct_user_matches=false
+          direct_gh_auth=false
+          direct_control_head=false
+          direct_known_hosts=false
+          direct_trusted_ssh=false
+          direct_context_ready=false
+
+          sudo_to_tunnel_user=false
+          delegated_gh_auth=false
+          delegated_control_head=false
+          delegated_known_hosts=false
+          delegated_trusted_ssh=false
+          delegated_context_ready=false
 
           [[ "${GITHUB_REPOSITORY}" == 'since98kr/chat.ailucy.online' ]] && runner_identity=true
           [[ "${EUID}" -ne 0 ]] && non_root=true
 
-          for command in gh git ssh ssh-keygen systemctl; do
+          for command in gh getent id ssh ssh-keygen sudo systemctl; do
             command -v "${command}" >/dev/null 2>&1 || commands_ready=false
           done
-
-          if [[ "${commands_ready}" == true ]] && gh auth status >/dev/null 2>&1; then
-            gh_auth=true
-          fi
-
-          if [[ "${gh_auth}" == true ]]             && [[ "$(gh api repos/since98kr/lucy-openclaw-control --jq .full_name 2>/dev/null || true)" == 'since98kr/lucy-openclaw-control' ]]; then
-            control_repo_read=true
-          fi
-
-          control_dir="${tmp_root}/control"
-          if [[ "${control_repo_read}" == true ]]             && gh repo clone since98kr/lucy-openclaw-control "${control_dir}" -- --no-checkout >/dev/null 2>&1             && git -C "${control_dir}" fetch --no-tags origin refs/heads/feature/letta-agent-harness:refs/remotes/origin/feature/letta-agent-harness >/dev/null 2>&1             && [[ "$(git -C "${control_dir}" rev-parse refs/remotes/origin/feature/letta-agent-harness 2>/dev/null || true)" == "${APPROVED_HEAD}" ]]             && git -C "${control_dir}" checkout --detach "${APPROVED_HEAD}" >/dev/null 2>&1             && [[ "$(git -C "${control_dir}" rev-parse HEAD 2>/dev/null || true)" == "${APPROVED_HEAD}" ]]             && [[ "$(git -C "${control_dir}" remote get-url origin 2>/dev/null || true)" == 'https://github.com/since98kr/lucy-openclaw-control.git' ]]             && git -C "${control_dir}" diff --quiet             && git -C "${control_dir}" diff --cached --quiet; then
-            control_head_checked_out=true
-          fi
 
           if [[ "${commands_ready}" == true ]]             && [[ "$(systemctl is-active "${tunnel_service}" 2>/dev/null || true)" == 'active' ]]; then
             tunnel_active=true
@@ -85,8 +80,8 @@ jobs:
 
           tunnel_user="$(systemctl show --property User --value "${tunnel_service}" 2>/dev/null | tr -d '[:space:]')"
           tunnel_exec="$(systemctl show --property ExecStart --value "${tunnel_service}" 2>/dev/null || true)"
-          if [[ -n "${tunnel_user}" ]] && [[ "${tunnel_user}" == "$(id -un 2>/dev/null || true)" ]]; then
-            tunnel_user_matches=true
+          if [[ "${tunnel_user}" =~ ^[a-z_][a-z0-9_-]*$ ]] && [[ "${tunnel_user}" != root ]]; then
+            tunnel_user_valid=true
           fi
           [[ "${tunnel_exec}" == *'StrictHostKeyChecking=yes'* ]] && tunnel_strict_host_key=true
           if [[ "${tunnel_exec}" == *"-p ${remote_port}"* ]]             && [[ "${tunnel_exec}" == *"${remote_user}@${remote_host}"* ]]; then
@@ -94,34 +89,73 @@ jobs:
           fi
 
           host_token="[${remote_host}]:${remote_port}"
-          if [[ -r "${trusted_known_hosts}" && ! -L "${trusted_known_hosts}" ]]             && ssh-keygen -F "${host_token}" -f "${trusted_known_hosts}" >/dev/null 2>&1; then
-            known_hosts_entry=true
+          if [[ "${runner_user}" == "${tunnel_user}" ]]; then
+            direct_user_matches=true
+          fi
+          if gh auth status >/dev/null 2>&1; then
+            direct_gh_auth=true
+          fi
+          if [[ "${direct_gh_auth}" == true ]]             && [[ "$(gh api repos/since98kr/lucy-openclaw-control/git/ref/heads/feature/letta-agent-harness --jq .object.sha 2>/dev/null || true)" == "${APPROVED_HEAD}" ]]; then
+            direct_control_head=true
+          fi
+          runner_known_hosts="${runner_home}/.ssh/known_hosts"
+          if [[ -r "${runner_known_hosts}" && ! -L "${runner_known_hosts}" ]]             && ssh-keygen -F "${host_token}" -f "${runner_known_hosts}" >/dev/null 2>&1; then
+            direct_known_hosts=true
+          fi
+          if [[ "${direct_user_matches}" == true ]]             && [[ "${direct_known_hosts}" == true ]]             && ssh -p "${remote_port}"               -o BatchMode=yes               -o ConnectTimeout=20               -o StrictHostKeyChecking=yes               -o "UserKnownHostsFile=${runner_known_hosts}"               "${remote_user}@${remote_host}" true >/dev/null 2>&1; then
+            direct_trusted_ssh=true
+          fi
+          if [[ "${direct_user_matches}" == true ]]             && [[ "${direct_gh_auth}" == true ]]             && [[ "${direct_control_head}" == true ]]             && [[ "${direct_known_hosts}" == true ]]             && [[ "${direct_trusted_ssh}" == true ]]; then
+            direct_context_ready=true
           fi
 
-          if [[ "${tunnel_active}" == true ]]             && [[ "${tunnel_user_matches}" == true ]]             && [[ "${known_hosts_entry}" == true ]]             && ssh -p "${remote_port}"               -o BatchMode=yes               -o ConnectTimeout=20               -o StrictHostKeyChecking=yes               -o "UserKnownHostsFile=${trusted_known_hosts}"               "${remote_user}@${remote_host}" true >/dev/null 2>&1; then
-            trusted_ssh=true
+          tunnel_home=''
+          if [[ "${tunnel_user_valid}" == true ]]; then
+            tunnel_home="$(getent passwd "${tunnel_user}" 2>/dev/null | awk -F: 'NR == 1 { print $6 }')"
+          fi
+          if [[ "${tunnel_home}" =~ ^/[^[:space:]]+$ ]]             && [[ "${tunnel_home}" != / ]]             && sudo -n -H -u "${tunnel_user}" true >/dev/null 2>&1; then
+            sudo_to_tunnel_user=true
+          fi
+          if [[ "${sudo_to_tunnel_user}" == true ]]             && sudo -n -H -u "${tunnel_user}" gh auth status >/dev/null 2>&1; then
+            delegated_gh_auth=true
+          fi
+          if [[ "${delegated_gh_auth}" == true ]]             && [[ "$(sudo -n -H -u "${tunnel_user}" gh api repos/since98kr/lucy-openclaw-control/git/ref/heads/feature/letta-agent-harness --jq .object.sha 2>/dev/null || true)" == "${APPROVED_HEAD}" ]]; then
+            delegated_control_head=true
+          fi
+          delegated_known_hosts_path="${tunnel_home}/.ssh/known_hosts"
+          if [[ "${sudo_to_tunnel_user}" == true ]]             && sudo -n -H -u "${tunnel_user}" test -r "${delegated_known_hosts_path}"             && sudo -n -H -u "${tunnel_user}" test ! -L "${delegated_known_hosts_path}"             && sudo -n -H -u "${tunnel_user}" ssh-keygen -F "${host_token}" -f "${delegated_known_hosts_path}" >/dev/null 2>&1; then
+            delegated_known_hosts=true
+          fi
+          if [[ "${delegated_known_hosts}" == true ]]             && sudo -n -H -u "${tunnel_user}" ssh -p "${remote_port}"               -o BatchMode=yes               -o ConnectTimeout=20               -o StrictHostKeyChecking=yes               -o "UserKnownHostsFile=${delegated_known_hosts_path}"               "${remote_user}@${remote_host}" true >/dev/null 2>&1; then
+            delegated_trusted_ssh=true
+          fi
+          if [[ "${sudo_to_tunnel_user}" == true ]]             && [[ "${delegated_gh_auth}" == true ]]             && [[ "${delegated_control_head}" == true ]]             && [[ "${delegated_known_hosts}" == true ]]             && [[ "${delegated_trusted_ssh}" == true ]]; then
+            delegated_context_ready=true
           fi
 
           bootstrap_ready=false
-          if [[ "${runner_identity}" == true ]]             && [[ "${non_root}" == true ]]             && [[ "${commands_ready}" == true ]]             && [[ "${gh_auth}" == true ]]             && [[ "${control_repo_read}" == true ]]             && [[ "${control_head_checked_out}" == true ]]             && [[ "${tunnel_active}" == true ]]             && [[ "${tunnel_user_matches}" == true ]]             && [[ "${tunnel_strict_host_key}" == true ]]             && [[ "${tunnel_target_matches}" == true ]]             && [[ "${known_hosts_entry}" == true ]]             && [[ "${trusted_ssh}" == true ]]; then
+          if [[ "${runner_identity}" == true ]]             && [[ "${non_root}" == true ]]             && [[ "${commands_ready}" == true ]]             && [[ "${tunnel_active}" == true ]]             && [[ "${tunnel_strict_host_key}" == true ]]             && [[ "${tunnel_target_matches}" == true ]]             && { [[ "${direct_context_ready}" == true ]] || [[ "${delegated_context_ready}" == true ]]; }; then
             bootstrap_ready=true
           fi
 
           {
-            printf 'letta-harness-runner-readiness-v1\n'
+            printf 'letta-harness-runner-readiness-v2\n'
             printf 'approved_head=%s\n' "${APPROVED_HEAD}"
+            printf 'runner_user=%s\n' "${runner_user}"
+            printf 'tunnel_user=%s\n' "${tunnel_user}"
             printf 'runner_identity=%s\n' "${runner_identity}"
             printf 'non_root=%s\n' "${non_root}"
             printf 'commands_ready=%s\n' "${commands_ready}"
-            printf 'gh_auth=%s\n' "${gh_auth}"
-            printf 'control_repo_read=%s\n' "${control_repo_read}"
-            printf 'control_head_checked_out=%s\n' "${control_head_checked_out}"
             printf 'tunnel_active=%s\n' "${tunnel_active}"
-            printf 'tunnel_user_matches=%s\n' "${tunnel_user_matches}"
             printf 'tunnel_strict_host_key=%s\n' "${tunnel_strict_host_key}"
             printf 'tunnel_target_matches=%s\n' "${tunnel_target_matches}"
-            printf 'known_hosts_entry=%s\n' "${known_hosts_entry}"
-            printf 'trusted_ssh=%s\n' "${trusted_ssh}"
+            printf 'direct_context_ready=%s\n' "${direct_context_ready}"
+            printf 'sudo_to_tunnel_user=%s\n' "${sudo_to_tunnel_user}"
+            printf 'delegated_gh_auth=%s\n' "${delegated_gh_auth}"
+            printf 'delegated_control_head=%s\n' "${delegated_control_head}"
+            printf 'delegated_known_hosts=%s\n' "${delegated_known_hosts}"
+            printf 'delegated_trusted_ssh=%s\n' "${delegated_trusted_ssh}"
+            printf 'delegated_context_ready=%s\n' "${delegated_context_ready}"
             printf 'bootstrap_ready=%s\n' "${bootstrap_ready}"
           } >"${EVIDENCE_PATH}"
           cat "${EVIDENCE_PATH}"
