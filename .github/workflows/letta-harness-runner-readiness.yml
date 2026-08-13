@@ -1,0 +1,142 @@
+name: Letta Harness runner readiness
+
+on:
+  push:
+    branches:
+      - test/letta-harness-gateway-probe
+    paths:
+      - .github/workflows/letta-harness-runner-readiness.yml
+
+permissions:
+  contents: read
+
+concurrency:
+  group: letta-harness-runner-readiness
+  cancel-in-progress: false
+
+jobs:
+  readiness:
+    if: ${{ github.actor == 'since98kr' && github.ref == 'refs/heads/test/letta-harness-gateway-probe' }}
+    runs-on:
+      - self-hosted
+      - linux
+      - x64
+      - chat-staging
+    timeout-minutes: 15
+
+    steps:
+      - name: Probe trusted bootstrap prerequisites
+        shell: bash
+        env:
+          APPROVED_HEAD: a83f3a949baf0198dcdd0745116ba55cbf36b195
+          LETTA_SSH_HOST: ${{ vars.LETTA_SSH_HOST }}
+          LETTA_SSH_PORT: ${{ vars.LETTA_SSH_PORT }}
+          LETTA_SSH_USER: ${{ vars.LETTA_SSH_USER }}
+          LETTA_TUNNEL_SERVICE: ${{ vars.LETTA_TUNNEL_SERVICE }}
+          EVIDENCE_PATH: ${{ runner.temp }}/LETTA-HARNESS-RUNNER-READINESS-001.txt
+        run: |
+          set -u
+          umask 077
+
+          remote_host="${LETTA_SSH_HOST:-ax.hni-gl.ai}"
+          remote_port="${LETTA_SSH_PORT:-3004}"
+          remote_user="${LETTA_SSH_USER:-since98kr}"
+          tunnel_service="${LETTA_TUNNEL_SERVICE:-letta-bridge-tunnel.service}"
+          trusted_known_hosts="${HOME}/.ssh/known_hosts"
+          tmp_root="$(mktemp -d "${RUNNER_TEMP}/letta-harness-readiness.XXXXXX")"
+          trap 'rm -rf -- "${tmp_root}"' EXIT
+
+          runner_identity=false
+          non_root=false
+          commands_ready=true
+          gh_auth=false
+          control_repo_read=false
+          control_head_checked_out=false
+          tunnel_active=false
+          tunnel_user_matches=false
+          tunnel_strict_host_key=false
+          tunnel_target_matches=false
+          known_hosts_entry=false
+          trusted_ssh=false
+
+          [[ "${GITHUB_REPOSITORY}" == 'since98kr/chat.ailucy.online' ]] && runner_identity=true
+          [[ "${EUID}" -ne 0 ]] && non_root=true
+
+          for command in gh git ssh ssh-keygen systemctl; do
+            command -v "${command}" >/dev/null 2>&1 || commands_ready=false
+          done
+
+          if [[ "${commands_ready}" == true ]] && gh auth status >/dev/null 2>&1; then
+            gh_auth=true
+          fi
+
+          if [[ "${gh_auth}" == true ]]             && [[ "$(gh api repos/since98kr/lucy-openclaw-control --jq .full_name 2>/dev/null || true)" == 'since98kr/lucy-openclaw-control' ]]; then
+            control_repo_read=true
+          fi
+
+          control_dir="${tmp_root}/control"
+          if [[ "${control_repo_read}" == true ]]             && gh repo clone since98kr/lucy-openclaw-control "${control_dir}" -- --no-checkout >/dev/null 2>&1             && git -C "${control_dir}" fetch --no-tags origin refs/heads/feature/letta-agent-harness:refs/remotes/origin/feature/letta-agent-harness >/dev/null 2>&1             && [[ "$(git -C "${control_dir}" rev-parse refs/remotes/origin/feature/letta-agent-harness 2>/dev/null || true)" == "${APPROVED_HEAD}" ]]             && git -C "${control_dir}" checkout --detach "${APPROVED_HEAD}" >/dev/null 2>&1             && [[ "$(git -C "${control_dir}" rev-parse HEAD 2>/dev/null || true)" == "${APPROVED_HEAD}" ]]             && [[ "$(git -C "${control_dir}" remote get-url origin 2>/dev/null || true)" == 'https://github.com/since98kr/lucy-openclaw-control.git' ]]             && git -C "${control_dir}" diff --quiet             && git -C "${control_dir}" diff --cached --quiet; then
+            control_head_checked_out=true
+          fi
+
+          if [[ "${commands_ready}" == true ]]             && [[ "$(systemctl is-active "${tunnel_service}" 2>/dev/null || true)" == 'active' ]]; then
+            tunnel_active=true
+          fi
+
+          tunnel_user="$(systemctl show --property User --value "${tunnel_service}" 2>/dev/null | tr -d '[:space:]')"
+          tunnel_exec="$(systemctl show --property ExecStart --value "${tunnel_service}" 2>/dev/null || true)"
+          if [[ -n "${tunnel_user}" ]] && [[ "${tunnel_user}" == "$(id -un 2>/dev/null || true)" ]]; then
+            tunnel_user_matches=true
+          fi
+          [[ "${tunnel_exec}" == *'StrictHostKeyChecking=yes'* ]] && tunnel_strict_host_key=true
+          if [[ "${tunnel_exec}" == *"-p ${remote_port}"* ]]             && [[ "${tunnel_exec}" == *"${remote_user}@${remote_host}"* ]]; then
+            tunnel_target_matches=true
+          fi
+
+          host_token="[${remote_host}]:${remote_port}"
+          if [[ -r "${trusted_known_hosts}" && ! -L "${trusted_known_hosts}" ]]             && ssh-keygen -F "${host_token}" -f "${trusted_known_hosts}" >/dev/null 2>&1; then
+            known_hosts_entry=true
+          fi
+
+          if [[ "${tunnel_active}" == true ]]             && [[ "${tunnel_user_matches}" == true ]]             && [[ "${known_hosts_entry}" == true ]]             && ssh -p "${remote_port}"               -o BatchMode=yes               -o ConnectTimeout=20               -o StrictHostKeyChecking=yes               -o "UserKnownHostsFile=${trusted_known_hosts}"               "${remote_user}@${remote_host}" true >/dev/null 2>&1; then
+            trusted_ssh=true
+          fi
+
+          bootstrap_ready=false
+          if [[ "${runner_identity}" == true ]]             && [[ "${non_root}" == true ]]             && [[ "${commands_ready}" == true ]]             && [[ "${gh_auth}" == true ]]             && [[ "${control_repo_read}" == true ]]             && [[ "${control_head_checked_out}" == true ]]             && [[ "${tunnel_active}" == true ]]             && [[ "${tunnel_user_matches}" == true ]]             && [[ "${tunnel_strict_host_key}" == true ]]             && [[ "${tunnel_target_matches}" == true ]]             && [[ "${known_hosts_entry}" == true ]]             && [[ "${trusted_ssh}" == true ]]; then
+            bootstrap_ready=true
+          fi
+
+          {
+            printf 'letta-harness-runner-readiness-v1\n'
+            printf 'approved_head=%s\n' "${APPROVED_HEAD}"
+            printf 'runner_identity=%s\n' "${runner_identity}"
+            printf 'non_root=%s\n' "${non_root}"
+            printf 'commands_ready=%s\n' "${commands_ready}"
+            printf 'gh_auth=%s\n' "${gh_auth}"
+            printf 'control_repo_read=%s\n' "${control_repo_read}"
+            printf 'control_head_checked_out=%s\n' "${control_head_checked_out}"
+            printf 'tunnel_active=%s\n' "${tunnel_active}"
+            printf 'tunnel_user_matches=%s\n' "${tunnel_user_matches}"
+            printf 'tunnel_strict_host_key=%s\n' "${tunnel_strict_host_key}"
+            printf 'tunnel_target_matches=%s\n' "${tunnel_target_matches}"
+            printf 'known_hosts_entry=%s\n' "${known_hosts_entry}"
+            printf 'trusted_ssh=%s\n' "${trusted_ssh}"
+            printf 'bootstrap_ready=%s\n' "${bootstrap_ready}"
+          } >"${EVIDENCE_PATH}"
+          cat "${EVIDENCE_PATH}"
+
+      - name: Upload sanitized readiness evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: letta-harness-runner-readiness-${{ github.run_id }}
+          path: ${{ runner.temp }}/LETTA-HARNESS-RUNNER-READINESS-001.txt
+          if-no-files-found: error
+          retention-days: 14
+
+      - name: Enforce readiness gate
+        shell: bash
+        env:
+          EVIDENCE_PATH: ${{ runner.temp }}/LETTA-HARNESS-RUNNER-READINESS-001.txt
+        run: grep -Fxq 'bootstrap_ready=true' "${EVIDENCE_PATH}"
