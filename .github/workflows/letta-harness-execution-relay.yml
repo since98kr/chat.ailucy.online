@@ -1,0 +1,142 @@
+name: Letta Harness execution relay
+
+on:
+  workflow_dispatch:
+    inputs:
+      operation:
+        description: Exact restricted Harness operation; live cutover is intentionally unavailable
+        required: true
+        type: choice
+        options:
+          - preflight
+          - isolated
+          - stage
+          - shadow
+          - status
+          - rollback
+      approved_head:
+        description: Reviewed 40-character lucy-openclaw-control commit SHA
+        required: true
+        type: string
+      confirmation:
+        description: STAGE_OPENCLAW_HARNESS or ROLLBACK_OPENCLAW_HARNESS when applicable
+        required: false
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: letta-harness-execution-relay
+  cancel-in-progress: false
+
+jobs:
+  invoke:
+    runs-on: [self-hosted, linux, x64, chat-staging]
+    environment: staging
+    timeout-minutes: 45
+    steps:
+      - name: Validate immutable request and enrollment
+        shell: bash
+        env:
+          OPERATION: ${{ inputs.operation }}
+          APPROVED_HEAD: ${{ inputs.approved_head }}
+          CONFIRMATION: ${{ inputs.confirmation }}
+          LETTA_HARNESS_SSH_RESTRICTED_MODE: ${{ vars.LETTA_HARNESS_SSH_RESTRICTED_MODE }}
+          LETTA_HARNESS_APPROVED_HEAD: ${{ vars.LETTA_HARNESS_APPROVED_HEAD }}
+        run: |
+          set -Eeuo pipefail
+          [[ "${APPROVED_HEAD}" =~ ^[0-9a-f]{40}$ ]]
+          [[ "${LETTA_HARNESS_SSH_RESTRICTED_MODE}" == 'true' ]]
+          [[ "${LETTA_HARNESS_APPROVED_HEAD}" =~ ^[0-9a-f]{40}$ ]]
+          [[ "${APPROVED_HEAD}" == "${LETTA_HARNESS_APPROVED_HEAD}" ]]
+          case "${OPERATION}" in
+            stage) [[ "${CONFIRMATION}" == 'STAGE_OPENCLAW_HARNESS' ]] ;;
+            rollback) [[ "${CONFIRMATION}" == 'ROLLBACK_OPENCLAW_HARNESS' ]] ;;
+            preflight|isolated|shadow|status) [[ -z "${CONFIRMATION}" ]] ;;
+            *) exit 1 ;;
+          esac
+
+      - name: Invoke exact restricted Harness command
+        shell: bash
+        env:
+          OPERATION: ${{ inputs.operation }}
+          APPROVED_HEAD: ${{ inputs.approved_head }}
+          LETTA_HARNESS_SSH_PRIVATE_KEY: ${{ secrets.LETTA_HARNESS_SSH_PRIVATE_KEY }}
+          LETTA_HARNESS_SSH_KNOWN_HOSTS: ${{ secrets.LETTA_HARNESS_SSH_KNOWN_HOSTS }}
+          LETTA_HARNESS_SSH_HOST: ${{ vars.LETTA_HARNESS_SSH_HOST }}
+          LETTA_HARNESS_SSH_PORT: ${{ vars.LETTA_HARNESS_SSH_PORT }}
+          LETTA_HARNESS_SSH_USER: ${{ vars.LETTA_HARNESS_SSH_USER }}
+          HARNESS_RESULT_PATH: ${{ runner.temp }}/letta-harness-${{ inputs.operation }}.txt
+        run: |
+          set -Eeuo pipefail
+          umask 077
+
+          fail() {
+            printf '[letta-harness-relay] ERROR: %s\n' "$1" >&2
+            exit 1
+          }
+
+          [[ -n "${LETTA_HARNESS_SSH_PRIVATE_KEY}" ]] || fail 'restricted private key is missing'
+          [[ -n "${LETTA_HARNESS_SSH_KNOWN_HOSTS}" ]] || fail 'restricted known_hosts is missing'
+          [[ "${LETTA_HARNESS_SSH_HOST}" =~ ^[A-Za-z0-9.-]+$ ]] || fail 'invalid SSH host'
+          [[ "${LETTA_HARNESS_SSH_PORT}" =~ ^[0-9]{1,5}$ ]] || fail 'invalid SSH port'
+          [[ "${LETTA_HARNESS_SSH_USER}" =~ ^[a-z_][a-z0-9_-]*$ ]] || fail 'invalid SSH user'
+          [[ "${HARNESS_RESULT_PATH}" == /* ]] || fail 'result path must be absolute'
+
+          case "${OPERATION}" in
+            preflight) remote_command='letta-harness-preflight-v1' ;;
+            isolated) remote_command='letta-harness-isolated-v1' ;;
+            stage) remote_command='letta-harness-stage-v1' ;;
+            shadow) remote_command='letta-harness-shadow-v1' ;;
+            status) remote_command='letta-harness-status-v1' ;;
+            rollback) remote_command='letta-harness-rollback-v1' ;;
+            *) fail 'operation is not allowlisted' ;;
+          esac
+
+          tmp_dir="$(mktemp -d)"
+          trap 'rm -rf -- "${tmp_dir}"' EXIT
+          key_path="${tmp_dir}/key"
+          known_hosts_path="${tmp_dir}/known_hosts"
+          stdout_path="${tmp_dir}/stdout"
+          stderr_path="${tmp_dir}/stderr"
+
+          printf '%s\n' "${LETTA_HARNESS_SSH_PRIVATE_KEY}" >"${key_path}"
+          printf '%s\n' "${LETTA_HARNESS_SSH_KNOWN_HOSTS}" >"${known_hosts_path}"
+          chmod 0600 "${key_path}" "${known_hosts_path}"
+
+          set +e
+          ssh -p "${LETTA_HARNESS_SSH_PORT}" \
+            -i "${key_path}" \
+            -o IdentitiesOnly=yes \
+            -o BatchMode=yes \
+            -o ConnectTimeout=20 \
+            -o StrictHostKeyChecking=yes \
+            -o "UserKnownHostsFile=${known_hosts_path}" \
+            "${LETTA_HARNESS_SSH_USER}@${LETTA_HARNESS_SSH_HOST}" \
+            "${remote_command}" >"${stdout_path}" 2>"${stderr_path}"
+          rc=$?
+          set -e
+
+          install -m 0600 "${stdout_path}" "${HARNESS_RESULT_PATH}"
+
+          if [[ "${rc}" -ne 0 ]]; then
+            sed -n '1,20p' "${stderr_path}" \
+              | sed -E 's#(/[A-Za-z0-9._-]+){2,}#<path>#g; s/(token|secret|password|key)=[^[:space:]]+/\1=[REDACTED]/gi' >&2
+            fail "restricted ${OPERATION} command failed with exit ${rc}"
+          fi
+
+          [[ "$(sed -n '1p' "${stdout_path}")" == "${remote_command}:ok" ]] \
+            || fail 'remote response was not canonical'
+          grep -Fxq "head=${APPROVED_HEAD}" "${stdout_path}" \
+            || fail 'remote response head did not match approval'
+          cat "${HARNESS_RESULT_PATH}"
+
+      - name: Upload sanitized Harness evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: letta-harness-${{ inputs.operation }}-${{ github.run_id }}
+          path: ${{ runner.temp }}/letta-harness-*.txt
+          if-no-files-found: warn
+          retention-days: 14
