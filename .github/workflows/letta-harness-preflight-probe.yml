@@ -1,0 +1,89 @@
+name: Letta Harness preflight probe
+
+on:
+  pull_request:
+    branches:
+      - main
+    paths:
+      - .github/workflows/letta-harness-preflight-probe.yml
+
+permissions:
+  contents: read
+
+concurrency:
+  group: letta-harness-preflight-probe
+  cancel-in-progress: false
+
+jobs:
+  preflight:
+    if: >-
+      github.event.pull_request.head.repo.full_name == github.repository &&
+      github.event.pull_request.user.login == 'since98kr'
+    runs-on: [self-hosted, linux, x64, chat-staging]
+    environment: staging
+    timeout-minutes: 15
+    steps:
+      - name: Prove restricted enrollment and invoke read-only preflight
+        shell: bash
+        env:
+          APPROVED_HEAD: ${{ vars.LETTA_HARNESS_APPROVED_HEAD }}
+          RESTRICTED_MODE: ${{ vars.LETTA_HARNESS_SSH_RESTRICTED_MODE }}
+          SSH_HOST: ${{ vars.LETTA_HARNESS_SSH_HOST }}
+          SSH_PORT: ${{ vars.LETTA_HARNESS_SSH_PORT }}
+          SSH_USER: ${{ vars.LETTA_HARNESS_SSH_USER }}
+          SSH_PRIVATE_KEY: ${{ secrets.LETTA_HARNESS_SSH_PRIVATE_KEY }}
+          SSH_KNOWN_HOSTS: ${{ secrets.LETTA_HARNESS_SSH_KNOWN_HOSTS }}
+        run: |
+          set -Eeuo pipefail
+          umask 077
+
+          fail() {
+            printf '[letta-harness-preflight-probe] ERROR: %s\n' "$1" >&2
+            exit 1
+          }
+
+          [[ "${RESTRICTED_MODE}" == 'true' ]] || fail 'restricted enrollment is not enabled'
+          [[ "${APPROVED_HEAD}" =~ ^[0-9a-f]{40}$ ]] || fail 'approved head is missing or invalid'
+          [[ -n "${SSH_PRIVATE_KEY}" ]] || fail 'restricted private key is missing'
+          [[ -n "${SSH_KNOWN_HOSTS}" ]] || fail 'restricted known_hosts is missing'
+          [[ "${SSH_HOST}" =~ ^[A-Za-z0-9.-]+$ ]] || fail 'invalid SSH host'
+          [[ "${SSH_PORT}" =~ ^[0-9]{1,5}$ ]] || fail 'invalid SSH port'
+          [[ "${SSH_USER}" =~ ^[a-z_][a-z0-9_-]*$ ]] || fail 'invalid SSH user'
+
+          tmp_dir="$(mktemp -d)"
+          trap 'rm -rf -- "${tmp_dir}"' EXIT
+          key_path="${tmp_dir}/key"
+          known_hosts_path="${tmp_dir}/known_hosts"
+          stdout_path="${tmp_dir}/stdout"
+          stderr_path="${tmp_dir}/stderr"
+
+          printf '%s\n' "${SSH_PRIVATE_KEY}" >"${key_path}"
+          printf '%s\n' "${SSH_KNOWN_HOSTS}" >"${known_hosts_path}"
+          chmod 0600 "${key_path}" "${known_hosts_path}"
+
+          set +e
+          ssh -p "${SSH_PORT}" \
+            -i "${key_path}" \
+            -o IdentitiesOnly=yes \
+            -o BatchMode=yes \
+            -o ConnectTimeout=20 \
+            -o StrictHostKeyChecking=yes \
+            -o "UserKnownHostsFile=${known_hosts_path}" \
+            "${SSH_USER}@${SSH_HOST}" \
+            letta-harness-preflight-v1 >"${stdout_path}" 2>"${stderr_path}"
+          rc=$?
+          set -e
+
+          if [[ "${rc}" -ne 0 ]]; then
+            sed -n '1,20p' "${stderr_path}" \
+              | sed -E 's#(/[A-Za-z0-9._-]+){2,}#<path>#g; s/(token|secret|password|key)=[^[:space:]]+/\1=[REDACTED]/gi' >&2
+            fail "restricted preflight failed with exit ${rc}"
+          fi
+
+          [[ "$(sed -n '1p' "${stdout_path}")" == 'letta-harness-preflight-v1:ok' ]] \
+            || fail 'remote response was not canonical'
+          grep -Fxq "head=${APPROVED_HEAD}" "${stdout_path}" \
+            || fail 'remote response head did not match enrolled approval'
+
+          printf 'letta-harness-preflight-probe:PASS\n'
+          printf 'head=%s\n' "${APPROVED_HEAD}"
