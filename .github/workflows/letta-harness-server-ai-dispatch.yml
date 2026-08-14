@@ -1,0 +1,152 @@
+name: Letta Harness server-AI dispatch
+
+on:
+  push:
+    branches:
+      - test/letta-harness-gateway-probe
+    paths:
+      - .github/workflows/letta-harness-server-ai-dispatch.yml
+
+permissions:
+  contents: read
+
+concurrency:
+  group: letta-harness-server-ai-dispatch
+  cancel-in-progress: false
+
+jobs:
+  dispatch:
+    if: ${{ github.actor == 'since98kr' && github.ref == 'refs/heads/test/letta-harness-gateway-probe' }}
+    runs-on:
+      - self-hosted
+      - linux
+      - x64
+      - chat-staging
+    environment: staging
+    timeout-minutes: 15
+
+    steps:
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - name: Dispatch the GitHub handoff exactly once
+        shell: bash
+        env:
+          OPENCLAW_GATEWAY_BASE_URL: ${{ vars.OPENCLAW_GATEWAY_BASE_URL }}
+          OPENCLAW_GATEWAY_TOKEN: ${{ secrets.OPENCLAW_GATEWAY_TOKEN }}
+          CF_ACCESS_CLIENT_ID: ${{ vars.CF_ACCESS_CLIENT_ID }}
+          CF_ACCESS_CLIENT_SECRET: ${{ secrets.CF_ACCESS_CLIENT_SECRET }}
+          LETTA_OPENCLAW_AGENT_TARGET: ${{ vars.LETTA_OPENCLAW_AGENT_TARGET }}
+          DISPATCH_EVIDENCE_PATH: ${{ runner.temp }}/LETTA-HARNESS-SERVER-AI-DISPATCH-001.json
+        run: |
+          set -euo pipefail
+          umask 077
+          node --input-type=module <<'NODE'
+          import fs from 'node:fs';
+
+          const dispatchId = 'LETTA-HARNESS-SERVER-AI-DISPATCH-001';
+          const handoffId = 'LETTA-HARNESS-LIVE-001';
+          const controlHead = 'bd2287e0b1c4f1564059b9e91298a3712e7bded1';
+          const baseUrl = (process.env.OPENCLAW_GATEWAY_BASE_URL || '').replace(/\/$/, '');
+          const token = process.env.OPENCLAW_GATEWAY_TOKEN || '';
+          const target = process.env.LETTA_OPENCLAW_AGENT_TARGET || '';
+          const outputPath = process.env.DISPATCH_EVIDENCE_PATH;
+          const gatewayUrl = new URL(baseUrl || 'https://invalid.invalid');
+
+          if (gatewayUrl.protocol !== 'https:' || gatewayUrl.hostname !== 'gateway.ailucy.online') {
+            throw new Error('unexpected Gateway endpoint');
+          }
+          if (!token) throw new Error('Gateway credential is unavailable');
+          if (!/^(?:openclaw[/:]|agent:)[A-Za-z0-9._:-]+$/.test(target)) {
+            throw new Error('explicit OpenClaw Lucy target is unavailable');
+          }
+
+          const prompt = [
+            'DISPATCH_ID=' + dispatchId + '.',
+            'This is one exactly-once notification; do not replay it into an active turn.',
+            'Read the canonical GitHub handoff in private repository since98kr/lucy-openclaw-control,',
+            'branch feature/letta-agent-harness, reviewed head ' + controlHead + ',',
+            'path collaboration/handoffs/LETTA-HARNESS-LIVE-001.md.',
+            'Act as the host-capable Letta/OpenClaw operator on hni-node-04.',
+            'Use GitHub as the durable instruction and evidence plane and OpenClaw as the execution fabric.',
+            'Current authorization is limited to dedicated restricted-gate enrollment, preflight, and isolated validation.',
+            'Do not stage the live plugin, restart the live Gateway, switch runtime, cut over, edit adapter.mjs,',
+            'enable Letta-native execution, or weaken permission/approval policy.',
+            'Write the result to collaboration/responses/LETTA-HARNESS-LIVE-001.md on the same control branch.',
+            'If any required GitHub, host, shell, or OpenClaw tool is absent, do not invent a bypass:',
+            'return a short JSON acknowledgement containing dispatchId, status=BLOCKED, allowedTools,',
+            'and the exact missing OpenClaw execution surface. Do not ask Tei to copy command output.'
+          ].join(' ');
+
+          const response = await fetch(baseUrl + '/v1/chat/completions', {
+            method: 'POST',
+            headers: {
+              authorization: 'Bearer ' + token,
+              'content-type': 'application/json',
+              'cf-access-client-id': process.env.CF_ACCESS_CLIENT_ID || '',
+              'cf-access-client-secret': process.env.CF_ACCESS_CLIENT_SECRET || '',
+              'x-openclaw-session-key':
+                'github-handoff:' + handoffId + ':' + controlHead + ':run-' + process.env.GITHUB_RUN_ID
+            },
+            body: JSON.stringify({
+              model: target,
+              stream: false,
+              messages: [{ role: 'user', content: prompt }]
+            }),
+            signal: AbortSignal.timeout(600000)
+          });
+
+          let payload = null;
+          try {
+            payload = await response.json();
+          } catch {}
+
+          let reply = payload?.choices?.[0]?.message?.content;
+          if (Array.isArray(reply)) {
+            reply = reply.map((part) => typeof part === 'string' ? part : part?.text || '').join('');
+          }
+          if (typeof reply !== 'string') reply = '';
+
+          const safeReply = reply
+            .replace(/(bearer|token|secret|password|api[_-]?key)\s*[:=]\s*\S+/gi, '$1=[REDACTED]')
+            .replace(/(gh[pousr]_[A-Za-z0-9_]+|github_pat_[A-Za-z0-9_]+|sk-[A-Za-z0-9_-]+)/g, '[REDACTED]')
+            .replace(/\/(?:home|root|opt|srv|var)\/[A-Za-z0-9_./-]+/g, '<private-path>')
+            .slice(0, 5000);
+
+          const evidence = {
+            evidence: dispatchId,
+            generatedAt: new Date().toISOString(),
+            handoffId,
+            controlHead,
+            target,
+            httpStatus: response.status,
+            responseReceived: Boolean(reply),
+            dispatchAcknowledged: reply.includes(dispatchId) || reply.includes(handoffId),
+            response: safeReply || null,
+            secretsPrinted: false,
+            hostMutationRequestedBeyondAuthorization: false
+          };
+          fs.writeFileSync(outputPath, JSON.stringify(evidence, null, 2) + '\n', { mode: 0o600 });
+          console.log(JSON.stringify({
+            evidence: evidence.evidence,
+            handoffId: evidence.handoffId,
+            controlHead: evidence.controlHead,
+            target: evidence.target,
+            httpStatus: evidence.httpStatus,
+            responseReceived: evidence.responseReceived,
+            dispatchAcknowledged: evidence.dispatchAcknowledged
+          }));
+
+          if (!response.ok || !reply) process.exit(1);
+          NODE
+
+      - name: Upload sanitized dispatch evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: letta-harness-server-ai-dispatch-${{ github.run_id }}
+          path: ${{ runner.temp }}/LETTA-HARNESS-SERVER-AI-DISPATCH-001.json
+          if-no-files-found: error
+          retention-days: 14
