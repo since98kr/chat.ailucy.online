@@ -25,13 +25,23 @@ jobs:
 
           active="$(systemctl is-active hermes-gateway.service 2>/dev/null || true)"
           enabled="$(systemctl is-enabled hermes-gateway.service 2>/dev/null || true)"
+          load_state="$(systemctl show hermes-gateway.service -p LoadState --value 2>/dev/null || true)"
+          sub_state="$(systemctl show hermes-gateway.service -p SubState --value 2>/dev/null || true)"
+          result_state="$(systemctl show hermes-gateway.service -p Result --value 2>/dev/null || true)"
+          main_pid="$(systemctl show hermes-gateway.service -p MainPID --value 2>/dev/null || true)"
+          exec_status="$(systemctl show hermes-gateway.service -p ExecMainStatus --value 2>/dev/null || true)"
+          exec_code="$(systemctl show hermes-gateway.service -p ExecMainCode --value 2>/dev/null || true)"
+          restart_count="$(systemctl show hermes-gateway.service -p NRestarts --value 2>/dev/null || true)"
           unit_user="$(systemctl show hermes-gateway.service -p User --value 2>/dev/null || true)"
           fragment_path="$(systemctl show hermes-gateway.service -p FragmentPath --value 2>/dev/null || true)"
-          load_state="$(systemctl show hermes-gateway.service -p LoadState --value 2>/dev/null || true)"
 
-          python3 - <<'PY' "$unit" "$active" "$enabled" "$unit_user" "$fragment_path" "$load_state"
+          python3 - <<'PY' "$unit" "$active" "$enabled" "$load_state" "$sub_state" "$result_state" "$main_pid" "$exec_status" "$exec_code" "$restart_count" "$unit_user" "$fragment_path"
           import json, pathlib, socket, sys
-          unit, active, enabled, unit_user, fragment_path, load_state = sys.argv[1:]
+          (
+              unit, active, enabled, load_state, sub_state, result_state,
+              main_pid, exec_status, exec_code, restart_count, unit_user,
+              fragment_path
+          ) = sys.argv[1:]
           s = socket.socket()
           s.settimeout(1)
           try:
@@ -43,6 +53,12 @@ jobs:
               'systemdLoadState': load_state or None,
               'serviceActiveState': active or None,
               'serviceEnabledState': enabled or None,
+              'serviceSubState': sub_state or None,
+              'serviceResult': result_state or None,
+              'mainPidPositive': bool(main_pid.isdigit() and int(main_pid) > 0),
+              'execMainStatus': int(exec_status) if exec_status.isdigit() else None,
+              'execMainCode': exec_code or None,
+              'restartCount': int(restart_count) if restart_count.isdigit() else None,
               'serviceUserConfigured': bool(unit_user),
               'fragmentMatchesExpected': fragment_path == unit,
               'loopback8642Open': port_open,
