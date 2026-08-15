@@ -10,9 +10,11 @@ on:
       - server/copilot-relay-mcp.test.ts
       - server/runtime.ts
       - scripts/aicos-copilot-relay-broker-sync.mjs
+      - scripts/ops/publish-copilot-relay-cloudflare.sh
       - tests/aicos-copilot-relay-sync.contract.mjs
       - .github/workflows/aicos-copilot-relay-source-test.yml
       - .github/workflows/aicos-copilot-relay-broker-sync.yml
+      - .github/workflows/publish-copilot-relay-cloudflare.yml
   pull_request:
     paths:
       - server/copilot-relay-mcp.ts
@@ -20,9 +22,11 @@ on:
       - server/copilot-relay-mcp.test.ts
       - server/runtime.ts
       - scripts/aicos-copilot-relay-broker-sync.mjs
+      - scripts/ops/publish-copilot-relay-cloudflare.sh
       - tests/aicos-copilot-relay-sync.contract.mjs
       - .github/workflows/aicos-copilot-relay-source-test.yml
       - .github/workflows/aicos-copilot-relay-broker-sync.yml
+      - .github/workflows/publish-copilot-relay-cloudflare.yml
 
 permissions:
   contents: read
@@ -40,4 +44,5 @@ jobs:
         run: |
           node --check scripts/aicos-copilot-relay-broker-sync.mjs
           node --test tests/aicos-copilot-relay-sync.contract.mjs
+          bash -n scripts/ops/publish-copilot-relay-cloudflare.sh
           git diff --check
