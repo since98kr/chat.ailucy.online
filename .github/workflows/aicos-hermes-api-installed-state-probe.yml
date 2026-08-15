@@ -22,23 +22,16 @@ jobs:
         run: |
           set -Eeuo pipefail
           unit=/etc/systemd/system/hermes-gateway.service
-          hermes_bin="$HOME/.hermes/hermes-agent/venv/bin/hermes"
-          env_file="$HOME/.hermes/.env"
 
-          active=unknown
-          enabled=unknown
-          sudo_readable=false
-          if sudo -n true >/dev/null 2>&1; then
-            sudo_readable=true
-            if sudo -n systemctl is-active --quiet hermes-gateway.service; then active=true; else active=false; fi
-            if sudo -n systemctl is-enabled --quiet hermes-gateway.service >/dev/null 2>&1; then enabled=true; else enabled=false; fi
-          fi
+          active="$(systemctl is-active hermes-gateway.service 2>/dev/null || true)"
+          enabled="$(systemctl is-enabled hermes-gateway.service 2>/dev/null || true)"
+          unit_user="$(systemctl show hermes-gateway.service -p User --value 2>/dev/null || true)"
+          fragment_path="$(systemctl show hermes-gateway.service -p FragmentPath --value 2>/dev/null || true)"
+          load_state="$(systemctl show hermes-gateway.service -p LoadState --value 2>/dev/null || true)"
 
-          python3 - <<'PY' "$unit" "$hermes_bin" "$env_file" "$active" "$enabled" "$sudo_readable"
-          import json, os, pathlib, socket, sys
-          unit, hermes_bin, env_file, active, enabled, sudo_readable = sys.argv[1:]
-          def b(v):
-              return True if v == 'true' else False if v == 'false' else None
+          python3 - <<'PY' "$unit" "$active" "$enabled" "$unit_user" "$fragment_path" "$load_state"
+          import json, pathlib, socket, sys
+          unit, active, enabled, unit_user, fragment_path, load_state = sys.argv[1:]
           s = socket.socket()
           s.settimeout(1)
           try:
@@ -47,12 +40,13 @@ jobs:
               s.close()
           print(json.dumps({
               'unitExists': pathlib.Path(unit).is_file(),
-              'hermesExecutableExistsForRunnerUser': pathlib.Path(hermes_bin).is_file(),
-              'envFileExistsForRunnerUser': pathlib.Path(env_file).is_file(),
-              'serviceActive': b(active),
-              'serviceEnabled': b(enabled),
-              'sudoReadOnlyProbeAvailable': b(sudo_readable),
+              'systemdLoadState': load_state or None,
+              'serviceActiveState': active or None,
+              'serviceEnabledState': enabled or None,
+              'serviceUserConfigured': bool(unit_user),
+              'fragmentMatchesExpected': fragment_path == unit,
               'loopback8642Open': port_open,
+              'unitContentsRead': False,
               'envContentsRead': False,
               'secretValuePrinted': False,
               'mutationPerformed': False
