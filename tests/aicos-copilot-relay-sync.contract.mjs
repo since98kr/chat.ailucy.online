@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
 import test from 'node:test';
 import { fromCopilotBridgeResponse, toCopilotBridgeRequest, validateBrokerBaseUrl } from '../scripts/aicos-copilot-relay-broker-sync.mjs';
 
@@ -18,6 +19,16 @@ function work(overrides = {}) {
 
 test('canonical broker URL is always accepted', () => {
   assert.equal(validateBrokerBaseUrl('https://relay.ailucy.online'), 'https://relay.ailucy.online');
+});
+
+test('broker sync workflow pins the stable canonical hostname', () => {
+  const workflow = readFileSync(
+    new URL('../.github/workflows/aicos-copilot-relay-broker-sync.yml', import.meta.url),
+    'utf8',
+  );
+  assert.match(workflow, /COPILOT_RELAY_BROKER_URL:\s*https:\/\/relay\.ailucy\.online/);
+  assert.doesNotMatch(workflow, /\.trycloudflare\.com/i);
+  assert.doesNotMatch(workflow, /COPILOT_RELAY_ALLOW_QUICK_TUNNEL/);
 });
 
 test('Quick Tunnel broker URL requires an explicit temporary gate', () => {
