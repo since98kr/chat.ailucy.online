@@ -42,11 +42,14 @@ export function validateBrokerBaseUrl(raw, { allowQuickTunnel = false } = {}) {
 function config() {
   const repo = process.env.GITHUB_REPOSITORY || 'since98kr/chat.ailucy.online';
   const token = process.env.GITHUB_TOKEN || '';
+  const accessClientId = process.env.CF_ACCESS_CLIENT_ID || '';
+  const accessClientSecret = process.env.CF_ACCESS_CLIENT_SECRET || '';
   assert(repo === 'since98kr/chat.ailucy.online', 'INVALID_RELAY_REPO', repo);
   assert(token, 'MISSING_GITHUB_TOKEN', 'GITHUB_TOKEN required');
+  assert(accessClientId && accessClientSecret, 'MISSING_CF_ACCESS_SERVICE_TOKEN', 'Cloudflare Access service token required');
   const allowQuickTunnel = process.env.COPILOT_RELAY_ALLOW_QUICK_TUNNEL === 'true';
   const brokerBase = validateBrokerBaseUrl(BROKER_BASE, { allowQuickTunnel });
-  return { repo, token, brokerBase };
+  return { repo, token, brokerBase, accessClientId, accessClientSecret };
 }
 
 async function githubRequest(cfg, path, options = {}) {
@@ -93,8 +96,11 @@ async function oidcToken() {
 async function brokerRequest(cfg, oidc, path, options = {}) {
   const response = await fetch(`${cfg.brokerBase}${path}`, {
     ...options,
+    redirect: 'manual',
     headers: {
       authorization: `Bearer ${oidc}`,
+      'cf-access-client-id': cfg.accessClientId,
+      'cf-access-client-secret': cfg.accessClientSecret,
       accept: 'application/json',
       ...(options.body ? { 'content-type': 'application/json' } : {}),
       ...(options.headers || {}),
@@ -104,7 +110,10 @@ async function brokerRequest(cfg, oidc, path, options = {}) {
     const text = await response.text().catch(() => '');
     fail('BROKER_REQUEST_FAILED', `${response.status} ${path} ${text.slice(0, 300)}`);
   }
-  return response.status === 204 ? null : response.json();
+  if (response.status === 204) return null;
+  const contentType = response.headers.get('content-type') || '';
+  assert(contentType.includes('application/json'), 'BROKER_RESPONSE_INVALID', `${response.status} ${path} ${contentType || '<missing>'}`);
+  return response.json();
 }
 
 export function toCopilotBridgeRequest(workOrder, { now = Date.now() } = {}) {
