@@ -2,138 +2,140 @@
 set -Eeuo pipefail
 
 HOSTNAME="${COPILOT_RELAY_HOSTNAME:-relay.ailucy.online}"
-SERVICE_URL="${COPILOT_RELAY_SERVICE_URL:-http://127.0.0.1:14174}"
-LOCAL_HEALTH_URL="${SERVICE_URL%/}/api/health"
-CLOUDFLARED_UNIT="${CLOUDFLARED_SERVICE:-cloudflared.service}"
-CONFIG_PATH="${CLOUDFLARED_CONFIG:-}"
-BACKUP_PATH=""
-CONFIG_CHANGED=0
-RESTARTED=0
+SERVICE_URL="${COPILOT_RELAY_SERVICE_URL:-http://127.0.0.1:14175}"
+TUNNEL_NAME="${COPILOT_RELAY_TUNNEL_NAME:-copilot-relay-ailucy-online}"
+CONTAINER_NAME="${COPILOT_RELAY_CONTAINER_NAME:-copilot-relay-cloudflared}"
+CLOUDFLARED_HOME="${CLOUDFLARED_HOME:-${HOME}/.cloudflared}"
+CONFIG_PATH="${COPILOT_RELAY_CONFIG:-${CLOUDFLARED_HOME}/copilot-relay-config.yml}"
+IMAGE="${CLOUDFLARED_IMAGE:-cloudflare/cloudflared:latest}"
 TMP_DIR="$(mktemp -d)"
 
 log() { printf '[copilot-relay-cloudflare] %s\n' "$*"; }
-fail() { log "ERROR: $*"; return 1; }
+fail() { log "BLOCKED: $*"; exit 1; }
 cleanup() { rm -rf "${TMP_DIR}"; }
-rollback() {
-  local status=$?
-  trap - ERR
-  if [[ "${CONFIG_CHANGED}" == '1' && -n "${BACKUP_PATH}" && -f "${BACKUP_PATH}" ]]; then
-    log 'Publishing failed. Restoring previous cloudflared configuration.'
-    sudo cp -a "${BACKUP_PATH}" "${CONFIG_PATH}"
-    sudo systemctl restart "${CLOUDFLARED_UNIT}" || true
-  elif [[ "${RESTARTED}" == '1' ]]; then
-    log 'Publishing failed after cloudflared restart; configuration was unchanged by this run.'
-  fi
-  exit "${status}"
-}
 trap cleanup EXIT
-trap rollback ERR
 
-for command in curl python3 systemctl cloudflared; do
+for command in cloudflared curl docker getent python3; do
   command -v "${command}" >/dev/null || fail "Required command is missing: ${command}"
 done
 [[ "${HOSTNAME}" =~ ^[A-Za-z0-9.-]+$ ]] || fail 'Invalid relay hostname.'
-[[ "${SERVICE_URL}" == http://127.0.0.1:* ]] || fail 'Relay service must be the loopback staging service.'
+[[ "${SERVICE_URL}" == 'http://127.0.0.1:14175' ]] || fail 'Relay service must be the bounded loopback proxy on 127.0.0.1:14175.'
+[[ -r "${CLOUDFLARED_HOME}/cert.pem" ]] || fail 'Cloudflare account certificate is not readable.'
+docker info >/dev/null 2>&1 || fail 'Docker is unavailable to the staging runner.'
 
-log 'Checking staging runtime before publishing relay hostname.'
-LOCAL_HEALTH="$(curl --fail --silent --show-error --max-time 10 "${LOCAL_HEALTH_URL}")"
-python3 -c 'import json,sys; data=json.load(sys.stdin); raise SystemExit(0 if data.get("ok") else 1)' <<<"${LOCAL_HEALTH}" \
-  || fail 'Local staging health is not OK.'
+probe() {
+  local url="$1" prefix="$2" status
+  : >"${TMP_DIR}/${prefix}.headers"
+  : >"${TMP_DIR}/${prefix}.body"
+  status="$(curl --silent --show-error --connect-timeout 5 --max-time 12 \
+    --dump-header "${TMP_DIR}/${prefix}.headers" \
+    --output "${TMP_DIR}/${prefix}.body" \
+    --write-out '%{http_code}' "${url}" 2>/dev/null || printf '000')"
+  printf '%s' "${status}"
+}
 
-sudo -v
-UNIT_TEXT="$(sudo systemctl cat "${CLOUDFLARED_UNIT}")"
-if [[ -z "${CONFIG_PATH}" ]]; then
-  CONFIG_PATH="$(python3 -c '
-import re,sys
-text=sys.stdin.read()
-matches=re.findall(r"--config(?:=|\\s+)(?:\"([^\"]+)\"|\\x27([^\\x27]+)\\x27|(\\S+))", text)
-if matches: print(next(value for value in reversed(matches[-1]) if value))
-' <<<"${UNIT_TEXT}")"
+log 'Verifying the bounded local MCP proxy before Cloudflare changes.'
+LOCAL_STATUS="$(probe "${SERVICE_URL%/}/mcp/copilot-relay" local)"
+[[ "${LOCAL_STATUS}" == '401' ]] || fail "Expected local HTTP 401, got ${LOCAL_STATUS}."
+grep -Fq 'MCP_AUTHENTICATION_REQUIRED' "${TMP_DIR}/local.body" \
+  || fail 'Local proxy did not return MCP_AUTHENTICATION_REQUIRED.'
+
+PUBLIC_STATUS="$(probe "https://${HOSTNAME}/mcp/copilot-relay" public)"
+if [[ "${PUBLIC_STATUS}" == '401' ]] && grep -Fq 'MCP_AUTHENTICATION_REQUIRED' "${TMP_DIR}/public.body"; then
+  log "PASS: dedicated https://${HOSTNAME}/mcp/copilot-relay already reaches the application authentication boundary."
+  exit 0
 fi
-if [[ -z "${CONFIG_PATH}" ]]; then
-  if grep -Eq -- '--token|TUNNEL_TOKEN' <<<"${UNIT_TEXT}"; then
-    fail 'cloudflared is remotely managed; refusing to invent a local ingress change.'
-  fi
-  for candidate in /etc/cloudflared/config.yml /etc/cloudflared/config.yaml "${HOME}/.cloudflared/config.yml" "${HOME}/.cloudflared/config.yaml"; do
-    [[ -f "${candidate}" ]] && { CONFIG_PATH="${candidate}"; break; }
-  done
+
+if getent ahosts "${HOSTNAME}" >/dev/null 2>&1; then
+  fail "${HOSTNAME} already resolves but does not return the required application 401; refusing to overwrite existing DNS or route state."
 fi
-[[ -n "${CONFIG_PATH}" && -f "${CONFIG_PATH}" ]] || fail 'Could not find locally managed cloudflared config.'
 
-TIMESTAMP="$(date -u +'%Y%m%dT%H%M%SZ')"
-BACKUP_PATH="${CONFIG_PATH}.copilot-relay-backup.${TIMESTAMP}"
-sudo cp -a "${CONFIG_PATH}" "${BACKUP_PATH}"
-log "Configuration backup created: ${BACKUP_PATH}"
-
-EDIT_RESULT="$(sudo python3 - "${CONFIG_PATH}" "${HOSTNAME}" "${SERVICE_URL}" <<'PY'
-import os,re,sys
-path,hostname,service=sys.argv[1:]
-lines=open(path,encoding='utf-8').readlines()
-host_re=re.compile(r'^\s*-?\s*hostname:\s*["\x27]?([^"\x27#\s]+)')
-for i,line in enumerate(lines):
-    m=host_re.match(line)
-    if not m or m.group(1)!=hostname: continue
-    block=''.join(lines[i:i+6])
-    s=re.search(r'^\s*service:\s*["\x27]?([^"\x27#\s]+)',block,re.MULTILINE)
-    if s and s.group(1)==service:
-        print('unchanged'); raise SystemExit(0)
-    raise SystemExit(f'Existing hostname {hostname} points elsewhere; refusing overwrite.')
-ingress=next((i for i,line in enumerate(lines) if re.match(r'^\s*ingress:\s*(?:#.*)?$',line)),None)
-if ingress is None: raise SystemExit('ingress section not found')
-catch=None; indent=None
-for i in range(ingress+1,len(lines)):
-    m=re.match(r'^(\s*)-\s*service:\s*["\x27]?http_status:',lines[i])
-    if m: catch=i; indent=m.group(1); break
-if catch is None: raise SystemExit('final http_status catch-all not found')
-lines[catch:catch]=[f'{indent}- hostname: {hostname}\n',f'{indent}  service: {service}\n']
-st=os.stat(path); tmp=f'{path}.copilot-relay-tmp-{os.getpid()}'
-with open(tmp,'w',encoding='utf-8') as h: h.writelines(lines)
-os.chmod(tmp,st.st_mode); os.chown(tmp,st.st_uid,st.st_gid); os.replace(tmp,path)
-print('changed')
+mkdir -p "${CLOUDFLARED_HOME}"
+TUNNELS_JSON="${TMP_DIR}/tunnels.json"
+cloudflared tunnel list --output json >"${TUNNELS_JSON}"
+TUNNEL_ID="$(python3 - "${TUNNELS_JSON}" "${TUNNEL_NAME}" <<'PY'
+import json,sys
+items=json.load(open(sys.argv[1],encoding='utf-8'))
+matches=[str(item.get('id') or item.get('uuid') or '') for item in items if item.get('name')==sys.argv[2] and not item.get('deleted_at')]
+if len(matches)>1: raise SystemExit('duplicate dedicated tunnel names')
+print(matches[0] if matches else '')
 PY
-)"
-if [[ "${EDIT_RESULT}" == 'changed' ]]; then CONFIG_CHANGED=1; log "Added ${HOSTNAME} -> ${SERVICE_URL}."; else log 'Relay ingress already present.'; fi
+)" || fail 'Could not resolve dedicated tunnel state.'
 
-sudo cloudflared tunnel --config "${CONFIG_PATH}" ingress validate >/dev/null
-RULE_OUTPUT="$(sudo cloudflared tunnel --config "${CONFIG_PATH}" ingress rule "https://${HOSTNAME}")"
-grep -Fq "${SERVICE_URL}" <<<"${RULE_OUTPUT}" || fail 'Relay hostname did not match staging service.'
-TUNNEL_ID="$(sudo python3 - "${CONFIG_PATH}" <<'PY'
-import re,sys
-text=open(sys.argv[1],encoding='utf-8').read()
-m=re.search(r'^\s*tunnel:\s*["\x27]?([^"\x27#\s]+)',text,re.MULTILINE)
-if m: print(m.group(1))
+if [[ -z "${TUNNEL_ID}" ]]; then
+  log "Creating dedicated named Tunnel ${TUNNEL_NAME}."
+  CREATE_OUTPUT="$(cloudflared tunnel create "${TUNNEL_NAME}")"
+  cloudflared tunnel list --output json >"${TUNNELS_JSON}"
+  TUNNEL_ID="$(python3 - "${TUNNELS_JSON}" "${TUNNEL_NAME}" <<'PY'
+import json,sys
+items=json.load(open(sys.argv[1],encoding='utf-8'))
+matches=[str(item.get('id') or item.get('uuid') or '') for item in items if item.get('name')==sys.argv[2] and not item.get('deleted_at')]
+if len(matches)!=1: raise SystemExit('dedicated tunnel was not uniquely created')
+print(matches[0])
 PY
-)"
-[[ -n "${TUNNEL_ID}" ]] || fail 'Tunnel id not found.'
-
-set +e
-DNS_OUTPUT="$(sudo cloudflared tunnel route dns "${TUNNEL_ID}" "${HOSTNAME}" 2>&1)"
-DNS_STATUS=$?
-set -e
-if [[ "${DNS_STATUS}" -ne 0 ]] && ! getent ahosts "${HOSTNAME}" >/dev/null 2>&1; then
-  printf '%s\n' "${DNS_OUTPUT}" >&2
-  fail 'Could not create or confirm relay DNS route.'
+)" || fail 'Dedicated tunnel creation could not be confirmed.'
+else
+  log "Reusing independently named relay Tunnel ${TUNNEL_NAME}."
 fi
 
-log 'Restarting cloudflared after validated non-destructive ingress change.'
-sudo systemctl restart "${CLOUDFLARED_UNIT}"
-RESTARTED=1
-sudo systemctl is-active --quiet "${CLOUDFLARED_UNIT}" || fail 'cloudflared did not return active.'
+CREDS_PATH="${CLOUDFLARED_HOME}/${TUNNEL_ID}.json"
+[[ -r "${CREDS_PATH}" ]] || fail 'Dedicated tunnel exists but its credentials are unavailable; refusing unrelated tunnel reuse.'
 
-log 'Verifying public relay reaches MCP authentication boundary without Cloudflare Access redirect.'
-HEADERS="${TMP_DIR}/headers"; BODY="${TMP_DIR}/body"; STATUS='000'
+umask 077
+CONFIG_TMP="${TMP_DIR}/config.yml"
+printf 'tunnel: %s\ncredentials-file: /etc/cloudflared/credentials.json\ningress:\n  - hostname: %s\n    service: %s\n  - service: http_status:404\n' \
+  "${TUNNEL_ID}" "${HOSTNAME}" "${SERVICE_URL}" >"${CONFIG_TMP}"
+cloudflared tunnel --config "${CONFIG_TMP}" ingress validate >/dev/null
+install -m 600 "${CONFIG_TMP}" "${CONFIG_PATH}"
+
+if docker container inspect "${CONTAINER_NAME}" >/dev/null 2>&1; then
+  EXISTING_ROLE="$(docker inspect --format '{{ index .Config.Labels "online.ailucy.role" }}' "${CONTAINER_NAME}" 2>/dev/null || true)"
+  EXISTING_TUNNEL="$(docker inspect --format '{{ index .Config.Labels "online.ailucy.tunnel" }}' "${CONTAINER_NAME}" 2>/dev/null || true)"
+  [[ "${EXISTING_ROLE}" == 'copilot-relay' && "${EXISTING_TUNNEL}" == "${TUNNEL_ID}" ]] \
+    || fail "Container name ${CONTAINER_NAME} is owned by another service; refusing replacement."
+  log 'Restarting the independently owned relay connector.'
+  docker restart "${CONTAINER_NAME}" >/dev/null
+else
+  log 'Starting the dedicated relay connector without changing existing cloudflared services.'
+  docker run --detach \
+    --name "${CONTAINER_NAME}" \
+    --restart unless-stopped \
+    --network host \
+    --user "$(id -u):$(id -g)" \
+    --label online.ailucy.role=copilot-relay \
+    --label "online.ailucy.tunnel=${TUNNEL_ID}" \
+    --volume "${CONFIG_PATH}:/etc/cloudflared/config.yml:ro" \
+    --volume "${CREDS_PATH}:/etc/cloudflared/credentials.json:ro" \
+    "${IMAGE}" tunnel --no-autoupdate --config /etc/cloudflared/config.yml run >/dev/null
+fi
+
+for _attempt in $(seq 1 20); do
+  docker container inspect --format '{{.State.Running}}' "${CONTAINER_NAME}" 2>/dev/null | grep -Fxq true && break
+  sleep 1
+done
+docker container inspect --format '{{.State.Running}}' "${CONTAINER_NAME}" 2>/dev/null | grep -Fxq true \
+  || fail 'Dedicated relay connector did not remain running.'
+
+log 'Creating the relay DNS route without overwrite permission.'
+DNS_OUTPUT="$(cloudflared tunnel route dns "${TUNNEL_ID}" "${HOSTNAME}" 2>&1)" \
+  || fail "DNS route creation failed; existing records were not overwritten. ${DNS_OUTPUT}"
+
+STATUS='000'
 for _attempt in $(seq 1 30); do
-  : >"${HEADERS}"; : >"${BODY}"
-  STATUS="$(curl --silent --show-error --connect-timeout 5 --max-time 12 --dump-header "${HEADERS}" --output "${BODY}" --write-out '%{http_code}' "https://${HOSTNAME}/mcp/copilot-relay" 2>/dev/null || printf '000')"
-  [[ "${STATUS}" != '000' ]] && break
+  STATUS="$(probe "https://${HOSTNAME}/mcp/copilot-relay" final)"
+  if [[ "${STATUS}" == '401' ]] && grep -Fq 'MCP_AUTHENTICATION_REQUIRED' "${TMP_DIR}/final.body"; then
+    break
+  fi
   sleep 2
 done
-if [[ "${STATUS}" == '302' || "${STATUS}" == '301' || "${STATUS}" == '303' || "${STATUS}" == '307' || "${STATUS}" == '308' ]]; then
-  LOCATION="$(awk 'BEGIN{IGNORECASE=1} /^location:/{sub(/^[^:]+:[[:space:]]*/,""); sub(/\r$/,""); print; exit}' "${HEADERS}")"
-  [[ "${LOCATION}" != *'cloudflareaccess.com'* && "${LOCATION}" != *'/cdn-cgi/access/login'* ]] || fail 'Cloudflare Access intercepts relay hostname; Copilot API-key MCP would be unreachable.'
-fi
-[[ "${STATUS}" == '401' ]] || { cat "${BODY}" >&2 || true; fail "Expected MCP authentication boundary HTTP 401, got ${STATUS}."; }
-grep -Fq 'MCP_AUTHENTICATION_REQUIRED' "${BODY}" || fail 'Public relay response was not the expected MCP auth boundary.'
 
-trap - ERR
-log "PASS: https://${HOSTNAME}/mcp/copilot-relay reaches staging MCP and is protected by its own API-key boundary."
+if [[ "${STATUS}" =~ ^30[12378]$ ]]; then
+  LOCATION="$(awk 'BEGIN{IGNORECASE=1} /^location:/{sub(/^[^:]+:[[:space:]]*/,""); sub(/\r$/,""); print; exit}' "${TMP_DIR}/final.headers")"
+  [[ "${LOCATION}" != *'cloudflareaccess.com'* && "${LOCATION}" != *'/cdn-cgi/access/login'* ]] \
+    || fail 'Cloudflare Access intercepts the MCP API-key endpoint.'
+fi
+[[ "${STATUS}" == '401' ]] || fail "Expected public HTTP 401, got ${STATUS}."
+grep -Fq 'MCP_AUTHENTICATION_REQUIRED' "${TMP_DIR}/final.body" \
+  || fail 'Public response did not contain MCP_AUTHENTICATION_REQUIRED.'
+
+log "PASS: dedicated https://${HOSTNAME}/mcp/copilot-relay returned HTTP 401 with MCP_AUTHENTICATION_REQUIRED; unrelated Cloudflare state changed=false."
