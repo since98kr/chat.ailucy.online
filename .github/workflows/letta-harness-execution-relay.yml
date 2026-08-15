@@ -56,38 +56,46 @@ jobs:
           COMMENT_BODY: ${{ github.event.comment.body }}
         run: |
           set -Eeuo pipefail
-          node <<'NODE'
-          const fs = require("node:fs");
-
-          let operation;
-          let approvedHead;
-          let confirmation = "";
-          if (process.env.EVENT_NAME === "workflow_dispatch") {
-            operation = process.env.INPUT_OPERATION ?? "";
-            approvedHead = process.env.INPUT_APPROVED_HEAD ?? "";
-            confirmation = process.env.INPUT_CONFIRMATION ?? "";
-          } else if (process.env.EVENT_NAME === "issue_comment") {
-            const match = (process.env.COMMENT_BODY ?? "").trim().match(
-              /^\/letta-harness (preflight|isolated|stage|shadow|cutover|status|rollback) ([0-9a-f]{40})(?: (STAGE_OPENCLAW_HARNESS|CUTOVER_LETTA_HARNESS|ROLLBACK_OPENCLAW_HARNESS))?$/,
-            );
-            if (!match) throw new Error("invalid restricted Harness command");
-            [, operation, approvedHead, confirmation = ""] = match;
-          } else {
-            throw new Error("unsupported event");
+          fail() {
+            printf '[letta-harness-relay] ERROR: %s\n' "$1" >&2
+            exit 1
           }
 
-          if (!/^[0-9a-f]{40}$/.test(approvedHead)) throw new Error("invalid approved head");
-          const expectedConfirmation = {
-            stage: "STAGE_OPENCLAW_HARNESS",
-            cutover: "CUTOVER_LETTA_HARNESS",
-            rollback: "ROLLBACK_OPENCLAW_HARNESS",
-          }[operation] ?? "";
-          if (confirmation !== expectedConfirmation) throw new Error("invalid operation confirmation");
-          fs.appendFileSync(
-            process.env.GITHUB_OUTPUT,
-            `operation=${operation}\napproved_head=${approvedHead}\nconfirmation=${confirmation}\n`,
-          );
-          NODE
+          operation=''
+          approved_head=''
+          confirmation=''
+          case "${EVENT_NAME}" in
+            workflow_dispatch)
+              operation="${INPUT_OPERATION}"
+              approved_head="${INPUT_APPROVED_HEAD}"
+              confirmation="${INPUT_CONFIRMATION}"
+              ;;
+            issue_comment)
+              command_pattern='^/letta-harness (preflight|isolated|stage|shadow|cutover|status|rollback) ([0-9a-f]{40})( (STAGE_OPENCLAW_HARNESS|CUTOVER_LETTA_HARNESS|ROLLBACK_OPENCLAW_HARNESS))?$'
+              [[ "${COMMENT_BODY}" =~ ${command_pattern} ]] || fail 'invalid restricted Harness command'
+              operation="${BASH_REMATCH[1]}"
+              approved_head="${BASH_REMATCH[2]}"
+              confirmation="${BASH_REMATCH[4]:-}"
+              ;;
+            *) fail 'unsupported event' ;;
+          esac
+
+          [[ "${approved_head}" =~ ^[0-9a-f]{40}$ ]] || fail 'invalid approved head'
+          expected_confirmation=''
+          case "${operation}" in
+            stage) expected_confirmation='STAGE_OPENCLAW_HARNESS' ;;
+            cutover) expected_confirmation='CUTOVER_LETTA_HARNESS' ;;
+            rollback) expected_confirmation='ROLLBACK_OPENCLAW_HARNESS' ;;
+            preflight|isolated|shadow|status) ;;
+            *) fail 'invalid operation' ;;
+          esac
+          [[ "${confirmation}" == "${expected_confirmation}" ]] || fail 'invalid operation confirmation'
+
+          {
+            printf 'operation=%s\n' "${operation}"
+            printf 'approved_head=%s\n' "${approved_head}"
+            printf 'confirmation=%s\n' "${confirmation}"
+          } >>"${GITHUB_OUTPUT}"
 
       - name: Validate immutable request and enrollment
         shell: bash
