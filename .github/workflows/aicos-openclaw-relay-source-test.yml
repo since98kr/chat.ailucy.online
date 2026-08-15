@@ -7,14 +7,14 @@ on:
     paths:
       - scripts/aicos-relay-v1.mjs
       - scripts/aicos-openclaw-relay-handler.mjs
-      - tests/aicos-relay-v1.test.mjs
+      - tests/aicos-relay-v1.contract.mjs
       - .github/workflows/aicos-openclaw-relay-source-test.yml
       - .github/workflows/aicos-openclaw-relay.yml
   pull_request:
     paths:
       - scripts/aicos-relay-v1.mjs
       - scripts/aicos-openclaw-relay-handler.mjs
-      - tests/aicos-relay-v1.test.mjs
+      - tests/aicos-relay-v1.contract.mjs
       - .github/workflows/aicos-openclaw-relay-source-test.yml
       - .github/workflows/aicos-openclaw-relay.yml
 
@@ -35,6 +35,6 @@ jobs:
           node --check scripts/aicos-relay-v1.mjs
           node --check scripts/aicos-openclaw-relay-handler.mjs
       - name: Relay contract tests
-        run: node --test tests/aicos-relay-v1.test.mjs
+        run: node --test tests/aicos-relay-v1.contract.mjs
       - name: Diff check
         run: git diff --check

@@ -36,7 +36,7 @@ jobs:
         run: |
           node --check scripts/aicos-relay-v1.mjs
           node --check scripts/aicos-openclaw-relay-handler.mjs
-          node --test tests/aicos-relay-v1.test.mjs
+          node --test tests/aicos-relay-v1.contract.mjs
       - name: Process relay event or recover durable mailbox
         env:
           GITHUB_TOKEN: ${{ github.token }}

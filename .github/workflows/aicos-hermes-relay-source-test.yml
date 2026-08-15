@@ -7,14 +7,14 @@ on:
     paths:
       - scripts/aicos-relay-v1.mjs
       - scripts/aicos-hermes-relay-handler.mjs
-      - tests/aicos-hermes-relay.test.mjs
+      - tests/aicos-hermes-relay.contract.mjs
       - .github/workflows/aicos-hermes-relay-source-test.yml
       - .github/workflows/aicos-hermes-relay.yml
   pull_request:
     paths:
       - scripts/aicos-relay-v1.mjs
       - scripts/aicos-hermes-relay-handler.mjs
-      - tests/aicos-hermes-relay.test.mjs
+      - tests/aicos-hermes-relay.contract.mjs
       - .github/workflows/aicos-hermes-relay-source-test.yml
       - .github/workflows/aicos-hermes-relay.yml
 
@@ -35,6 +35,6 @@ jobs:
           node --check scripts/aicos-relay-v1.mjs
           node --check scripts/aicos-hermes-relay-handler.mjs
       - name: Hermes relay contract tests
-        run: node --test tests/aicos-hermes-relay.test.mjs
+        run: node --test tests/aicos-hermes-relay.contract.mjs
       - name: Diff check
         run: git diff --check

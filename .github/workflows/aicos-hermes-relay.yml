@@ -34,7 +34,7 @@ jobs:
         run: |
           node --check scripts/aicos-relay-v1.mjs
           node --check scripts/aicos-hermes-relay-handler.mjs
-          node --test tests/aicos-hermes-relay.test.mjs
+          node --test tests/aicos-hermes-relay.contract.mjs
       - name: Process Hermes relay event or recover mailbox
         env:
           GITHUB_TOKEN: ${{ github.token }}
@@ -47,10 +47,6 @@ jobs:
         run: |
           set -Eeuo pipefail
           umask 077
-          # Hermes gateway is intentionally bound to Docker's bridge gateway,
-          # because staging app containers reach it through host.docker.internal.
-          # This job runs on the host, so resolve the configured Docker bridge
-          # address rather than incorrectly substituting loopback.
           if [[ "${HERMES_BASE_URL}" == *"host.docker.internal"* ]]; then
             docker_gateway="$(docker network inspect bridge --format '{{(index .IPAM.Config 0).Gateway}}')"
             [[ -n "${docker_gateway}" ]] || { echo 'Docker bridge gateway unavailable' >&2; exit 1; }
