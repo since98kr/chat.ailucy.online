@@ -4,7 +4,7 @@ on:
   workflow_dispatch:
     inputs:
       operation:
-        description: Exact restricted Harness operation; live cutover is intentionally unavailable
+        description: Exact restricted Harness operation
         required: true
         type: choice
         options:
@@ -12,6 +12,7 @@ on:
           - isolated
           - stage
           - shadow
+          - cutover
           - status
           - rollback
       approved_head:
@@ -19,7 +20,7 @@ on:
         required: true
         type: string
       confirmation:
-        description: STAGE_OPENCLAW_HARNESS or ROLLBACK_OPENCLAW_HARNESS when applicable
+        description: STAGE_OPENCLAW_HARNESS, CUTOVER_LETTA_HARNESS, or ROLLBACK_OPENCLAW_HARNESS
         required: false
         type: string
 
@@ -52,6 +53,7 @@ jobs:
           [[ "${APPROVED_HEAD}" == "${LETTA_HARNESS_APPROVED_HEAD}" ]]
           case "${OPERATION}" in
             stage) [[ "${CONFIRMATION}" == 'STAGE_OPENCLAW_HARNESS' ]] ;;
+            cutover) [[ "${CONFIRMATION}" == 'CUTOVER_LETTA_HARNESS' ]] ;;
             rollback) [[ "${CONFIRMATION}" == 'ROLLBACK_OPENCLAW_HARNESS' ]] ;;
             preflight|isolated|shadow|status) [[ -z "${CONFIRMATION}" ]] ;;
             *) exit 1 ;;
@@ -89,6 +91,7 @@ jobs:
             isolated) remote_command='letta-harness-isolated-v1' ;;
             stage) remote_command='letta-harness-stage-v1' ;;
             shadow) remote_command='letta-harness-shadow-v1' ;;
+            cutover) remote_command='letta-harness-cutover-v1' ;;
             status) remote_command='letta-harness-status-v1' ;;
             rollback) remote_command='letta-harness-rollback-v1' ;;
             *) fail 'operation is not allowlisted' ;;
