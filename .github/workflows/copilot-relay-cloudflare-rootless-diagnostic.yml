@@ -1,0 +1,108 @@
+name: Copilot relay Cloudflare rootless diagnostic
+
+on:
+  push:
+    branches:
+      - ops/copilot-relay-cloudflare-rootless-diagnostic
+    paths:
+      - .github/workflows/copilot-relay-cloudflare-rootless-diagnostic.yml
+
+permissions:
+  contents: read
+  issues: write
+
+jobs:
+  diagnostic:
+    runs-on: [self-hosted, linux, x64, chat-staging]
+    environment: staging
+    timeout-minutes: 10
+    steps:
+      - name: Inspect Cloudflare management surface without mutation
+        env:
+          GH_JOB_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          report="$RUNNER_TEMP/copilot-relay-cloudflare-rootless.txt"
+          : > "$report"
+          echo "runner_user=$(id -un)" >> "$report"
+          echo "runner_uid=$(id -u)" >> "$report"
+          echo "cloudflared_present=$([[ -x $(command -v cloudflared 2>/dev/null) ]] && echo true || echo false)" >> "$report"
+          echo "system_cloudflared_active=$(systemctl is-active cloudflared.service 2>/dev/null || true)" >> "$report"
+          echo "system_cloudflared_enabled=$(systemctl is-enabled cloudflared.service 2>/dev/null || true)" >> "$report"
+
+          unit_text="$(systemctl cat cloudflared.service 2>/dev/null || true)"
+          if [[ -n "$unit_text" ]]; then
+            echo 'unit_readable=true' >> "$report"
+          else
+            echo 'unit_readable=false' >> "$report"
+          fi
+          if grep -Eq -- '--token|TUNNEL_TOKEN' <<<"$unit_text"; then
+            echo 'unit_mode=remotely_managed_or_token' >> "$report"
+          else
+            echo 'unit_mode=config_or_unknown' >> "$report"
+          fi
+
+          config_path="$(python3 - <<'PY' <<<"$unit_text"
+          import re,sys
+          text=sys.stdin.read()
+          matches=re.findall(r'--config(?:=|\s+)(?:"([^"]+)"|\x27([^\x27]+)\x27|(\S+))', text)
+          if matches:
+              print(next(value for value in reversed(matches[-1]) if value))
+          PY
+          )"
+          if [[ -z "$config_path" ]]; then
+            for candidate in /etc/cloudflared/config.yml /etc/cloudflared/config.yaml "$HOME/.cloudflared/config.yml" "$HOME/.cloudflared/config.yaml"; do
+              [[ -e "$candidate" ]] && { config_path="$candidate"; break; }
+            done
+          fi
+          if [[ -n "$config_path" ]]; then
+            echo 'config_path_discovered=true' >> "$report"
+            echo "config_readable=$([[ -r "$config_path" ]] && echo true || echo false)" >> "$report"
+            echo "config_writable=$([[ -w "$config_path" ]] && echo true || echo false)" >> "$report"
+            if [[ -e "$config_path" ]]; then
+              owner_uid="$(stat -c '%u' "$config_path" 2>/dev/null || true)"
+              runner_uid="$(id -u)"
+              [[ "$owner_uid" == "$runner_uid" ]] && echo 'config_owned_by_runner=true' >> "$report" || echo 'config_owned_by_runner=false' >> "$report"
+            fi
+            if [[ -r "$config_path" ]]; then
+              if cloudflared tunnel --config "$config_path" ingress validate >/dev/null 2>&1; then echo 'config_valid_without_sudo=true' >> "$report"; else echo 'config_valid_without_sudo=false' >> "$report"; fi
+              if cloudflared tunnel --config "$config_path" ingress rule 'https://relay.ailucy.online' >/dev/null 2>&1; then echo 'ingress_rule_query_without_sudo=true' >> "$report"; else echo 'ingress_rule_query_without_sudo=false' >> "$report"; fi
+              tunnel_id="$(python3 - "$config_path" <<'PY'
+          import re,sys
+          text=open(sys.argv[1],encoding='utf-8').read()
+          m=re.search(r'^\s*tunnel:\s*["\x27]?([^"\x27#\s]+)',text,re.MULTILINE)
+          print(m.group(1) if m else '')
+          PY
+              )"
+              [[ -n "$tunnel_id" ]] && echo 'tunnel_id_discoverable=true' >> "$report" || echo 'tunnel_id_discoverable=false' >> "$report"
+            else
+              echo 'config_valid_without_sudo=false' >> "$report"
+              echo 'ingress_rule_query_without_sudo=false' >> "$report"
+              echo 'tunnel_id_discoverable=false' >> "$report"
+            fi
+          else
+            echo 'config_path_discovered=false' >> "$report"
+            echo 'config_readable=false' >> "$report"
+            echo 'config_writable=false' >> "$report"
+            echo 'config_owned_by_runner=false' >> "$report"
+            echo 'config_valid_without_sudo=false' >> "$report"
+            echo 'ingress_rule_query_without_sudo=false' >> "$report"
+            echo 'tunnel_id_discoverable=false' >> "$report"
+          fi
+
+          if systemctl restart cloudflared.service --dry-run >/dev/null 2>&1; then echo 'system_restart_authorized_without_sudo=true' >> "$report"; else echo 'system_restart_authorized_without_sudo=false' >> "$report"; fi
+          if systemctl --user is-active cloudflared.service >/dev/null 2>&1; then echo 'user_cloudflared_active=true' >> "$report"; else echo 'user_cloudflared_active=false' >> "$report"; fi
+          echo 'mutation_performed=false' >> "$report"
+          echo 'secret_values_reported=false' >> "$report"
+
+          python3 - "$report" <<'PY'
+          import json,os,sys,urllib.request
+          lines=open(sys.argv[1],encoding='utf-8').read().strip().splitlines()
+          body='[COPILOT RELAY CLOUDFLARE ROOTLESS DIAGNOSTIC]\n\n'+'\n'.join(f'- `{line}`' for line in lines)
+          req=urllib.request.Request(
+              'https://api.github.com/repos/since98kr/chat.ailucy.online/issues/134/comments',
+              data=json.dumps({'body':body}).encode(), method='POST',
+              headers={'Authorization':'Bearer '+os.environ['GH_JOB_TOKEN'],'Accept':'application/vnd.github+json','X-GitHub-Api-Version':'2022-11-28','Content-Type':'application/json','User-Agent':'copilot-relay-rootless-diagnostic'})
+          with urllib.request.urlopen(req,timeout=20) as r: assert r.status==201
+          PY
