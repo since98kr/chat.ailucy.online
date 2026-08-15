@@ -1,0 +1,40 @@
+name: AICOS Hermes relay source test
+
+on:
+  push:
+    branches:
+      - agent/aicos-openclaw-relay-v1
+    paths:
+      - scripts/aicos-relay-v1.mjs
+      - scripts/aicos-hermes-relay-handler.mjs
+      - tests/aicos-hermes-relay.contract.mjs
+      - .github/workflows/aicos-hermes-relay-source-test.yml
+      - .github/workflows/aicos-hermes-relay.yml
+  pull_request:
+    paths:
+      - scripts/aicos-relay-v1.mjs
+      - scripts/aicos-hermes-relay-handler.mjs
+      - tests/aicos-hermes-relay.contract.mjs
+      - .github/workflows/aicos-hermes-relay-source-test.yml
+      - .github/workflows/aicos-hermes-relay.yml
+
+permissions:
+  contents: read
+
+jobs:
+  contract:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - name: Syntax checks
+        run: |
+          node --check scripts/aicos-relay-v1.mjs
+          node --check scripts/aicos-hermes-relay-handler.mjs
+      - name: Hermes relay contract tests
+        run: node --test tests/aicos-hermes-relay.contract.mjs
+      - name: Diff check
+        run: git diff --check

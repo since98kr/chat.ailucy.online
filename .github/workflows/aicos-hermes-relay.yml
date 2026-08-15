@@ -1,0 +1,59 @@
+name: AICOS Hermes relay
+
+on:
+  issues:
+    types: [opened]
+  schedule:
+    - cron: "*/5 * * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  issues: write
+
+concurrency:
+  group: aicos-hermes-relay-${{ github.event.issue.number || 'sweep' }}
+  cancel-in-progress: false
+
+jobs:
+  relay:
+    if: >-
+      github.event_name == 'schedule' ||
+      github.event_name == 'workflow_dispatch' ||
+      github.actor == 'since98kr' ||
+      github.actor == 'github-actions[bot]'
+    runs-on: [self-hosted, linux, x64, chat-staging]
+    environment: staging
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - name: Verify Hermes relay source
+        run: |
+          node --check scripts/aicos-relay-v1.mjs
+          node --check scripts/aicos-hermes-relay-handler.mjs
+          node --test tests/aicos-hermes-relay.contract.mjs
+      - name: Process Hermes relay event or recover mailbox
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          HERMES_BASE_URL: ${{ vars.HERMES_BASE_URL }}
+          HERMES_CHAT_PATH: ${{ vars.HERMES_CHAT_PATH }}
+          HERMES_AGENT_ID: ${{ vars.HERMES_AGENT_ID }}
+          HERMES_API_KEY: ${{ secrets.HERMES_API_KEY }}
+          HERMES_PROTOCOL: ${{ vars.HERMES_PROTOCOL }}
+          HERMES_MODEL_MAP_JSON: ${{ vars.HERMES_MODEL_MAP_JSON }}
+        run: |
+          set -Eeuo pipefail
+          umask 077
+          if [[ "${HERMES_BASE_URL}" == *"host.docker.internal"* ]]; then
+            docker_gateway="$(docker network inspect bridge --format '{{(index .IPAM.Config 0).Gateway}}')"
+            [[ -n "${docker_gateway}" ]] || { echo 'Docker bridge gateway unavailable' >&2; exit 1; }
+            export HERMES_BASE_URL="${HERMES_BASE_URL/host.docker.internal/${docker_gateway}}"
+          fi
+          if [[ "${GITHUB_EVENT_NAME}" == "schedule" || "${GITHUB_EVENT_NAME}" == "workflow_dispatch" ]]; then
+            node scripts/aicos-hermes-relay-handler.mjs sweep
+          else
+            node scripts/aicos-hermes-relay-handler.mjs event
+          fi
