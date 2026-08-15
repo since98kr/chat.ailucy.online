@@ -36,8 +36,9 @@ jobs:
         run: |
           node --check scripts/aicos-copilot-relay-broker-sync.mjs
           node --test tests/aicos-copilot-relay-sync.contract.mjs
-      - name: Sync canonical mailbox through persistent Copilot MCP broker
+      - name: Sync canonical mailbox through temporary Corporate Copilot MCP broker
         env:
           GITHUB_TOKEN: ${{ github.token }}
-          COPILOT_RELAY_BROKER_URL: https://relay.ailucy.online
+          COPILOT_RELAY_BROKER_URL: https://turns-generic-jackson-afford.trycloudflare.com
+          COPILOT_RELAY_ALLOW_QUICK_TUNNEL: 'true'
         run: node scripts/aicos-copilot-relay-broker-sync.mjs
