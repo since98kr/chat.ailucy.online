@@ -23,7 +23,7 @@ jobs:
     environment: staging
     timeout-minutes: 35
     env:
-      EXPECTED_HEAD: bd2287e0b1c4f1564059b9e91298a3712e7bded1
+      EXPECTED_HEAD: 72b2fa5fcc3416fd913a1d6affca3bc0d456cc95
       APPROVED_HEAD: ${{ vars.LETTA_HARNESS_APPROVED_HEAD }}
       RESTRICTED_MODE: ${{ vars.LETTA_HARNESS_SSH_RESTRICTED_MODE }}
       SSH_HOST: ${{ vars.LETTA_HARNESS_SSH_HOST }}
