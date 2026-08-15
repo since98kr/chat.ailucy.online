@@ -40,5 +40,5 @@ jobs:
       - name: Publish dedicated Copilot relay hostname
         env:
           COPILOT_RELAY_HOSTNAME: relay.ailucy.online
-          COPILOT_RELAY_SERVICE_URL: http://127.0.0.1:14174
+          COPILOT_RELAY_SERVICE_URL: http://127.0.0.1:14175
         run: bash scripts/ops/publish-copilot-relay-cloudflare.sh
