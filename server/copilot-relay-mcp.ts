@@ -78,7 +78,7 @@ const inboxSchema = z.object({
   bridgeRequest: copilotBridgeRequestSchema,
 }).strict();
 
-const ackSchema = z.object({ eventIds: z.array(z.string().uuid()).min(1).max(100) }).strict();
+const ackSchema = z.object({ eventIds: z.array(z.string().min(1).max(320)).min(1).max(100) }).strict();
 
 const jsonRpcSchema = z.object({
   jsonrpc: z.literal('2.0'),
