@@ -17,51 +17,124 @@ jobs:
     environment: staging
     timeout-minutes: 10
     steps:
-      - name: Inspect Hermes API installed state without mutation
+      - name: Inspect Hermes API process and listener state without mutation
         shell: bash
         run: |
           set -Eeuo pipefail
-          unit=/etc/systemd/system/hermes-gateway.service
+          python3 - <<'PY'
+          import json, os, pathlib, socket, struct, subprocess
 
-          active="$(systemctl is-active hermes-gateway.service 2>/dev/null || true)"
-          enabled="$(systemctl is-enabled hermes-gateway.service 2>/dev/null || true)"
-          load_state="$(systemctl show hermes-gateway.service -p LoadState --value 2>/dev/null || true)"
-          sub_state="$(systemctl show hermes-gateway.service -p SubState --value 2>/dev/null || true)"
-          result_state="$(systemctl show hermes-gateway.service -p Result --value 2>/dev/null || true)"
-          main_pid="$(systemctl show hermes-gateway.service -p MainPID --value 2>/dev/null || true)"
-          exec_status="$(systemctl show hermes-gateway.service -p ExecMainStatus --value 2>/dev/null || true)"
-          exec_code="$(systemctl show hermes-gateway.service -p ExecMainCode --value 2>/dev/null || true)"
-          restart_count="$(systemctl show hermes-gateway.service -p NRestarts --value 2>/dev/null || true)"
-          unit_user="$(systemctl show hermes-gateway.service -p User --value 2>/dev/null || true)"
-          fragment_path="$(systemctl show hermes-gateway.service -p FragmentPath --value 2>/dev/null || true)"
+          def systemd_value(name):
+              p = subprocess.run(
+                  ['systemctl', 'show', 'hermes-gateway.service', '-p', name, '--value'],
+                  stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True, check=False,
+              )
+              return (p.stdout or '').strip()
 
-          python3 - <<'PY' "$unit" "$active" "$enabled" "$load_state" "$sub_state" "$result_state" "$main_pid" "$exec_status" "$exec_code" "$restart_count" "$unit_user" "$fragment_path"
-          import json, pathlib, socket, sys
-          (
-              unit, active, enabled, load_state, sub_state, result_state,
-              main_pid, exec_status, exec_code, restart_count, unit_user,
-              fragment_path
-          ) = sys.argv[1:]
+          unit = pathlib.Path('/etc/systemd/system/hermes-gateway.service')
+          fields = {
+              key: systemd_value(key)
+              for key in [
+                  'LoadState','ActiveState','SubState','Result','MainPID','ExecMainStatus',
+                  'ExecMainCode','NRestarts','User','FragmentPath','ControlGroup','TasksCurrent'
+              ]
+          }
+
+          cgroup = fields.get('ControlGroup') or ''
+          cgroup_procs = pathlib.Path('/sys/fs/cgroup') / cgroup.lstrip('/') / 'cgroup.procs'
+          pids = []
+          if cgroup_procs.is_file():
+              for line in cgroup_procs.read_text().splitlines():
+                  if line.isdigit():
+                      pids.append(int(line))
+          elif (fields.get('MainPID') or '').isdigit() and int(fields['MainPID']) > 0:
+              pids = [int(fields['MainPID'])]
+
+          socket_inodes = set()
+          process_names = set()
+          readable_fd_processes = 0
+          for pid in pids:
+              proc = pathlib.Path('/proc') / str(pid)
+              try:
+                  exe = os.readlink(proc / 'exe')
+                  process_names.add(pathlib.Path(exe).name)
+              except OSError:
+                  pass
+              fd_dir = proc / 'fd'
+              try:
+                  entries = list(fd_dir.iterdir())
+                  readable_fd_processes += 1
+              except OSError:
+                  continue
+              for entry in entries:
+                  try:
+                      target = os.readlink(entry)
+                  except OSError:
+                      continue
+                  if target.startswith('socket:[') and target.endswith(']'):
+                      socket_inodes.add(target[8:-1])
+
+          listeners = []
+          def parse_tcp(path, family):
+              p = pathlib.Path(path)
+              if not p.is_file():
+                  return
+              try:
+                  lines = p.read_text().splitlines()[1:]
+              except OSError:
+                  return
+              for line in lines:
+                  cols = line.split()
+                  if len(cols) < 10 or cols[3] != '0A':
+                      continue
+                  inode = cols[9]
+                  if inode not in socket_inodes:
+                      continue
+                  addr_hex, port_hex = cols[1].split(':')
+                  port = int(port_hex, 16)
+                  if family == 'ipv4':
+                      raw = bytes.fromhex(addr_hex)
+                      address = socket.inet_ntoa(raw[::-1])
+                  else:
+                      raw = bytes.fromhex(addr_hex)
+                      address = socket.inet_ntop(socket.AF_INET6, raw)
+                  if address in ('127.0.0.1', '::1'):
+                      scope = 'loopback'
+                  elif address in ('0.0.0.0', '::'):
+                      scope = 'wildcard'
+                  else:
+                      scope = 'other'
+                  listeners.append({'family': family, 'scope': scope, 'port': port})
+
+          parse_tcp('/proc/net/tcp', 'ipv4')
+          parse_tcp('/proc/net/tcp6', 'ipv6')
+          listeners = sorted(listeners, key=lambda x: (x['port'], x['family'], x['scope']))
+
           s = socket.socket()
           s.settimeout(1)
           try:
-              port_open = s.connect_ex(('127.0.0.1', 8642)) == 0
+              port_8642 = s.connect_ex(('127.0.0.1', 8642)) == 0
           finally:
               s.close()
+
           print(json.dumps({
-              'unitExists': pathlib.Path(unit).is_file(),
-              'systemdLoadState': load_state or None,
-              'serviceActiveState': active or None,
-              'serviceEnabledState': enabled or None,
-              'serviceSubState': sub_state or None,
-              'serviceResult': result_state or None,
-              'mainPidPositive': bool(main_pid.isdigit() and int(main_pid) > 0),
-              'execMainStatus': int(exec_status) if exec_status.isdigit() else None,
-              'execMainCode': exec_code or None,
-              'restartCount': int(restart_count) if restart_count.isdigit() else None,
-              'serviceUserConfigured': bool(unit_user),
-              'fragmentMatchesExpected': fragment_path == unit,
-              'loopback8642Open': port_open,
+              'unitExists': unit.is_file(),
+              'systemdLoadState': fields['LoadState'] or None,
+              'serviceActiveState': fields['ActiveState'] or None,
+              'serviceSubState': fields['SubState'] or None,
+              'serviceResult': fields['Result'] or None,
+              'mainPidPositive': bool(fields['MainPID'].isdigit() and int(fields['MainPID']) > 0),
+              'execMainStatus': int(fields['ExecMainStatus']) if fields['ExecMainStatus'].isdigit() else None,
+              'restartCount': int(fields['NRestarts']) if fields['NRestarts'].isdigit() else None,
+              'tasksCurrent': int(fields['TasksCurrent']) if fields['TasksCurrent'].isdigit() else None,
+              'serviceUserConfigured': bool(fields['User']),
+              'fragmentMatchesExpected': fields['FragmentPath'] == str(unit),
+              'cgroupProcessCount': len(pids),
+              'readableFdProcessCount': readable_fd_processes,
+              'processExecutableBasenames': sorted(process_names),
+              'serviceOwnedTcpListeners': listeners,
+              'loopback8642Open': port_8642,
+              'commandLineRead': False,
               'unitContentsRead': False,
               'envContentsRead': False,
               'secretValuePrinted': False,
