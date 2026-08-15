@@ -1,0 +1,105 @@
+name: Letta Harness gate run 2
+
+on:
+  pull_request:
+    branches:
+      - main
+    paths:
+      - .github/workflows/letta-harness-gate-run-2.yml
+
+permissions:
+  contents: read
+
+concurrency:
+  group: letta-harness-gate-run-2
+  cancel-in-progress: true
+
+jobs:
+  validate:
+    if: >-
+      github.event.pull_request.head.repo.full_name == github.repository &&
+      github.event.pull_request.user.login == 'since98kr'
+    runs-on: ubuntu-latest
+    environment: staging
+    timeout-minutes: 35
+    env:
+      EXPECTED_HEAD: bd2287e0b1c4f1564059b9e91298a3712e7bded1
+      APPROVED_HEAD: ${{ vars.LETTA_HARNESS_APPROVED_HEAD }}
+      RESTRICTED_MODE: ${{ vars.LETTA_HARNESS_SSH_RESTRICTED_MODE }}
+      SSH_HOST: ${{ vars.LETTA_HARNESS_SSH_HOST }}
+      SSH_PORT: ${{ vars.LETTA_HARNESS_SSH_PORT }}
+      SSH_USER: ${{ vars.LETTA_HARNESS_SSH_USER }}
+      SSH_PRIVATE_KEY: ${{ secrets.LETTA_HARNESS_SSH_PRIVATE_KEY }}
+      SSH_KNOWN_HOSTS: ${{ secrets.LETTA_HARNESS_SSH_KNOWN_HOSTS }}
+
+    steps:
+      - name: Validate enrollment metadata
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          [[ "${RESTRICTED_MODE}" == 'true' ]]
+          [[ "${APPROVED_HEAD}" == "${EXPECTED_HEAD}" ]]
+          [[ -n "${SSH_PRIVATE_KEY}" ]]
+          [[ -n "${SSH_KNOWN_HOSTS}" ]]
+          [[ "${SSH_HOST}" =~ ^[A-Za-z0-9.-]+$ ]]
+          [[ "${SSH_PORT}" =~ ^[0-9]{1,5}$ ]]
+          [[ "${SSH_USER}" =~ ^[a-z_][a-z0-9_-]*$ ]]
+          printf 'enrollment_metadata=PASS\n'
+          printf 'approved_head=%s\n' "${APPROVED_HEAD}"
+
+      - name: Run preflight and isolated gates
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          umask 077
+          tmp_dir="$(mktemp -d)"
+          trap 'rm -rf -- "${tmp_dir}"' EXIT
+          key_path="${tmp_dir}/key"
+          known_hosts_path="${tmp_dir}/known_hosts"
+          printf '%s\n' "${SSH_PRIVATE_KEY}" >"${key_path}"
+          printf '%s\n' "${SSH_KNOWN_HOSTS}" >"${known_hosts_path}"
+          chmod 0600 "${key_path}" "${known_hosts_path}"
+
+          invoke_gate() {
+            local command="$1"
+            local output="$2"
+            local err="${output}.err"
+            set +e
+            ssh -p "${SSH_PORT}" \
+              -i "${key_path}" \
+              -o IdentitiesOnly=yes \
+              -o BatchMode=yes \
+              -o ConnectTimeout=20 \
+              -o StrictHostKeyChecking=yes \
+              -o "UserKnownHostsFile=${known_hosts_path}" \
+              "${SSH_USER}@${SSH_HOST}" \
+              "${command}" >"${output}" 2>"${err}"
+            local rc=$?
+            set -e
+            if [[ "${rc}" -ne 0 ]]; then
+              sed -n '1,30p' "${err}" \
+                | sed -E 's#(/[A-Za-z0-9._-]+){2,}#<path>#g; s/(token|secret|password|key)=[^[:space:]]+/\1=[REDACTED]/gi' >&2
+              printf '%s failed rc=%s\n' "${command}" "${rc}" >&2
+              return "${rc}"
+            fi
+            [[ "$(sed -n '1p' "${output}")" == "${command}:ok" ]]
+            grep -Fxq "head=${EXPECTED_HEAD}" "${output}"
+          }
+
+          preflight="${RUNNER_TEMP}/letta-harness-preflight.txt"
+          isolated="${RUNNER_TEMP}/letta-harness-isolated.txt"
+          invoke_gate letta-harness-preflight-v1 "${preflight}"
+          printf 'preflight=PASS\n'
+          invoke_gate letta-harness-isolated-v1 "${isolated}"
+          printf 'isolated=PASS\n'
+          cat "${preflight}"
+          cat "${isolated}"
+
+      - name: Upload sanitized gate evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: letta-harness-gate-run-2-${{ github.run_id }}
+          path: ${{ runner.temp }}/letta-harness-*.txt
+          if-no-files-found: warn
+          retention-days: 14
