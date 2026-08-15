@@ -8,6 +8,7 @@ CONTAINER_NAME="${COPILOT_RELAY_CONTAINER_NAME:-copilot-relay-cloudflared}"
 CLOUDFLARED_HOME="${CLOUDFLARED_HOME:-${HOME}/.cloudflared}"
 CONFIG_PATH="${COPILOT_RELAY_CONFIG:-${CLOUDFLARED_HOME}/copilot-relay-config.yml}"
 IMAGE="${CLOUDFLARED_IMAGE:-cloudflare/cloudflared:latest}"
+ORIGIN_CERT="${TUNNEL_ORIGIN_CERT:-/home/since98kr/.cloudflared/cert.pem}"
 TMP_DIR="$(mktemp -d)"
 
 log() { printf '[copilot-relay-cloudflare] %s\n' "$*"; }
@@ -15,21 +16,23 @@ fail() { log "BLOCKED: $*"; exit 1; }
 cleanup() { rm -rf "${TMP_DIR}"; }
 trap cleanup EXIT
 
-for command in cloudflared curl docker getent python3; do
+for command in curl docker getent python3; do
   command -v "${command}" >/dev/null || fail "Required command is missing: ${command}"
 done
 [[ "${HOSTNAME}" =~ ^[A-Za-z0-9.-]+$ ]] || fail 'Invalid relay hostname.'
 [[ "${SERVICE_URL}" == 'http://127.0.0.1:14175' ]] || fail 'Relay service must be the bounded loopback proxy on 127.0.0.1:14175.'
 docker info >/dev/null 2>&1 || fail 'Docker is unavailable to the staging runner.'
+mkdir -p "${CLOUDFLARED_HOME}"
 
-ORIGIN_CERT="${TUNNEL_ORIGIN_CERT:-}"
-if [[ -z "${ORIGIN_CERT}" || ! -r "${ORIGIN_CERT}" ]]; then
-  ORIGIN_CERT="$(find /home /opt /srv -maxdepth 5 -type f -path '*/.cloudflared/cert.pem' -readable -print -quit 2>/dev/null || true)"
-fi
-[[ -n "${ORIGIN_CERT}" && -r "${ORIGIN_CERT}" ]] \
-  || fail 'A readable Cloudflare account certificate was not found in the approved user-owned locations.'
-export TUNNEL_ORIGIN_CERT="${ORIGIN_CERT}"
-log 'Using the readable account certificate from an approved user-owned location.'
+cfctl() {
+  docker run --rm \
+    --user 0:0 \
+    --env HOME=/work \
+    --env TUNNEL_ORIGIN_CERT=/run/cloudflare/cert.pem \
+    --mount "type=bind,source=${ORIGIN_CERT},target=/run/cloudflare/cert.pem,readonly" \
+    --mount "type=bind,source=${CLOUDFLARED_HOME},target=/work/.cloudflared" \
+    "${IMAGE}" "$@"
+}
 
 probe() {
   local url="$1" prefix="$2" status
@@ -58,9 +61,9 @@ if getent ahosts "${HOSTNAME}" >/dev/null 2>&1; then
   fail "${HOSTNAME} already resolves but does not return the required application 401; refusing to overwrite existing DNS or route state."
 fi
 
-mkdir -p "${CLOUDFLARED_HOME}"
 TUNNELS_JSON="${TMP_DIR}/tunnels.json"
-cloudflared tunnel list --output json >"${TUNNELS_JSON}"
+cfctl tunnel list --output json >"${TUNNELS_JSON}" \
+  || fail 'The approved Cloudflare account certificate could not authenticate from its read-only Docker mount.'
 TUNNEL_ID="$(python3 - "${TUNNELS_JSON}" "${TUNNEL_NAME}" <<'PY'
 import json,sys
 items=json.load(open(sys.argv[1],encoding='utf-8'))
@@ -72,8 +75,8 @@ PY
 
 if [[ -z "${TUNNEL_ID}" ]]; then
   log "Creating dedicated named Tunnel ${TUNNEL_NAME}."
-  CREATE_OUTPUT="$(cloudflared tunnel create "${TUNNEL_NAME}")"
-  cloudflared tunnel list --output json >"${TUNNELS_JSON}"
+  CREATE_OUTPUT="$(cfctl tunnel create "${TUNNEL_NAME}")"
+  cfctl tunnel list --output json >"${TUNNELS_JSON}"
   TUNNEL_ID="$(python3 - "${TUNNELS_JSON}" "${TUNNEL_NAME}" <<'PY'
 import json,sys
 items=json.load(open(sys.argv[1],encoding='utf-8'))
@@ -93,7 +96,9 @@ umask 077
 CONFIG_TMP="${TMP_DIR}/config.yml"
 printf 'tunnel: %s\ncredentials-file: /etc/cloudflared/credentials.json\ningress:\n  - hostname: %s\n    service: %s\n  - service: http_status:404\n' \
   "${TUNNEL_ID}" "${HOSTNAME}" "${SERVICE_URL}" >"${CONFIG_TMP}"
-cloudflared tunnel --config "${CONFIG_TMP}" ingress validate >/dev/null
+docker run --rm --user 0:0 \
+  --mount "type=bind,source=${CONFIG_TMP},target=/etc/cloudflared/config.yml,readonly" \
+  "${IMAGE}" tunnel --config /etc/cloudflared/config.yml ingress validate >/dev/null
 install -m 600 "${CONFIG_TMP}" "${CONFIG_PATH}"
 
 if docker container inspect "${CONTAINER_NAME}" >/dev/null 2>&1; then
@@ -109,7 +114,7 @@ else
     --name "${CONTAINER_NAME}" \
     --restart unless-stopped \
     --network host \
-    --user "$(id -u):$(id -g)" \
+    --user 0:0 \
     --label online.ailucy.role=copilot-relay \
     --label "online.ailucy.tunnel=${TUNNEL_ID}" \
     --volume "${CONFIG_PATH}:/etc/cloudflared/config.yml:ro" \
@@ -125,7 +130,7 @@ docker container inspect --format '{{.State.Running}}' "${CONTAINER_NAME}" 2>/de
   || fail 'Dedicated relay connector did not remain running.'
 
 log 'Creating the relay DNS route without overwrite permission.'
-DNS_OUTPUT="$(cloudflared tunnel route dns "${TUNNEL_ID}" "${HOSTNAME}" 2>&1)" \
+DNS_OUTPUT="$(cfctl tunnel route dns "${TUNNEL_ID}" "${HOSTNAME}" 2>&1)" \
   || fail "DNS route creation failed; existing records were not overwritten. ${DNS_OUTPUT}"
 
 STATUS='000'
