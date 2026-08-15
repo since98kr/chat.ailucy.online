@@ -1,0 +1,97 @@
+name: AICOS Hermes API relay probe
+
+on:
+  push:
+    branches:
+      - test/aicos-relay-gateway-bridge
+    paths:
+      - .github/workflows/aicos-hermes-api-relay-probe.yml
+
+permissions:
+  contents: read
+
+jobs:
+  probe:
+    if: ${{ github.actor == 'since98kr' }}
+    runs-on: [self-hosted, linux, x64, chat-staging]
+    environment: staging
+    timeout-minutes: 10
+    steps:
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - name: Probe actual Hermes native API with sanitized canary
+        shell: bash
+        env:
+          HERMES_BASE_URL: ${{ vars.HERMES_BASE_URL }}
+          HERMES_CHAT_PATH: ${{ vars.HERMES_CHAT_PATH }}
+          HERMES_HEALTH_PATH: ${{ vars.HERMES_HEALTH_PATH }}
+          HERMES_AGENT_ID: ${{ vars.HERMES_AGENT_ID }}
+          HERMES_API_KEY: ${{ secrets.HERMES_API_KEY }}
+          HERMES_PROTOCOL: ${{ vars.HERMES_PROTOCOL }}
+          HERMES_MODEL_MAP_JSON: ${{ vars.HERMES_MODEL_MAP_JSON }}
+        run: |
+          set -Eeuo pipefail
+          umask 077
+          node --input-type=module <<'NODE'
+          const base = (process.env.HERMES_BASE_URL || '').replace(/\/$/, '');
+          const healthPath = process.env.HERMES_HEALTH_PATH || '/health';
+          const chatPath = process.env.HERMES_CHAT_PATH || '/v1/chat/completions';
+          const apiKey = process.env.HERMES_API_KEY || '';
+          const displayId = process.env.HERMES_AGENT_ID || '';
+          const protocol = process.env.HERMES_PROTOCOL || '';
+          const canary = 'HERMES_RELAY_CANARY_OK';
+
+          function fail(message) { throw new Error(message); }
+          if (!base || !apiKey) fail('Hermes staging endpoint or credential unavailable');
+          const url = new URL(base);
+          if (!['http:','https:'].includes(url.protocol)) fail('invalid Hermes endpoint protocol');
+
+          let model = 'hermes-agent';
+          const mapText = process.env.HERMES_MODEL_MAP_JSON || '';
+          if (mapText) {
+            const map = JSON.parse(mapText);
+            if (displayId && typeof map[displayId] === 'string' && map[displayId]) model = map[displayId];
+          }
+
+          const headers = {authorization: `Bearer ${apiKey}`, 'content-type': 'application/json'};
+          const health = await fetch(base + healthPath, {headers, signal: AbortSignal.timeout(10000)});
+          if (!health.ok) fail(`Hermes health failed: ${health.status}`);
+          const models = await fetch(base + '/v1/models', {headers, signal: AbortSignal.timeout(10000)});
+          if (!models.ok) fail(`Hermes models failed: ${models.status}`);
+          let modelsJson = null;
+          try { modelsJson = await models.json(); } catch {}
+          const advertised = Array.isArray(modelsJson?.data) ? modelsJson.data.map((m) => m?.id).filter(Boolean) : [];
+          if (advertised.length && !advertised.includes(model)) fail('configured Hermes model not advertised');
+
+          const prompt = [
+            'This is a sanitized AICOS relay transport canary only.',
+            'Do not use tools, shell, filesystem, network, browser, credentials, memory mutation, deployment, or any external action.',
+            `Reply with exactly ${canary} and nothing else.`
+          ].join(' ');
+          const response = await fetch(base + chatPath, {
+            method: 'POST',
+            headers,
+            body: JSON.stringify({model, stream:false, messages:[{role:'user', content:prompt}]}),
+            signal: AbortSignal.timeout(120000)
+          });
+          let payload = null;
+          try { payload = await response.json(); } catch {}
+          let reply = payload?.choices?.[0]?.message?.content;
+          if (Array.isArray(reply)) reply = reply.map((p) => typeof p === 'string' ? p : p?.text || '').join('');
+          if (typeof reply !== 'string') reply = '';
+          const exact = reply.trim() === canary;
+          console.log(JSON.stringify({
+            hermesHealth: health.status,
+            hermesModels: models.status,
+            configuredModel: model,
+            configuredProtocol: protocol,
+            configuredDisplayIdPresent: Boolean(displayId),
+            advertisedModelCount: advertised.length,
+            chatHttpStatus: response.status,
+            exactCanaryMatch: exact,
+            secretValuePrinted: false,
+            mutationPerformed: false
+          }));
+          if (!response.ok || !exact) process.exit(1);
+          NODE
