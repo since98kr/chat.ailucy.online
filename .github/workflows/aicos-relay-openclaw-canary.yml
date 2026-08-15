@@ -1,0 +1,188 @@
+name: AICOS relay OpenClaw canary
+
+on:
+  push:
+    branches:
+      - test/aicos-relay-gateway-bridge
+    paths:
+      - .github/workflows/aicos-relay-openclaw-canary.yml
+
+permissions:
+  contents: read
+  issues: write
+
+concurrency:
+  group: aicos-relay-openclaw-canary
+  cancel-in-progress: false
+
+jobs:
+  relay:
+    if: ${{ github.actor == 'since98kr' }}
+    runs-on: [self-hosted, linux, x64, chat-staging]
+    environment: staging
+    timeout-minutes: 15
+    steps:
+      - name: Consume Work Order, call Gateway Lucy, publish canonical Result
+        shell: bash
+        env:
+          GH_REPO: ${{ github.repository }}
+          GH_TOKEN: ${{ github.token }}
+          RELAY_ISSUE: "117"
+          OPENCLAW_GATEWAY_BASE_URL: ${{ vars.OPENCLAW_GATEWAY_BASE_URL }}
+          OPENCLAW_GATEWAY_TOKEN: ${{ secrets.OPENCLAW_GATEWAY_TOKEN }}
+          CF_ACCESS_CLIENT_ID: ${{ vars.CF_ACCESS_CLIENT_ID }}
+          CF_ACCESS_CLIENT_SECRET: ${{ secrets.CF_ACCESS_CLIENT_SECRET }}
+          LETTA_OPENCLAW_AGENT_TARGET: ${{ vars.LETTA_OPENCLAW_AGENT_TARGET }}
+        run: |
+          set -Eeuo pipefail
+          umask 077
+          node --input-type=module <<'NODE'
+          const marker = '<!-- aicos-agent-relay:v1:work-order -->';
+          const resultMarker = '<!-- aicos-agent-relay:v1:result -->';
+          const repo = process.env.GH_REPO;
+          const issueNumber = Number(process.env.RELAY_ISSUE);
+          const ghToken = process.env.GH_TOKEN || '';
+          const gatewayBase = (process.env.OPENCLAW_GATEWAY_BASE_URL || '').replace(/\/$/, '');
+          const gatewayToken = process.env.OPENCLAW_GATEWAY_TOKEN || '';
+          const target = process.env.LETTA_OPENCLAW_AGENT_TARGET || '';
+          const taskId = 'aicos-114-openclaw-public-mailbox-canary-001';
+          const exactCanary = 'OPENCLAW_RELAY_CANARY_OK';
+
+          function fail(message) { throw new Error(message); }
+          function hasSecretLike(value) {
+            const text = JSON.stringify(value);
+            return [
+              /-----BEGIN (?:RSA |EC |OPENSSH )?PRIVATE KEY-----/i,
+              /\bBearer\s+[A-Za-z0-9._~+\/=:-]{12,}/i,
+              /\bgithub_pat_[A-Za-z0-9_]{20,}/i,
+              /\bgh[pousr]_[A-Za-z0-9]{20,}/i,
+              /\bsk-[A-Za-z0-9_-]{16,}/i
+            ].some((re) => re.test(text));
+          }
+          async function gh(path, options = {}) {
+            const response = await fetch('https://api.github.com' + path, {
+              ...options,
+              headers: {
+                accept: 'application/vnd.github+json',
+                authorization: 'Bearer ' + ghToken,
+                'x-github-api-version': '2022-11-28',
+                'content-type': 'application/json',
+                ...(options.headers || {})
+              }
+            });
+            if (!response.ok) fail('GitHub API ' + response.status + ' ' + response.statusText);
+            return response.status === 204 ? null : response.json();
+          }
+          function parseEnvelope(body) {
+            if (typeof body !== 'string' || !body.includes(marker)) fail('relay Work Order marker missing');
+            const match = body.slice(body.indexOf(marker) + marker.length).match(/```json\s*([\s\S]*?)\s*```/i);
+            if (!match) fail('relay Work Order JSON block missing');
+            const value = JSON.parse(match[1]);
+            if (value.schemaVersion !== 'aicos.agent-relay/v1') fail('unsupported relay schema');
+            if (value.kind !== 'work_order') fail('work_order required');
+            if (value.taskId !== taskId) fail('unexpected taskId');
+            if (value.sourceAgent !== 'chatgpt' || value.targetAgent !== 'openclaw') fail('unexpected relay identity');
+            if (!Array.isArray(value.allowedScope) || value.allowedScope.length === 0) fail('allowedScope required');
+            if (!Array.isArray(value.forbiddenScope) || value.forbiddenScope.length === 0) fail('forbiddenScope required');
+            const gates = value.approvals || {};
+            for (const key of ['merge','productionDeploy','secretChange','destructiveDb','liveAction']) {
+              if (gates[key] !== 'denied') fail('canary gate must be denied: ' + key);
+            }
+            if (hasSecretLike(value)) fail('secret-shaped material rejected');
+            return value;
+          }
+          function renderResult(value) {
+            return resultMarker + '\n\n```json\n' + JSON.stringify(value, null, 2) + '\n```';
+          }
+
+          if (!ghToken) fail('GitHub token unavailable');
+          if (!gatewayToken) fail('Gateway credential unavailable');
+          const gatewayUrl = new URL(gatewayBase || 'https://invalid.invalid');
+          if (gatewayUrl.protocol !== 'https:' || gatewayUrl.hostname !== 'gateway.ailucy.online') fail('unexpected Gateway endpoint');
+          if (!/^(?:openclaw[/:]|agent:)[A-Za-z0-9._:-]+$/.test(target)) fail('OpenClaw target unavailable');
+
+          const issue = await gh(`/repos/${repo}/issues/${issueNumber}`);
+          const workOrder = parseEnvelope(issue.body || '');
+          const comments = await gh(`/repos/${repo}/issues/${issueNumber}/comments?per_page=100`);
+          const alreadyDone = comments.some((c) => typeof c.body === 'string' && c.body.includes(resultMarker) && c.body.includes(`\"taskId\": \"${taskId}\"`));
+          if (alreadyDone) {
+            console.log(JSON.stringify({taskId, status:'ALREADY_RECORDED', secretValuePrinted:false}));
+            process.exit(0);
+          }
+
+          const prompt = [
+            'You are OpenClaw + persistent Letta Lucy receiving a validated aicos.agent-relay/v1 Work Order.',
+            'This is a sanitized transport canary only. Do not use tools, shell, GitHub, host access, memory mutation, deployment, or credentials.',
+            'Task ID: ' + workOrder.taskId + '.',
+            'Objective: ' + workOrder.objective,
+            'All high-risk approvals are denied.',
+            'If you accept this bounded canary, reply with exactly this token and nothing else: ' + exactCanary
+          ].join(' ');
+
+          const response = await fetch(gatewayBase + '/v1/chat/completions', {
+            method: 'POST',
+            headers: {
+              authorization: 'Bearer ' + gatewayToken,
+              'content-type': 'application/json',
+              'cf-access-client-id': process.env.CF_ACCESS_CLIENT_ID || '',
+              'cf-access-client-secret': process.env.CF_ACCESS_CLIENT_SECRET || '',
+              'x-openclaw-session-key': 'aicos-relay:' + taskId + ':run-' + process.env.GITHUB_RUN_ID
+            },
+            body: JSON.stringify({
+              model: target,
+              stream: false,
+              messages: [{role:'user', content:prompt}]
+            }),
+            signal: AbortSignal.timeout(600000)
+          });
+
+          let payload = null;
+          try { payload = await response.json(); } catch {}
+          let reply = payload?.choices?.[0]?.message?.content;
+          if (Array.isArray(reply)) reply = reply.map((p) => typeof p === 'string' ? p : p?.text || '').join('');
+          if (typeof reply !== 'string') reply = '';
+          const exactMatch = reply.trim() === exactCanary;
+          const now = new Date().toISOString();
+          const result = exactMatch ? {
+            schemaVersion:'aicos.agent-relay/v1',
+            kind:'result',
+            taskId,
+            agent:'openclaw',
+            status:'PASS',
+            observedAt:now,
+            summary:'OpenClaw Gateway Lucy consumed the validated sanitized Work Order and returned the exact canary acknowledgement.',
+            evidence:[
+              'gateway:http:' + response.status,
+              'gateway:exact-canary-match:true',
+              'transport:github-issue-to-openclaw-gateway-to-result'
+            ],
+            nextAction:'Run the outbound dispatch canary from openclaw to another relay endpoint.'
+          } : {
+            schemaVersion:'aicos.agent-relay/v1',
+            kind:'result',
+            taskId,
+            agent:'openclaw',
+            status:'BLOCKED',
+            observedAt:now,
+            summary:'OpenClaw Gateway responded but did not satisfy the exact bounded canary contract.',
+            evidence:[
+              'gateway:http:' + response.status,
+              'gateway:exact-canary-match:false'
+            ],
+            blockedReason:'GATEWAY_REPLY_NOT_EXACT_CANARY'
+          };
+
+          await gh(`/repos/${repo}/issues/${issueNumber}/comments`, {
+            method:'POST',
+            body:JSON.stringify({body:renderResult(result)})
+          });
+          console.log(JSON.stringify({
+            taskId,
+            gatewayHttpStatus:response.status,
+            exactCanaryMatch:exactMatch,
+            resultStatus:result.status,
+            resultPublished:true,
+            secretValuePrinted:false
+          }));
+          if (!response.ok || !exactMatch) process.exit(1);
+          NODE
