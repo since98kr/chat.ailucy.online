@@ -40,4 +40,6 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ github.token }}
           COPILOT_RELAY_BROKER_URL: https://relay.ailucy.online
+          CF_ACCESS_CLIENT_ID: ${{ vars.CF_ACCESS_CLIENT_ID }}
+          CF_ACCESS_CLIENT_SECRET: ${{ secrets.CF_ACCESS_CLIENT_SECRET }}
         run: node scripts/aicos-copilot-relay-broker-sync.mjs
