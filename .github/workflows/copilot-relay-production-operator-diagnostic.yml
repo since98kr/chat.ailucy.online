@@ -1,0 +1,59 @@
+name: Copilot relay production operator diagnostic
+
+on:
+  push:
+    branches:
+      - ops/copilot-relay-cloudflare-rootless-diagnostic
+    paths:
+      - .github/workflows/copilot-relay-production-operator-diagnostic.yml
+
+permissions:
+  contents: read
+  issues: write
+
+jobs:
+  diagnostic:
+    runs-on: [self-hosted, linux, x64, chat-production]
+    timeout-minutes: 10
+    steps:
+      - name: Inspect production runner authority without mutation
+        env:
+          GH_JOB_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          report="$RUNNER_TEMP/copilot-relay-production-operator.txt"
+          : > "$report"
+          echo "runner_user=$(id -un)" >> "$report"
+          echo "runner_uid=$(id -u)" >> "$report"
+          [[ "$(hostname)" == 'agentlucy' ]] && echo 'hostname_matches_agentlucy=true' >> "$report" || echo 'hostname_matches_agentlucy=false' >> "$report"
+          if sudo -n true >/dev/null 2>&1; then echo 'sudo_noninteractive=true' >> "$report"; else echo 'sudo_noninteractive=false' >> "$report"; fi
+          echo "cloudflared_active=$(systemctl is-active cloudflared.service 2>/dev/null || true)" >> "$report"
+          unit_text="$(systemctl cat cloudflared.service 2>/dev/null || true)"
+          [[ -n "$unit_text" ]] && echo 'unit_readable=true' >> "$report" || echo 'unit_readable=false' >> "$report"
+          config_path="$(UNIT_TEXT="$unit_text" python3 - <<'PY'
+          import os,re
+          text=os.environ.get('UNIT_TEXT','')
+          m=re.findall(r'--config(?:=|\s+)(?:"([^"]+)"|\x27([^\x27]+)\x27|(\S+))', text)
+          if m: print(next(v for v in reversed(m[-1]) if v))
+          PY
+          )"
+          [[ -z "$config_path" && -e /etc/cloudflared/config.yml ]] && config_path=/etc/cloudflared/config.yml
+          if [[ -n "$config_path" ]]; then
+            case "$config_path" in /etc/cloudflared/*) echo 'config_path_class=etc-cloudflared' >> "$report";; *) echo 'config_path_class=other' >> "$report";; esac
+            echo "config_readable=$([[ -r "$config_path" ]] && echo true || echo false)" >> "$report"
+            echo "config_writable=$([[ -w "$config_path" ]] && echo true || echo false)" >> "$report"
+          else
+            echo 'config_path_class=none' >> "$report"
+            echo 'config_readable=false' >> "$report"
+            echo 'config_writable=false' >> "$report"
+          fi
+          echo 'mutation_performed=false' >> "$report"
+          echo 'secret_values_reported=false' >> "$report"
+          python3 - "$report" <<'PY'
+          import json,os,sys,urllib.request
+          lines=open(sys.argv[1],encoding='utf-8').read().strip().splitlines()
+          body='[PRODUCTION RUNNER CLOUDFLARE OPERATOR DIAGNOSTIC]\n\n'+'\n'.join(f'- `{line}`' for line in lines)
+          req=urllib.request.Request('https://api.github.com/repos/since98kr/chat.ailucy.online/issues/134/comments',data=json.dumps({'body':body}).encode(),method='POST',headers={'Authorization':'Bearer '+os.environ['GH_JOB_TOKEN'],'Accept':'application/vnd.github+json','X-GitHub-Api-Version':'2022-11-28','Content-Type':'application/json','User-Agent':'copilot-relay-production-operator-diagnostic'})
+          with urllib.request.urlopen(req,timeout=20) as r: assert r.status==201
+          PY
