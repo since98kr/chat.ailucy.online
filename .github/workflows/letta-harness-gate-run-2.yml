@@ -60,6 +60,21 @@ jobs:
           printf '%s\n' "${SSH_KNOWN_HOSTS}" >"${known_hosts_path}"
           chmod 0600 "${key_path}" "${known_hosts_path}"
 
+          classify_missing_component() {
+            local err="$1"
+            local raw_path=''
+            local component='unknown'
+            raw_path="$(sed -n -E 's/^bash: line 1: (\/[^:]+): No such file or directory$/\1/p' "${err}" | head -n 1)"
+            if [[ -n "${raw_path}" ]]; then
+              component="$(basename -- "${raw_path}")"
+              case "${component}" in
+                authorized-command-gate.sh|controller.sh|openclaw|node|npm|env|bash) ;;
+                *) component='other' ;;
+              esac
+            fi
+            printf 'missing_component=%s\n' "${component}" >&2
+          }
+
           invoke_gate() {
             local command="$1"
             local output="$2"
@@ -77,6 +92,7 @@ jobs:
             local rc=$?
             set -e
             if [[ "${rc}" -ne 0 ]]; then
+              classify_missing_component "${err}"
               sed -n '1,30p' "${err}" \
                 | sed -E 's#(/[A-Za-z0-9._-]+){2,}#<path>#g; s/(token|secret|password|key)=[^[:space:]]+/\1=[REDACTED]/gi' >&2
               printf '%s failed rc=%s\n' "${command}" "${rc}" >&2
