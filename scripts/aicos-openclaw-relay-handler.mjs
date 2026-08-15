@@ -23,6 +23,7 @@ const MAX_SWEEP = 20;
 function fail(code, message) { throw new RelayError(code, message); }
 function assert(condition, code, message) { if (!condition) fail(code, message); }
 function nowIso() { return new Date().toISOString(); }
+export function isTrustedActor(login) { return typeof login === 'string' && TRUSTED_ACTORS.has(login); }
 
 function config() {
   const repo = process.env.GITHUB_REPOSITORY || process.env.GH_REPO || '';
@@ -69,12 +70,17 @@ async function listAll(cfg, path) {
 async function issueSnapshot(cfg, issueNumber) {
   const issue = await githubRequest(cfg, `/repos/${cfg.repo}/issues/${issueNumber}`);
   assert(!issue.pull_request, 'NOT_RELAY_ISSUE', String(issueNumber));
+  assert(isTrustedActor(issue.user?.login), 'UNTRUSTED_ISSUE_AUTHOR', issue.user?.login || '<missing>');
   const workOrder = parseWorkOrder(issue.body || '');
   assert(workOrder, 'MISSING_WORK_ORDER', String(issueNumber));
   const comments = await listAll(cfg, `/repos/${cfg.repo}/issues/${issueNumber}/comments`);
   const results = [];
   const invalid = [];
   for (const comment of comments) {
+    if ((comment.body || '').includes(RESULT_MARKER) && !isTrustedActor(comment.user?.login)) {
+      invalid.push({comment: comment.id, reason: 'UNTRUSTED_RESULT_AUTHOR'});
+      continue;
+    }
     try {
       const result = parseResult(comment.body || '');
       if (!result) continue;
@@ -100,7 +106,7 @@ async function postResult(cfg, issueNumber, value) {
 async function findIssueByTaskId(cfg, taskId) {
   const issues = await listAll(cfg, `/repos/${cfg.repo}/issues?state=all&sort=created&direction=desc`);
   for (const issue of issues) {
-    if (issue.pull_request || typeof issue.body !== 'string' || !issue.body.includes(WORK_MARKER)) continue;
+    if (issue.pull_request || !isTrustedActor(issue.user?.login) || typeof issue.body !== 'string' || !issue.body.includes(WORK_MARKER)) continue;
     try {
       const work = parseWorkOrder(issue.body);
       if (work?.taskId === taskId) return {issue, workOrder: work};
@@ -289,7 +295,7 @@ async function handleChildResult(cfg, childIssueNumber, resultFromEvent = null) 
 
 async function handleEvent(cfg, event) {
   const actor = event.sender?.login || event.issue?.user?.login || '';
-  if (!TRUSTED_ACTORS.has(actor)) return {ignored: true, reason: 'UNTRUSTED_ACTOR'};
+  if (!isTrustedActor(actor)) return {ignored: true, reason: 'UNTRUSTED_ACTOR'};
   if (event.action === 'opened' && event.issue) return handleOpenClawWork(cfg, event.issue.number);
   if (event.action === 'created' && event.issue && event.comment) {
     let result;
@@ -305,7 +311,7 @@ async function sweep(cfg) {
   const work = [];
   const children = [];
   for (const issue of issues) {
-    if (issue.pull_request || typeof issue.body !== 'string' || !issue.body.includes(WORK_MARKER)) continue;
+    if (issue.pull_request || !isTrustedActor(issue.user?.login) || typeof issue.body !== 'string' || !issue.body.includes(WORK_MARKER)) continue;
     try {
       const order = parseWorkOrder(issue.body);
       if (order?.targetAgent === 'openclaw') work.push(issue.number);
@@ -341,4 +347,4 @@ if (import.meta.url === `file://${process.argv[1]}`) {
   });
 }
 
-export {handleChildResult, handleEvent, handleOpenClawWork, sweep};
+export {handleChildResult, handleEvent, handleOpenClawWork, issueSnapshot, sweep};
