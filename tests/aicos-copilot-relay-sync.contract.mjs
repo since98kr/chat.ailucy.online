@@ -27,6 +27,8 @@ test('broker sync workflow pins the stable canonical hostname', () => {
     'utf8',
   );
   assert.match(workflow, /COPILOT_RELAY_BROKER_URL:\s*https:\/\/relay\.ailucy\.online/);
+  assert.match(workflow, /CF_ACCESS_CLIENT_ID:\s*\$\{\{ vars\.CF_ACCESS_CLIENT_ID \}\}/);
+  assert.match(workflow, /CF_ACCESS_CLIENT_SECRET:\s*\$\{\{ secrets\.CF_ACCESS_CLIENT_SECRET \}\}/);
   assert.doesNotMatch(workflow, /\.trycloudflare\.com/i);
   assert.doesNotMatch(workflow, /COPILOT_RELAY_ALLOW_QUICK_TUNNEL/);
 });
