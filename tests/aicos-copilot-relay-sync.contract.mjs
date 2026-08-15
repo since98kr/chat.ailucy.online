@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { fromCopilotBridgeResponse, toCopilotBridgeRequest } from '../scripts/aicos-copilot-relay-broker-sync.mjs';
+import { fromCopilotBridgeResponse, toCopilotBridgeRequest, validateBrokerBaseUrl } from '../scripts/aicos-copilot-relay-broker-sync.mjs';
 
 const approvals = () => ({
   merge: 'denied', productionDeploy: 'denied', secretChange: 'denied', destructiveDb: 'denied', liveAction: 'denied',
@@ -15,6 +15,29 @@ function work(overrides = {}) {
     idempotencyKey: 'copilot-sync-test-001-v1', ...overrides,
   };
 }
+
+test('canonical broker URL is always accepted', () => {
+  assert.equal(validateBrokerBaseUrl('https://relay.ailucy.online'), 'https://relay.ailucy.online');
+});
+
+test('Quick Tunnel broker URL requires an explicit temporary gate', () => {
+  const quick = 'https://temporary-relay.trycloudflare.com';
+  assert.throws(() => validateBrokerBaseUrl(quick), /INVALID_BROKER_URL/);
+  assert.equal(validateBrokerBaseUrl(quick, { allowQuickTunnel: true }), quick);
+});
+
+test('temporary broker gate still rejects non-Cloudflare hosts and URL decorations', () => {
+  for (const value of [
+    'http://temporary-relay.trycloudflare.com',
+    'https://example.com',
+    'https://trycloudflare.com.evil.example',
+    'https://temporary-relay.trycloudflare.com/path',
+    'https://temporary-relay.trycloudflare.com/?token=x',
+    'https://user:pass@temporary-relay.trycloudflare.com',
+  ]) {
+    assert.throws(() => validateBrokerBaseUrl(value, { allowQuickTunnel: true }), /INVALID_BROKER_URL/);
+  }
+});
 
 test('bridge mapping preserves future expiry and never marks prose executable', () => {
   const order = work({ expiresAt: '2026-08-15T09:00:00.000Z' });
