@@ -34,7 +34,7 @@ jobs:
           set -Eeuo pipefail
           umask 077
           node --input-type=module <<'NODE'
-          const base = (process.env.HERMES_BASE_URL || '').replace(/\/$/, '');
+          const configuredBase = (process.env.HERMES_BASE_URL || '').replace(/\/$/, '');
           const healthPath = process.env.HERMES_HEALTH_PATH || '/health';
           const chatPath = process.env.HERMES_CHAT_PATH || '/v1/chat/completions';
           const apiKey = process.env.HERMES_API_KEY || '';
@@ -43,9 +43,20 @@ jobs:
           const canary = 'HERMES_RELAY_CANARY_OK';
 
           function fail(message) { throw new Error(message); }
-          if (!base || !apiKey) fail('Hermes staging endpoint or credential unavailable');
-          const url = new URL(base);
-          if (!['http:','https:'].includes(url.protocol)) fail('invalid Hermes endpoint protocol');
+          if (!configuredBase || !apiKey) fail('Hermes staging endpoint or credential unavailable');
+          const configuredUrl = new URL(configuredBase);
+          if (!['http:','https:'].includes(configuredUrl.protocol)) fail('invalid Hermes endpoint protocol');
+
+          // The staging application runs in Docker and therefore uses
+          // host.docker.internal for the host API. This workflow runs on the
+          // host runner itself, so use the same configured port via loopback.
+          const runtimeUrl = new URL(configuredUrl.toString());
+          let runnerAddressMode = 'configured';
+          if (runtimeUrl.hostname === 'host.docker.internal') {
+            runtimeUrl.hostname = '127.0.0.1';
+            runnerAddressMode = 'host-loopback-equivalent';
+          }
+          const base = runtimeUrl.toString().replace(/\/$/, '');
 
           let model = 'hermes-agent';
           const mapText = process.env.HERMES_MODEL_MAP_JSON || '';
@@ -88,6 +99,7 @@ jobs:
             configuredProtocol: protocol,
             configuredDisplayIdPresent: Boolean(displayId),
             advertisedModelCount: advertised.length,
+            runnerAddressMode,
             chatHttpStatus: response.status,
             exactCanaryMatch: exact,
             secretValuePrinted: false,
