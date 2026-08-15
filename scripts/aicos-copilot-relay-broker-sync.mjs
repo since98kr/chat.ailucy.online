@@ -28,14 +28,25 @@ function trusted(login) { return typeof login === 'string' && TRUSTED_ACTORS.has
 function sameEnvelope(left, right) { return JSON.stringify(left) === JSON.stringify(right); }
 function nowIso() { return new Date().toISOString(); }
 
+export function validateBrokerBaseUrl(raw, { allowQuickTunnel = false } = {}) {
+  const broker = new URL(raw);
+  assert(broker.protocol === 'https:', 'INVALID_BROKER_URL', raw);
+  assert(!broker.username && !broker.password && !broker.search && !broker.hash, 'INVALID_BROKER_URL', raw);
+  assert(broker.pathname === '/' || broker.pathname === '', 'INVALID_BROKER_URL', raw);
+  const canonical = broker.hostname === 'relay.ailucy.online';
+  const quickTunnel = allowQuickTunnel && /^[a-z0-9-]+\.trycloudflare\.com$/i.test(broker.hostname);
+  assert(canonical || quickTunnel, 'INVALID_BROKER_URL', raw);
+  return broker.origin;
+}
+
 function config() {
   const repo = process.env.GITHUB_REPOSITORY || 'since98kr/chat.ailucy.online';
   const token = process.env.GITHUB_TOKEN || '';
   assert(repo === 'since98kr/chat.ailucy.online', 'INVALID_RELAY_REPO', repo);
   assert(token, 'MISSING_GITHUB_TOKEN', 'GITHUB_TOKEN required');
-  const broker = new URL(BROKER_BASE);
-  assert(broker.protocol === 'https:' && broker.hostname === 'relay.ailucy.online', 'INVALID_BROKER_URL', BROKER_BASE);
-  return { repo, token, brokerBase: broker.origin };
+  const allowQuickTunnel = process.env.COPILOT_RELAY_ALLOW_QUICK_TUNNEL === 'true';
+  const brokerBase = validateBrokerBaseUrl(BROKER_BASE, { allowQuickTunnel });
+  return { repo, token, brokerBase };
 }
 
 async function githubRequest(cfg, path, options = {}) {
