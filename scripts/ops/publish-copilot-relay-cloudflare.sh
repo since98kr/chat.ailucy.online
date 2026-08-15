@@ -61,8 +61,8 @@ if getent ahosts "${HOSTNAME}" >/dev/null 2>&1; then
   fail "${HOSTNAME} already resolves but does not return the required application 401; refusing to overwrite existing DNS or route state."
 fi
 
-CREDENTIALS_PATH="${CLOUDFLARED_HOME}/copilot-relay-credentials-v2.json"
-CREDENTIALS_CONTAINER_PATH='/work/.cloudflared/copilot-relay-credentials-v2.json'
+CREDENTIALS_PATH="${CLOUDFLARED_HOME}/copilot-relay-credentials-v3.json"
+CREDENTIALS_CONTAINER_PATH='/work/.cloudflared/copilot-relay-credentials-v3.json'
 TUNNELS_JSON="${TMP_DIR}/tunnels.json"
 cfctl tunnel list --name "${TUNNEL_NAME}" --output json >"${TUNNELS_JSON}" \
   || fail 'The dedicated Tunnel could not be queried through the approved account certificate.'
@@ -92,7 +92,6 @@ else
 fi
 
 [[ "${TUNNEL_ID}" =~ ^[0-9a-fA-F-]{36}$ ]] || fail 'Dedicated Tunnel credentials do not contain a valid UUID.'
-install -m 600 /dev/null "${CREDENTIALS_PATH}"
 cfctl tunnel token --cred-file "${CREDENTIALS_CONTAINER_PATH}" "${TUNNEL_ID}" >/dev/null \
   || fail 'Dedicated Tunnel UUID was resolved but its limited credentials could not be recovered.'
 [[ -s "${CREDENTIALS_PATH}" ]] || fail 'Dedicated Tunnel credentials were not written to the isolated runner path.'
