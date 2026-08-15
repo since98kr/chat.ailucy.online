@@ -24,7 +24,7 @@ jobs:
       github.event_name == 'workflow_dispatch' ||
       github.actor == 'since98kr' ||
       github.actor == 'github-actions[bot]'
-    runs-on: [self-hosted, linux, x64, chat-staging]
+    runs-on: ubuntu-latest
     environment: staging
     timeout-minutes: 15
     steps:
