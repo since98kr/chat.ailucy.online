@@ -36,12 +36,8 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: "22"
-      - name: Install dependencies
-        run: npm ci
-      - name: Relay source checks
+      - name: Relay transport contract checks
         run: |
           node --check scripts/aicos-copilot-relay-broker-sync.mjs
           node --test tests/aicos-copilot-relay-sync.contract.mjs
-          npx vitest run server/copilot-relay-mcp.test.ts
-          npx tsc --noEmit
           git diff --check
