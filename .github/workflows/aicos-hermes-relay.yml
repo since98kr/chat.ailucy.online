@@ -47,6 +47,13 @@ jobs:
         run: |
           set -Eeuo pipefail
           umask 077
+          # The staging app itself runs in Docker and uses host.docker.internal
+          # to reach the host-native Hermes API. This job runs on the host
+          # runner, so translate only the runner-local address while retaining
+          # the configured scheme/port and leaving staging configuration intact.
+          if [[ "${HERMES_BASE_URL}" == *"host.docker.internal"* ]]; then
+            export HERMES_BASE_URL="${HERMES_BASE_URL/host.docker.internal/127.0.0.1}"
+          fi
           if [[ "${GITHUB_EVENT_NAME}" == "schedule" || "${GITHUB_EVENT_NAME}" == "workflow_dispatch" ]]; then
             node scripts/aicos-hermes-relay-handler.mjs sweep
           else
