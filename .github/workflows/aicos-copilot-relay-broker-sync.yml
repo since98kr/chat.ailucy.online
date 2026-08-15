@@ -1,0 +1,43 @@
+name: AICOS Copilot relay broker sync
+
+on:
+  issues:
+    types: [opened]
+  issue_comment:
+    types: [created]
+  schedule:
+    - cron: "*/5 * * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  issues: write
+  id-token: write
+
+concurrency:
+  group: aicos-copilot-relay-broker-sync
+  cancel-in-progress: false
+
+jobs:
+  sync:
+    if: >-
+      github.event_name == 'schedule' ||
+      github.event_name == 'workflow_dispatch' ||
+      github.actor == 'since98kr' ||
+      github.actor == 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - name: Validate broker sync source
+        run: |
+          node --check scripts/aicos-copilot-relay-broker-sync.mjs
+          node --test tests/aicos-copilot-relay-sync.contract.mjs
+      - name: Sync canonical mailbox through persistent Copilot MCP broker
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          COPILOT_RELAY_BROKER_URL: https://relay.ailucy.online
+        run: node scripts/aicos-copilot-relay-broker-sync.mjs

@@ -1,0 +1,38 @@
+name: Publish Copilot relay Cloudflare route
+
+on:
+  workflow_run:
+    workflows: ["Deploy staging"]
+    types: [completed]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: copilot-relay-cloudflare-route
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      github.event.workflow_run.conclusion == 'success'
+    runs-on: [self-hosted, linux, x64, chat-staging]
+    environment: staging
+    timeout-minutes: 15
+    steps:
+      - name: Checkout current main relay source
+        uses: actions/checkout@v4
+        with:
+          ref: main
+          clean: true
+
+      - name: Validate route publisher without mutation
+        run: bash -n scripts/ops/publish-copilot-relay-cloudflare.sh
+
+      - name: Publish dedicated Copilot relay hostname
+        env:
+          COPILOT_RELAY_HOSTNAME: relay.ailucy.online
+          COPILOT_RELAY_SERVICE_URL: http://127.0.0.1:14174
+        run: bash scripts/ops/publish-copilot-relay-cloudflare.sh

@@ -1,0 +1,48 @@
+name: AICOS Copilot relay source test
+
+on:
+  push:
+    branches:
+      - feature/copilot-relay-mcp-v1
+    paths:
+      - server/copilot-relay-mcp.ts
+      - server/copilot-relay-oidc.ts
+      - server/copilot-relay-mcp.test.ts
+      - server/runtime.ts
+      - scripts/aicos-copilot-relay-broker-sync.mjs
+      - scripts/ops/publish-copilot-relay-cloudflare.sh
+      - tests/aicos-copilot-relay-sync.contract.mjs
+      - .github/workflows/aicos-copilot-relay-source-test.yml
+      - .github/workflows/aicos-copilot-relay-broker-sync.yml
+      - .github/workflows/publish-copilot-relay-cloudflare.yml
+  pull_request:
+    paths:
+      - server/copilot-relay-mcp.ts
+      - server/copilot-relay-oidc.ts
+      - server/copilot-relay-mcp.test.ts
+      - server/runtime.ts
+      - scripts/aicos-copilot-relay-broker-sync.mjs
+      - scripts/ops/publish-copilot-relay-cloudflare.sh
+      - tests/aicos-copilot-relay-sync.contract.mjs
+      - .github/workflows/aicos-copilot-relay-source-test.yml
+      - .github/workflows/aicos-copilot-relay-broker-sync.yml
+      - .github/workflows/publish-copilot-relay-cloudflare.yml
+
+permissions:
+  contents: read
+
+jobs:
+  contract:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - name: Relay transport contract checks
+        run: |
+          node --check scripts/aicos-copilot-relay-broker-sync.mjs
+          node --test tests/aicos-copilot-relay-sync.contract.mjs
+          bash -n scripts/ops/publish-copilot-relay-cloudflare.sh
+          git diff --check
