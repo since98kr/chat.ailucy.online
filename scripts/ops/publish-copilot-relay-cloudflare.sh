@@ -22,6 +22,15 @@ done
 [[ "${SERVICE_URL}" == 'http://127.0.0.1:14175' ]] || fail 'Relay service must be the bounded loopback proxy on 127.0.0.1:14175.'
 docker info >/dev/null 2>&1 || fail 'Docker is unavailable to the staging runner.'
 
+ORIGIN_CERT="${TUNNEL_ORIGIN_CERT:-}"
+if [[ -z "${ORIGIN_CERT}" || ! -r "${ORIGIN_CERT}" ]]; then
+  ORIGIN_CERT="$(find /home /opt /srv -maxdepth 5 -type f -path '*/.cloudflared/cert.pem' -readable -print -quit 2>/dev/null || true)"
+fi
+[[ -n "${ORIGIN_CERT}" && -r "${ORIGIN_CERT}" ]] \
+  || fail 'A readable Cloudflare account certificate was not found in the approved user-owned locations.'
+export TUNNEL_ORIGIN_CERT="${ORIGIN_CERT}"
+log 'Using the readable account certificate from an approved user-owned location.'
+
 probe() {
   local url="$1" prefix="$2" status
   : >"${TMP_DIR}/${prefix}.headers"
