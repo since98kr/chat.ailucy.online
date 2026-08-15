@@ -15,6 +15,7 @@ import {
   validateResult,
   validateWorkOrder,
 } from '../scripts/aicos-relay-v1.mjs';
+import {isTrustedActor, issueSnapshot} from '../scripts/aicos-openclaw-relay-handler.mjs';
 
 const approvals = () => ({
   merge: 'denied',
@@ -40,6 +41,37 @@ function work(overrides = {}) {
     idempotencyKey: 'relay-generic-test-001-v1',
     ...overrides,
   };
+}
+
+function result(overrides = {}) {
+  return {
+    schemaVersion: 'aicos.agent-relay/v1',
+    kind: 'result',
+    taskId: 'relay-generic-test-001',
+    agent: 'openclaw',
+    status: 'PASS',
+    observedAt: '2026-08-15T06:05:00.000Z',
+    summary: 'done',
+    evidence: ['relay:test:PASS'],
+    ...overrides,
+  };
+}
+
+function jsonResponse(value, status = 200) {
+  return new Response(JSON.stringify(value), {
+    status,
+    headers: {'content-type': 'application/json'},
+  });
+}
+
+async function withMockFetch(mock, fn) {
+  const previous = globalThis.fetch;
+  globalThis.fetch = mock;
+  try {
+    return await fn();
+  } finally {
+    globalThis.fetch = previous;
+  }
 }
 
 test('free-form Issue prose is not a relay control message', () => {
@@ -104,14 +136,14 @@ test('child Work Order inherits scope and approvals exactly with durable parent 
 });
 
 test('advisory Work Order may complete cognitively with wrapper evidence', () => {
-  const result = resultFromDecision(work(), {
+  const value = resultFromDecision(work(), {
     action: 'COMPLETE', summary: 'Advisory result completed.',
   }, {
     observedAt: '2026-08-15T06:02:00.000Z',
     evidence: ['gateway:decision:COMPLETE'],
   });
-  assert.equal(result.status, 'PASS');
-  assert.equal(result.agent, 'openclaw');
+  assert.equal(value.status, 'PASS');
+  assert.equal(value.agent, 'openclaw');
 });
 
 test('source-bound Work Order cannot be completed by model assertion alone', () => {
@@ -127,14 +159,14 @@ test('source-bound Work Order cannot be completed by model assertion alone', () 
 });
 
 test('BLOCKED decision produces concrete fail-closed Result', () => {
-  const result = resultFromDecision(work(), {
+  const value = resultFromDecision(work(), {
     action: 'BLOCKED', summary: 'No safe executor.', blockedReason: 'NO_SAFE_EXECUTOR',
   }, {
     observedAt: '2026-08-15T06:04:00.000Z',
     evidence: ['gateway:decision:BLOCKED'],
   });
-  assert.equal(result.status, 'BLOCKED');
-  assert.equal(result.blockedReason, 'NO_SAFE_EXECUTOR');
+  assert.equal(value.status, 'BLOCKED');
+  assert.equal(value.blockedReason, 'NO_SAFE_EXECUTOR');
 });
 
 test('result envelope validation requires evidence for PASS', () => {
@@ -152,4 +184,55 @@ test('rendered Result re-parses without semantic change', () => {
     summary: 'done', evidence: ['chatgpt:test:PASS'],
   });
   assert.deepEqual(parseResult(renderEnvelope(RESULT_MARKER, value)), value);
+});
+
+test('public mailbox trusted actor list is explicit and closed', () => {
+  assert.equal(isTrustedActor('since98kr'), true);
+  assert.equal(isTrustedActor('github-actions[bot]'), true);
+  assert.equal(isTrustedActor('attacker'), false);
+  assert.equal(isTrustedActor(undefined), false);
+});
+
+test('recovery snapshot rejects a relay Issue created by an untrusted actor', async () => {
+  const cfg = {repo: 'since98kr/chat.ailucy.online', token: 'test-token'};
+  await withMockFetch(async (input) => {
+    const url = new URL(String(input));
+    if (url.pathname.endsWith('/issues/77')) {
+      return jsonResponse({
+        number: 77,
+        user: {login: 'attacker'},
+        body: renderEnvelope(WORK_MARKER, work()),
+      });
+    }
+    throw new Error(`unexpected request ${url}`);
+  }, async () => {
+    await assert.rejects(() => issueSnapshot(cfg, 77), /UNTRUSTED_ISSUE_AUTHOR/);
+  });
+});
+
+test('recovery snapshot quarantines a valid-looking Result from an untrusted comment author', async () => {
+  const cfg = {repo: 'since98kr/chat.ailucy.online', token: 'test-token'};
+  await withMockFetch(async (input) => {
+    const url = new URL(String(input));
+    if (url.pathname.endsWith('/issues/78')) {
+      return jsonResponse({
+        number: 78,
+        user: {login: 'since98kr'},
+        body: renderEnvelope(WORK_MARKER, work()),
+      });
+    }
+    if (url.pathname.endsWith('/issues/78/comments')) {
+      return jsonResponse([{
+        id: 9001,
+        user: {login: 'attacker'},
+        body: renderEnvelope(RESULT_MARKER, result()),
+      }]);
+    }
+    throw new Error(`unexpected request ${url}`);
+  }, async () => {
+    const snapshot = await issueSnapshot(cfg, 78);
+    assert.equal(snapshot.results.length, 0);
+    assert.deepEqual(snapshot.invalid, [{comment: 9001, reason: 'UNTRUSTED_RESULT_AUTHOR'}]);
+    assert.equal(snapshot.latest, null);
+  });
 });
