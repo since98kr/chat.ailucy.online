@@ -22,6 +22,11 @@ jobs:
     environment: staging
     timeout-minutes: 15
     steps:
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
       - name: Consume Work Order, call Gateway Lucy, publish canonical Result
         shell: bash
         env:
