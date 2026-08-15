@@ -1,0 +1,59 @@
+name: AICOS Hermes local executor probe
+
+on:
+  push:
+    branches:
+      - test/aicos-relay-gateway-bridge
+    paths:
+      - .github/workflows/aicos-hermes-local-executor-probe.yml
+
+permissions:
+  contents: read
+
+jobs:
+  probe:
+    if: ${{ github.actor == 'since98kr' }}
+    runs-on: [self-hosted, linux, x64, chat-staging]
+    environment: staging
+    timeout-minutes: 10
+    steps:
+      - name: Inspect fixed Hermes executor surface without mutation
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          python3 - <<'PY'
+          import hashlib, json, os, pathlib, subprocess
+
+          candidates = [
+              pathlib.Path.home() / '.local/lib/hermes-queue-consumer/hermes-task-executor',
+              pathlib.Path.home() / '.local/lib/hermes-queue-consumer/hermes-patch-executor',
+          ]
+          report = []
+          for path in candidates:
+              item = {'name': path.name, 'exists': path.is_file()}
+              if path.is_file():
+                  data = path.read_bytes()
+                  item.update({
+                      'executable': os.access(path, os.X_OK),
+                      'size': len(data),
+                      'sha256': hashlib.sha256(data).hexdigest(),
+                  })
+                  try:
+                      p = subprocess.run(
+                          [str(path), '--help'],
+                          stdout=subprocess.PIPE,
+                          stderr=subprocess.PIPE,
+                          text=True,
+                          timeout=10,
+                          check=False,
+                          env={'HOME': str(pathlib.Path.home()), 'PATH': os.environ.get('PATH','')},
+                      )
+                      safe = (p.stdout or '').strip().splitlines()[:20]
+                      item['helpExit'] = p.returncode
+                      item['helpLines'] = safe
+                      item['stderrLength'] = len(p.stderr or '')
+                  except Exception as exc:
+                      item['helpProbe'] = type(exc).__name__
+              report.append(item)
+          print(json.dumps({'executorSurface': report, 'mutationPerformed': False, 'secretValuePrinted': False}, indent=2))
+          PY
