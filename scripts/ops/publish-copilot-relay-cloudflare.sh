@@ -61,36 +61,41 @@ if getent ahosts "${HOSTNAME}" >/dev/null 2>&1; then
   fail "${HOSTNAME} already resolves but does not return the required application 401; refusing to overwrite existing DNS or route state."
 fi
 
+CREDENTIALS_PATH="${CLOUDFLARED_HOME}/copilot-relay-credentials-v2.json"
+CREDENTIALS_CONTAINER_PATH='/work/.cloudflared/copilot-relay-credentials-v2.json'
 TUNNELS_JSON="${TMP_DIR}/tunnels.json"
-cfctl tunnel list --output json >"${TUNNELS_JSON}" \
-  || fail 'The approved Cloudflare account certificate could not authenticate from its read-only Docker mount.'
-TUNNEL_ID="$(python3 - "${TUNNELS_JSON}" "${TUNNEL_NAME}" <<'PY'
+cfctl tunnel list --name "${TUNNEL_NAME}" --output json >"${TUNNELS_JSON}" \
+  || fail 'The dedicated Tunnel could not be queried through the approved account certificate.'
+resolve_tunnel_id() {
+  python3 - "${TUNNELS_JSON}" "${TUNNEL_NAME}" <<'PY'
 import json,sys
 items=json.load(open(sys.argv[1],encoding='utf-8'))
-matches=[str(item.get('id') or item.get('uuid') or '') for item in items if item.get('name')==sys.argv[2] and not item.get('deleted_at')]
+matches=[str(item.get('id') or '') for item in items if item.get('name')==sys.argv[2]]
 if len(matches)>1: raise SystemExit('duplicate dedicated tunnel names')
 print(matches[0] if matches else '')
 PY
-)" || fail 'Could not resolve dedicated tunnel state.'
-
+}
+TUNNEL_ID="$(resolve_tunnel_id)" || fail 'Dedicated Tunnel state is ambiguous.'
 if [[ -z "${TUNNEL_ID}" ]]; then
   log "Creating dedicated named Tunnel ${TUNNEL_NAME}."
-  CREATE_OUTPUT="$(cfctl tunnel create "${TUNNEL_NAME}")"
-  cfctl tunnel list --output json >"${TUNNELS_JSON}"
-  TUNNEL_ID="$(python3 - "${TUNNELS_JSON}" "${TUNNEL_NAME}" <<'PY'
-import json,sys
-items=json.load(open(sys.argv[1],encoding='utf-8'))
-matches=[str(item.get('id') or item.get('uuid') or '') for item in items if item.get('name')==sys.argv[2] and not item.get('deleted_at')]
-if len(matches)!=1: raise SystemExit('dedicated tunnel was not uniquely created')
-print(matches[0])
-PY
-)" || fail 'Dedicated tunnel creation could not be confirmed.'
+  cfctl tunnel create "${TUNNEL_NAME}" >/dev/null \
+    || fail 'Dedicated Tunnel creation failed.'
+  for _attempt in $(seq 1 10); do
+    cfctl tunnel list --name "${TUNNEL_NAME}" --output json >"${TUNNELS_JSON}"
+    TUNNEL_ID="$(resolve_tunnel_id)" || fail 'Dedicated Tunnel state became ambiguous after creation.'
+    [[ -n "${TUNNEL_ID}" ]] && break
+    sleep 2
+  done
+  [[ -n "${TUNNEL_ID}" ]] || fail 'Dedicated Tunnel creation was not visible after the bounded retry window.'
 else
   log "Reusing independently named relay Tunnel ${TUNNEL_NAME}."
 fi
 
-CREDS_PATH="${CLOUDFLARED_HOME}/${TUNNEL_ID}.json"
-[[ -r "${CREDS_PATH}" ]] || fail 'Dedicated tunnel exists but its credentials are unavailable; refusing unrelated tunnel reuse.'
+[[ "${TUNNEL_ID}" =~ ^[0-9a-fA-F-]{36}$ ]] || fail 'Dedicated Tunnel credentials do not contain a valid UUID.'
+install -m 600 /dev/null "${CREDENTIALS_PATH}"
+cfctl tunnel token --cred-file "${CREDENTIALS_CONTAINER_PATH}" "${TUNNEL_ID}" >/dev/null \
+  || fail 'Dedicated Tunnel UUID was resolved but its limited credentials could not be recovered.'
+[[ -s "${CREDENTIALS_PATH}" ]] || fail 'Dedicated Tunnel credentials were not written to the isolated runner path.'
 
 umask 077
 CONFIG_TMP="${TMP_DIR}/config.yml"
@@ -118,7 +123,7 @@ else
     --label online.ailucy.role=copilot-relay \
     --label "online.ailucy.tunnel=${TUNNEL_ID}" \
     --volume "${CONFIG_PATH}:/etc/cloudflared/config.yml:ro" \
-    --volume "${CREDS_PATH}:/etc/cloudflared/credentials.json:ro" \
+    --volume "${CREDENTIALS_PATH}:/etc/cloudflared/credentials.json:ro" \
     "${IMAGE}" tunnel --no-autoupdate --config /etc/cloudflared/config.yml run >/dev/null
 fi
 
