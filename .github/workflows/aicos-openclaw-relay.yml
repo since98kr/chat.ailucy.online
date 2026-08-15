@@ -1,0 +1,55 @@
+name: AICOS OpenClaw relay
+
+on:
+  issues:
+    types: [opened]
+  issue_comment:
+    types: [created]
+  schedule:
+    - cron: "*/5 * * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  issues: write
+
+concurrency:
+  group: aicos-openclaw-relay-${{ github.event.issue.number || 'sweep' }}
+  cancel-in-progress: false
+
+jobs:
+  relay:
+    if: >-
+      github.event_name == 'schedule' ||
+      github.event_name == 'workflow_dispatch' ||
+      github.actor == 'since98kr' ||
+      github.actor == 'github-actions[bot]'
+    runs-on: [self-hosted, linux, x64, chat-staging]
+    environment: staging
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - name: Verify relay source before execution
+        run: |
+          node --check scripts/aicos-relay-v1.mjs
+          node --check scripts/aicos-openclaw-relay-handler.mjs
+          node --test tests/aicos-relay-v1.test.mjs
+      - name: Process relay event or recover durable mailbox
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          OPENCLAW_GATEWAY_BASE_URL: ${{ vars.OPENCLAW_GATEWAY_BASE_URL }}
+          OPENCLAW_GATEWAY_TOKEN: ${{ secrets.OPENCLAW_GATEWAY_TOKEN }}
+          CF_ACCESS_CLIENT_ID: ${{ vars.CF_ACCESS_CLIENT_ID }}
+          CF_ACCESS_CLIENT_SECRET: ${{ secrets.CF_ACCESS_CLIENT_SECRET }}
+          LETTA_OPENCLAW_AGENT_TARGET: ${{ vars.LETTA_OPENCLAW_AGENT_TARGET }}
+        run: |
+          set -Eeuo pipefail
+          umask 077
+          if [[ "${GITHUB_EVENT_NAME}" == "schedule" || "${GITHUB_EVENT_NAME}" == "workflow_dispatch" ]]; then
+            node scripts/aicos-openclaw-relay-handler.mjs sweep
+          else
+            node scripts/aicos-openclaw-relay-handler.mjs event
+          fi
