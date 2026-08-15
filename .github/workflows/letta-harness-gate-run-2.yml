@@ -19,7 +19,7 @@ jobs:
     if: >-
       github.event.pull_request.head.repo.full_name == github.repository &&
       github.event.pull_request.user.login == 'since98kr'
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, linux, x64, chat-staging]
     environment: staging
     timeout-minutes: 35
     env:
