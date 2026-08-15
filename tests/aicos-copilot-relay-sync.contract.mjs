@@ -26,6 +26,7 @@ test('broker sync workflow pins the stable canonical hostname', () => {
     new URL('../.github/workflows/aicos-copilot-relay-broker-sync.yml', import.meta.url),
     'utf8',
   );
+  assert.match(workflow, /environment:\s*staging/);
   assert.match(workflow, /COPILOT_RELAY_BROKER_URL:\s*https:\/\/relay\.ailucy\.online/);
   assert.match(workflow, /CF_ACCESS_CLIENT_ID:\s*\$\{\{ vars\.CF_ACCESS_CLIENT_ID \}\}/);
   assert.match(workflow, /CF_ACCESS_CLIENT_SECRET:\s*\$\{\{ secrets\.CF_ACCESS_CLIENT_SECRET \}\}/);
