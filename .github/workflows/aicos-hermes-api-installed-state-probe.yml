@@ -1,0 +1,60 @@
+name: AICOS Hermes API installed-state probe
+
+on:
+  push:
+    branches:
+      - test/aicos-relay-gateway-bridge
+    paths:
+      - .github/workflows/aicos-hermes-api-installed-state-probe.yml
+
+permissions:
+  contents: read
+
+jobs:
+  probe:
+    if: ${{ github.actor == 'since98kr' }}
+    runs-on: [self-hosted, linux, x64, chat-staging]
+    environment: staging
+    timeout-minutes: 10
+    steps:
+      - name: Inspect Hermes API installed state without mutation
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          unit=/etc/systemd/system/hermes-gateway.service
+          hermes_bin="$HOME/.hermes/hermes-agent/venv/bin/hermes"
+          env_file="$HOME/.hermes/.env"
+
+          active=unknown
+          enabled=unknown
+          sudo_readable=false
+          if sudo -n true >/dev/null 2>&1; then
+            sudo_readable=true
+            if sudo -n systemctl is-active --quiet hermes-gateway.service; then active=true; else active=false; fi
+            if sudo -n systemctl is-enabled --quiet hermes-gateway.service >/dev/null 2>&1; then enabled=true; else enabled=false; fi
+          fi
+
+          python3 - <<'PY' "$unit" "$hermes_bin" "$env_file" "$active" "$enabled" "$sudo_readable"
+          import json, os, pathlib, socket, sys
+          unit, hermes_bin, env_file, active, enabled, sudo_readable = sys.argv[1:]
+          def b(v):
+              return True if v == 'true' else False if v == 'false' else None
+          s = socket.socket()
+          s.settimeout(1)
+          try:
+              port_open = s.connect_ex(('127.0.0.1', 8642)) == 0
+          finally:
+              s.close()
+          print(json.dumps({
+              'unitExists': pathlib.Path(unit).is_file(),
+              'hermesExecutableExistsForRunnerUser': pathlib.Path(hermes_bin).is_file(),
+              'envFileExistsForRunnerUser': pathlib.Path(env_file).is_file(),
+              'serviceActive': b(active),
+              'serviceEnabled': b(enabled),
+              'sudoReadOnlyProbeAvailable': b(sudo_readable),
+              'loopback8642Open': port_open,
+              'envContentsRead': False,
+              'secretValuePrinted': False,
+              'mutationPerformed': False
+          }, indent=2))
+          PY
