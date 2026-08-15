@@ -26,6 +26,7 @@ jobs:
       github.actor == 'since98kr' ||
       github.actor == 'github-actions[bot]'
     runs-on: ubuntu-latest
+    environment: staging
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@v4
