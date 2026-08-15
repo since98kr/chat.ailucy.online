@@ -23,6 +23,8 @@ on:
         description: STAGE_OPENCLAW_HARNESS, CUTOVER_LETTA_HARNESS, or ROLLBACK_OPENCLAW_HARNESS
         required: false
         type: string
+  issue_comment:
+    types: [created]
 
 permissions:
   contents: read
@@ -33,16 +35,66 @@ concurrency:
 
 jobs:
   invoke:
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      (github.event_name == 'issue_comment' &&
+      github.event.issue.number == 143 &&
+      github.event.comment.user.login == 'since98kr' &&
+      github.event.comment.author_association == 'OWNER')
     runs-on: [self-hosted, linux, x64, chat-staging]
     environment: staging
     timeout-minutes: 45
     steps:
+      - name: Resolve exact event-driven request
+        id: request
+        shell: bash
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          INPUT_OPERATION: ${{ inputs.operation }}
+          INPUT_APPROVED_HEAD: ${{ inputs.approved_head }}
+          INPUT_CONFIRMATION: ${{ inputs.confirmation }}
+          COMMENT_BODY: ${{ github.event.comment.body }}
+        run: |
+          set -Eeuo pipefail
+          node <<'NODE'
+          const fs = require("node:fs");
+
+          let operation;
+          let approvedHead;
+          let confirmation = "";
+          if (process.env.EVENT_NAME === "workflow_dispatch") {
+            operation = process.env.INPUT_OPERATION ?? "";
+            approvedHead = process.env.INPUT_APPROVED_HEAD ?? "";
+            confirmation = process.env.INPUT_CONFIRMATION ?? "";
+          } else if (process.env.EVENT_NAME === "issue_comment") {
+            const match = (process.env.COMMENT_BODY ?? "").trim().match(
+              /^\/letta-harness (preflight|isolated|stage|shadow|cutover|status|rollback) ([0-9a-f]{40})(?: (STAGE_OPENCLAW_HARNESS|CUTOVER_LETTA_HARNESS|ROLLBACK_OPENCLAW_HARNESS))?$/,
+            );
+            if (!match) throw new Error("invalid restricted Harness command");
+            [, operation, approvedHead, confirmation = ""] = match;
+          } else {
+            throw new Error("unsupported event");
+          }
+
+          if (!/^[0-9a-f]{40}$/.test(approvedHead)) throw new Error("invalid approved head");
+          const expectedConfirmation = {
+            stage: "STAGE_OPENCLAW_HARNESS",
+            cutover: "CUTOVER_LETTA_HARNESS",
+            rollback: "ROLLBACK_OPENCLAW_HARNESS",
+          }[operation] ?? "";
+          if (confirmation !== expectedConfirmation) throw new Error("invalid operation confirmation");
+          fs.appendFileSync(
+            process.env.GITHUB_OUTPUT,
+            `operation=${operation}\napproved_head=${approvedHead}\nconfirmation=${confirmation}\n`,
+          );
+          NODE
+
       - name: Validate immutable request and enrollment
         shell: bash
         env:
-          OPERATION: ${{ inputs.operation }}
-          APPROVED_HEAD: ${{ inputs.approved_head }}
-          CONFIRMATION: ${{ inputs.confirmation }}
+          OPERATION: ${{ steps.request.outputs.operation }}
+          APPROVED_HEAD: ${{ steps.request.outputs.approved_head }}
+          CONFIRMATION: ${{ steps.request.outputs.confirmation }}
           LETTA_HARNESS_SSH_RESTRICTED_MODE: ${{ vars.LETTA_HARNESS_SSH_RESTRICTED_MODE }}
           LETTA_HARNESS_APPROVED_HEAD: ${{ vars.LETTA_HARNESS_APPROVED_HEAD }}
         run: |
@@ -62,14 +114,14 @@ jobs:
       - name: Invoke exact restricted Harness command
         shell: bash
         env:
-          OPERATION: ${{ inputs.operation }}
-          APPROVED_HEAD: ${{ inputs.approved_head }}
+          OPERATION: ${{ steps.request.outputs.operation }}
+          APPROVED_HEAD: ${{ steps.request.outputs.approved_head }}
           LETTA_HARNESS_SSH_PRIVATE_KEY: ${{ secrets.LETTA_HARNESS_SSH_PRIVATE_KEY }}
           LETTA_HARNESS_SSH_KNOWN_HOSTS: ${{ secrets.LETTA_HARNESS_SSH_KNOWN_HOSTS }}
           LETTA_HARNESS_SSH_HOST: ${{ vars.LETTA_HARNESS_SSH_HOST }}
           LETTA_HARNESS_SSH_PORT: ${{ vars.LETTA_HARNESS_SSH_PORT }}
           LETTA_HARNESS_SSH_USER: ${{ vars.LETTA_HARNESS_SSH_USER }}
-          HARNESS_RESULT_PATH: ${{ runner.temp }}/letta-harness-${{ inputs.operation }}.txt
+          HARNESS_RESULT_PATH: ${{ runner.temp }}/letta-harness-${{ steps.request.outputs.operation }}.txt
         run: |
           set -Eeuo pipefail
           umask 077
@@ -139,7 +191,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: letta-harness-${{ inputs.operation }}-${{ github.run_id }}
+          name: letta-harness-${{ steps.request.outputs.operation }}-${{ github.run_id }}
           path: ${{ runner.temp }}/letta-harness-*.txt
           if-no-files-found: warn
           retention-days: 14
