@@ -20,7 +20,6 @@ for command in cloudflared curl docker getent python3; do
 done
 [[ "${HOSTNAME}" =~ ^[A-Za-z0-9.-]+$ ]] || fail 'Invalid relay hostname.'
 [[ "${SERVICE_URL}" == 'http://127.0.0.1:14175' ]] || fail 'Relay service must be the bounded loopback proxy on 127.0.0.1:14175.'
-[[ -r "${CLOUDFLARED_HOME}/cert.pem" ]] || fail 'Cloudflare account certificate is not readable.'
 docker info >/dev/null 2>&1 || fail 'Docker is unavailable to the staging runner.'
 
 probe() {
