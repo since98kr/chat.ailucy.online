@@ -42,3 +42,29 @@ jobs:
           COPILOT_RELAY_HOSTNAME: relay.ailucy.online
           COPILOT_RELAY_SERVICE_URL: http://127.0.0.1:14175
         run: bash scripts/ops/publish-copilot-relay-cloudflare.sh
+
+  verify-external:
+    needs: publish
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Verify the public relay from outside the origin
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          headers="$(mktemp)"
+          body="$(mktemp)"
+          trap 'rm -f "${headers}" "${body}"' EXIT
+          status="$(curl --disable --silent --show-error             --connect-timeout 5 --max-time 20 --max-redirs 0             --dump-header "${headers}" --output "${body}"             --write-out '%{http_code}'             https://relay.ailucy.online/mcp/copilot-relay)"
+          if [[ "${status}" =~ ^30[12378]$ ]] && grep -Eiq '^location:.*(cloudflareaccess\.com|/cdn-cgi/access/login)' "${headers}"; then
+            echo 'BLOCKED: Cloudflare Access intercepts the public MCP API-key endpoint.' >&2
+            exit 1
+          fi
+          [[ "${status}" == '401' ]] || {
+            echo "BLOCKED: expected external HTTP 401, got ${status}." >&2
+            exit 1
+          }
+          grep -Fq 'MCP_AUTHENTICATION_REQUIRED' "${body}" || {
+            echo 'BLOCKED: external response lacks MCP_AUTHENTICATION_REQUIRED.' >&2
+            exit 1
+          }
