@@ -34,6 +34,18 @@ test('broker sync workflow pins the stable canonical hostname', () => {
   assert.doesNotMatch(workflow, /COPILOT_RELAY_ALLOW_QUICK_TUNNEL/);
 });
 
+test('route publisher verifies the public endpoint outside the origin', () => {
+  const workflow = readFileSync(
+    new URL('../.github/workflows/publish-copilot-relay-cloudflare.yml', import.meta.url),
+    'utf8',
+  );
+  assert.match(workflow, /verify-external:/);
+  assert.match(workflow, /verify-external:[\s\S]*runs-on:\s*ubuntu-latest/);
+  assert.match(workflow, /curl --disable/);
+  assert.match(workflow, /--max-redirs 0/);
+  assert.match(workflow, /Cloudflare Access intercepts the public MCP API-key endpoint/);
+});
+
 test('Quick Tunnel broker URL requires an explicit temporary gate', () => {
   const quick = 'https://temporary-relay.trycloudflare.com';
   assert.throws(() => validateBrokerBaseUrl(quick), /INVALID_BROKER_URL/);
