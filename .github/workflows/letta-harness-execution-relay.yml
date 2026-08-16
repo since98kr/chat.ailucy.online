@@ -91,7 +91,7 @@ jobs:
           CONFIRMATION: ${{ steps.request.outputs.confirmation }}
           LETTA_HARNESS_SSH_RESTRICTED_MODE: ${{ vars.LETTA_HARNESS_SSH_RESTRICTED_MODE }}
           LETTA_HARNESS_APPROVED_HEAD: ${{ vars.LETTA_HARNESS_APPROVED_HEAD }}
-          EXPECTED_CONTROL_HEAD: 5ae2b67271bc63cf87985d387e6315705db47330
+          EXPECTED_CONTROL_HEAD: 6211e4d85a8176ae3507e701e6f37c8183c23555
         run: |
           set -Eeuo pipefail
           [[ "${APPROVED_HEAD}" =~ ^[0-9a-f]{40}$ ]]
@@ -174,8 +174,8 @@ jobs:
           install -m 0600 "${stdout_path}" "${HARNESS_RESULT_PATH}"
 
           if [[ "${rc}" -ne 0 ]]; then
-            sed -n '1,20p' "${stderr_path}" \
-              | sed -E 's#(/[A-Za-z0-9._-]+){2,}#<path>#g; s/(token|secret|password|key)=[^[:space:]]+/\1=[REDACTED]/gi' >&2
+            sed -n '1,40p' "${stderr_path}" \
+              | sed -E 's/(token|secret|password|key)=[^[:space:]]+/\1=[REDACTED]/gi' >&2
             fail "restricted ${OPERATION} command failed with exit ${rc}"
           fi
 
