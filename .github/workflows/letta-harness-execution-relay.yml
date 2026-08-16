@@ -91,7 +91,7 @@ jobs:
           CONFIRMATION: ${{ steps.request.outputs.confirmation }}
           LETTA_HARNESS_SSH_RESTRICTED_MODE: ${{ vars.LETTA_HARNESS_SSH_RESTRICTED_MODE }}
           LETTA_HARNESS_APPROVED_HEAD: ${{ vars.LETTA_HARNESS_APPROVED_HEAD }}
-          EXPECTED_CONTROL_HEAD: 236e9b8d6ba8e774224a186b0a853b48a3243791
+          EXPECTED_CONTROL_HEAD: 3302fa692ff84d1b43e5d546f5564a20c17b002e
         run: |
           set -Eeuo pipefail
           [[ "${APPROVED_HEAD}" =~ ^[0-9a-f]{40}$ ]]
@@ -161,6 +161,8 @@ jobs:
             -i "${key_path}" \
             -o IdentitiesOnly=yes \
             -o BatchMode=yes \
+            -o ControlMaster=no \
+            -o ControlPath=none \
             -o ConnectTimeout=20 \
             -o StrictHostKeyChecking=yes \
             -o "UserKnownHostsFile=${known_hosts_path}" \
