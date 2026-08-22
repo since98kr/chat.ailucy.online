@@ -9,6 +9,8 @@ on:
       - 'compose.staging.yml'
       - 'scripts/ops/openclaw-letta-staging-smoke.sh'
       - 'scripts/ops/staging-preflight.sh'
+      - 'scripts/ops/staging-qa-gate-guard.sh'
+      - 'scripts/ops/staging-qa-gate-guard.nodecheck.sh'
       - 'ops/letta-bridge/**'
       - 'e2e-staging/letta-full-runtime.spec.ts'
       - 'package.json'
@@ -23,6 +25,8 @@ on:
       - 'compose.staging.yml'
       - 'scripts/ops/openclaw-letta-staging-smoke.sh'
       - 'scripts/ops/staging-preflight.sh'
+      - 'scripts/ops/staging-qa-gate-guard.sh'
+      - 'scripts/ops/staging-qa-gate-guard.nodecheck.sh'
       - 'ops/letta-bridge/**'
       - 'e2e-staging/letta-full-runtime.spec.ts'
       - 'package.json'
@@ -64,6 +68,8 @@ jobs:
           bash -n ops/letta-bridge/bootstrap-staging-ssh-access.sh
           bash -n ops/letta-bridge/configure-github-staging.sh
           bash -n scripts/ops/staging-preflight.sh
+          bash -n scripts/ops/staging-qa-gate-guard.sh
+          bash -n scripts/ops/staging-qa-gate-guard.nodecheck.sh
           bash -n scripts/ops/openclaw-letta-staging-smoke.sh
 
       - name: Validate legacy bridge preservation and OpenClaw staging guards
@@ -80,6 +86,7 @@ jobs:
           preflight_workflow='.github/workflows/staging-preflight.yml'
           compose='compose.staging.yml'
           preflight='scripts/ops/staging-preflight.sh'
+          qa_guard='scripts/ops/staging-qa-gate-guard.sh'
           continuity='scripts/ops/openclaw-letta-staging-smoke.sh'
           qa='e2e-staging/letta-full-runtime.spec.ts'
 
@@ -138,7 +145,26 @@ jobs:
           grep -Fq '/v1/chat/completions' "${workflow}"
           grep -Fq 'Verify OpenClaw-backed Letta session continuity' "${workflow}"
           grep -Fq 'Capture authenticated OpenClaw Lucy target evidence' "${workflow}"
-          grep -Fq 'CHAT_LETTA_FULL_RUNTIME_QA_REQUIRED: '\''false'\''' "${workflow}"
+
+          # All staging QA decisions must come from explicit Environment variables.
+          qa_expr='$'
+          qa_expr+='{{ vars.CHAT_LETTA_FULL_RUNTIME_QA_REQUIRED }}'
+          grep -Fq "CHAT_LETTA_FULL_RUNTIME_QA_REQUIRED: ${qa_expr}" "${workflow}"
+          if grep -Fq "CHAT_LETTA_FULL_RUNTIME_QA_REQUIRED: 'false'" "${workflow}"; then
+            echo 'Letta full-runtime QA must not be silently pinned to false' >&2
+            exit 1
+          fi
+          grep -Fq 'run: bash scripts/ops/staging-qa-gate-guard.sh enforce-all' "${workflow}"
+          for qa_var in \
+            CHAT_MULTIMODAL_QA_REQUIRED \
+            CHAT_GENERATED_ARTIFACT_QA_REQUIRED \
+            CHAT_EXTERNAL_QA_REQUIRED \
+            CHAT_LETTA_FULL_RUNTIME_QA_REQUIRED; do
+            grep -Fq "${qa_var}" "${workflow}"
+            grep -Fq "${qa_var}" "${preflight}"
+            grep -Fq "${qa_var}" "${qa_guard}"
+          done
+
           grep -Fq 'OPENCLAW_GATEWAY_BASE_URL' "${preflight_workflow}"
           grep -Fq 'LETTA_PROTOCOL: openclaw' "${preflight_workflow}"
           grep -Fq 'LETTA_OPENCLAW_AGENT_TARGET' "${compose}"
@@ -176,7 +202,7 @@ jobs:
         with:
           name: letta-full-bridge-contract-${{ github.run_id }}
           path: full-bridge-contract.log
-          if-no-files-found: error
+          if-no-files-found: warn
           retention-days: 7
 
       - name: Require preserved bridge capability contract
