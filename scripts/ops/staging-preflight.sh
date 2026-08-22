@@ -19,6 +19,11 @@ fail() {
   exit 1
 }
 
+QA_GATE_GUARD="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/staging-qa-gate-guard.sh"
+test -r "${QA_GATE_GUARD}" || fail "staging QA gate guard not found: ${QA_GATE_GUARD}"
+# shellcheck source=scripts/ops/staging-qa-gate-guard.sh
+source "${QA_GATE_GUARD}"
+
 command -v docker >/dev/null || fail 'docker is not installed'
 docker compose version >/dev/null || fail 'docker compose is unavailable'
 docker info >/dev/null || fail 'the current user cannot access Docker'
@@ -51,6 +56,8 @@ ENV_VARS=(
   CHAT_ALLOWED_SERVICE_CLIENT_IDS CHAT_CF_ACCESS_ISSUER CHAT_CF_ACCESS_AUD CHAT_ACCESS_TOKEN
   CHAT_RATE_LIMIT_GENERAL CHAT_RATE_LIMIT_CHAT CHAT_RATE_LIMIT_UPLOAD CHAT_PREFLIGHT_MIN_FREE_BYTES
   CHAT_MAX_GENERATED_ARTIFACT_BYTES CHAT_MAX_INLINE_GENERATED_ARTIFACT_PAYLOAD_BYTES
+  CHAT_MULTIMODAL_QA_REQUIRED CHAT_GENERATED_ARTIFACT_QA_REQUIRED
+  CHAT_EXTERNAL_QA_REQUIRED CHAT_LETTA_FULL_RUNTIME_QA_REQUIRED
   LETTA_BASE_URL LETTA_CHAT_PATH LETTA_HEALTH_PATH LETTA_AGENT_ID LETTA_API_KEY LETTA_TIMEOUT_MS
   LETTA_PROTOCOL LETTA_OPENCLAW_AGENT_TARGET LETTA_OPENCLAW_SESSION_PREFIX LETTA_MODEL_MAP_JSON
   LETTA_MAX_ARTIFACT_BYTES LETTA_MAX_ARTIFACT_TOTAL_BYTES LETTA_MAX_TEXT_ARTIFACT_BYTES
@@ -86,6 +93,17 @@ ARGS=()
 if [[ "${STRICT}" == 'true' ]]; then
   ARGS+=(--strict)
 fi
+
+# Fail closed on the staging QA gates before any container is started. Gate
+# variables are only mandatory on the strict (deployment) path so that the
+# non-strict CI wrapper exercise keeps working, but the generated artifact
+# contract is enforced whenever the gate is switched on.
+if [[ "${STRICT}" == 'true' ]]; then
+  qa_gate_validate_required_vars \
+    || fail 'staging QA gate variables must be explicitly true or false before the runtime container starts'
+fi
+qa_gate_enforce_generated_artifact_contract \
+  || fail 'generated artifact QA gate requires HERMES_PROTOCOL=openai, HERMES_ARTIFACT_TOOL_ENABLED=true, and HERMES_ARTIFACT_ENVELOPE_ENABLED=true'
 
 log "Running exact-runtime preflight for ${IMAGE} as ${RUNTIME_UID}:${RUNTIME_GID}."
 set +e
