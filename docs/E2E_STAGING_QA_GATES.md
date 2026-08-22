@@ -91,8 +91,11 @@ The reply must contain the model name and the literal
 `/do not know|don't know|모르|알 수 없/`, closing the escape of a polite refusal
 in either language.
 
-This gate is deferred, and is pinned to the string literal `'false'` in the
-workflow rather than read from a variable.
+This gate is deferred. It is no longer pinned to the string literal `'false'` in
+the workflow: like the other three gates it is now read from
+`vars.CHAT_LETTA_FULL_RUNTIME_QA_REQUIRED`, and the staging environment must set
+it explicitly to `false` while it stays deferred. See
+[Fail-closed gate configuration](#fail-closed-gate-configuration).
 
 The reason is not that the behaviour is unwanted. It is that this spec was
 written against the legacy Letta CLI bridge, where the runtime emitted these
@@ -114,6 +117,56 @@ of `127.0.0.1:14174`, exercising the Access service-token path and the tunnel.
 
 Deferred until the two enabled gates pass on loopback. Running it earlier
 conflates application failures with ingress failures.
+
+## Fail-closed gate configuration
+
+An absent variable used to mean "gate off, deployment green". That is exactly
+the failure mode this document was written about, so the workflow no longer
+tolerates it. All four gate variables are read from the staging environment and
+validated by `scripts/ops/staging-qa-gate-guard.sh` before anything is deployed:
+
+| Value | Result |
+| --- | --- |
+| `true` | gate enabled |
+| `false` | gate deliberately deferred |
+| undefined, empty, or anything else (`TRUE`, `True`, `yes`, `1`, `on`, values with surrounding whitespace) | the job fails before deployment |
+
+Matching is exact and lower-case on purpose: `TRUE` is a typo, not a decision,
+and a fail-closed gate should not guess. Set each of the following in the
+`staging` GitHub Environment as an explicit `true` or `false` before deploying:
+
+- `CHAT_MULTIMODAL_QA_REQUIRED`
+- `CHAT_GENERATED_ARTIFACT_QA_REQUIRED`
+- `CHAT_EXTERNAL_QA_REQUIRED`
+- `CHAT_LETTA_FULL_RUNTIME_QA_REQUIRED`
+
+The same four variables are passed through `scripts/deploy/staging.sh` into the
+exact-runtime preflight, which re-validates them whenever
+`CHAT_PREFLIGHT_STRICT=true`. Deployment always runs strict, so the check
+applies to every real deployment; the non-strict CI wrapper exercise is
+unaffected.
+
+### Generated artifact contract
+
+`CHAT_GENERATED_ARTIFACT_QA_REQUIRED=true` asserts that a model-produced file
+reaches the user intact. That is only meaningful if the runtime is actually
+configured to produce one, so when the gate is on the preflight requires, before
+the container starts:
+
+- `HERMES_PROTOCOL=openai`
+- `HERMES_ARTIFACT_TOOL_ENABLED=true`
+- `HERMES_ARTIFACT_ENVELOPE_ENABLED=true`
+
+Any deviation stops the deployment with a message naming the variable, the
+expected value, and the received value. The previous behaviour was to start the
+container and let the Playwright spec fail later on a missing `artifact.created`
+event, which is the same outcome reported much less clearly.
+
+When the gate is `false` this contract is not evaluated at all.
+
+`scripts/ops/staging-qa-gate-guard.nodecheck.sh` covers the accepted and
+rejected combinations and needs neither Docker nor a network. It runs as part of
+`npm test` through `npm run test:qa-gates`.
 
 ## Interpreting a failure
 
