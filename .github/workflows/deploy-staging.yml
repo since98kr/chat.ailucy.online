@@ -85,6 +85,17 @@ jobs:
           echo 'SKIP: Letta Lucy cognition remains in Letta, while Chat side-effect execution is now routed through the OpenClaw Gateway.'
           echo 'The legacy full-CLI bridge files remain in the repository for rollback investigation only.'
 
+      - name: Enforce fail-closed staging QA gate configuration
+        env:
+          CHAT_MULTIMODAL_QA_REQUIRED: ${{ vars.CHAT_MULTIMODAL_QA_REQUIRED }}
+          CHAT_GENERATED_ARTIFACT_QA_REQUIRED: ${{ vars.CHAT_GENERATED_ARTIFACT_QA_REQUIRED }}
+          CHAT_EXTERNAL_QA_REQUIRED: ${{ vars.CHAT_EXTERNAL_QA_REQUIRED }}
+          CHAT_LETTA_FULL_RUNTIME_QA_REQUIRED: ${{ vars.CHAT_LETTA_FULL_RUNTIME_QA_REQUIRED }}
+          HERMES_PROTOCOL: ${{ vars.HERMES_PROTOCOL }}
+          HERMES_ARTIFACT_TOOL_ENABLED: ${{ vars.HERMES_ARTIFACT_TOOL_ENABLED }}
+          HERMES_ARTIFACT_ENVELOPE_ENABLED: ${{ vars.HERMES_ARTIFACT_ENVELOPE_ENABLED }}
+        run: bash scripts/ops/staging-qa-gate-guard.sh enforce-all
+
       - name: Deploy with strict preflight, backup, health check, and rollback
         env:
           CHAT_STAGING_ROOT: /opt/chat-v2/staging
@@ -138,6 +149,10 @@ jobs:
           HERMES_ARTIFACT_TOOL_ENABLED: ${{ vars.HERMES_ARTIFACT_TOOL_ENABLED }}
           HERMES_ARTIFACT_ENVELOPE_ENABLED: ${{ vars.HERMES_ARTIFACT_ENVELOPE_ENABLED }}
           HERMES_DOCKER_NETWORK: ${{ vars.HERMES_DOCKER_NETWORK }}
+          CHAT_MULTIMODAL_QA_REQUIRED: ${{ vars.CHAT_MULTIMODAL_QA_REQUIRED }}
+          CHAT_GENERATED_ARTIFACT_QA_REQUIRED: ${{ vars.CHAT_GENERATED_ARTIFACT_QA_REQUIRED }}
+          CHAT_EXTERNAL_QA_REQUIRED: ${{ vars.CHAT_EXTERNAL_QA_REQUIRED }}
+          CHAT_LETTA_FULL_RUNTIME_QA_REQUIRED: ${{ vars.CHAT_LETTA_FULL_RUNTIME_QA_REQUIRED }}
         run: bash scripts/deploy/staging.sh "$(git rev-parse HEAD)"
 
       - name: Verify real Hermes and Letta transport
@@ -158,7 +173,7 @@ jobs:
           CHAT_STAGING_EMAIL: ${{ vars.CHAT_ALLOWED_EMAILS }}
           CHAT_MULTIMODAL_QA_REQUIRED: ${{ vars.CHAT_MULTIMODAL_QA_REQUIRED }}
           CHAT_GENERATED_ARTIFACT_QA_REQUIRED: ${{ vars.CHAT_GENERATED_ARTIFACT_QA_REQUIRED }}
-          CHAT_LETTA_FULL_RUNTIME_QA_REQUIRED: 'false'
+          CHAT_LETTA_FULL_RUNTIME_QA_REQUIRED: ${{ vars.CHAT_LETTA_FULL_RUNTIME_QA_REQUIRED }}
           CHAT_HERMES_VISION_AGENT_ID: ${{ vars.CHAT_HERMES_VISION_AGENT_ID }}
         run: bash scripts/ops/staging-browser-smoke.sh
 
@@ -199,7 +214,7 @@ jobs:
           CHAT_EXTERNAL_QA_REQUIRED: ${{ vars.CHAT_EXTERNAL_QA_REQUIRED }}
           CHAT_MULTIMODAL_QA_REQUIRED: ${{ vars.CHAT_MULTIMODAL_QA_REQUIRED }}
           CHAT_GENERATED_ARTIFACT_QA_REQUIRED: ${{ vars.CHAT_GENERATED_ARTIFACT_QA_REQUIRED }}
-          CHAT_LETTA_FULL_RUNTIME_QA_REQUIRED: 'false'
+          CHAT_LETTA_FULL_RUNTIME_QA_REQUIRED: ${{ vars.CHAT_LETTA_FULL_RUNTIME_QA_REQUIRED }}
           CHAT_HERMES_VISION_AGENT_ID: ${{ vars.CHAT_HERMES_VISION_AGENT_ID }}
           CHAT_STAGING_BASE_URL: ${{ vars.CHAT_PUBLIC_ORIGIN }}
           CF_ACCESS_CLIENT_ID: ${{ vars.CF_ACCESS_CLIENT_ID }}
@@ -224,9 +239,10 @@ jobs:
             echo "- Public endpoint: \`${{ vars.CHAT_PUBLIC_ORIGIN }}\`"
             echo '- Letta transport: `openclaw`'
             echo "- OpenClaw Lucy target: \`${{ vars.LETTA_OPENCLAW_AGENT_TARGET }}\`"
-            echo "- External QA required: \`${{ vars.CHAT_EXTERNAL_QA_REQUIRED || 'false' }}\`"
-            echo "- Multimodal QA required: \`${{ vars.CHAT_MULTIMODAL_QA_REQUIRED || 'false' }}\`"
-            echo "- Generated artifact QA required: \`${{ vars.CHAT_GENERATED_ARTIFACT_QA_REQUIRED || 'false' }}\`"
+            echo "- External QA required: \`${{ vars.CHAT_EXTERNAL_QA_REQUIRED }}\`"
+            echo "- Multimodal QA required: \`${{ vars.CHAT_MULTIMODAL_QA_REQUIRED }}\`"
+            echo "- Generated artifact QA required: \`${{ vars.CHAT_GENERATED_ARTIFACT_QA_REQUIRED }}\`"
+            echo "- Letta full runtime QA required: \`${{ vars.CHAT_LETTA_FULL_RUNTIME_QA_REQUIRED }}\`"
             echo '- Required Letta/OpenClaw gates: private Gateway health, explicit Lucy agent target, real Chat transport, two-turn same-Conversation session continuity, redaction, and configured artifact/browser gates'
             echo '- Legacy direct Letta CLI/HMAC tool proof is not a release gate in OpenClaw mode.'
             for item in last-deployment.json last-preflight.json last-backup.json last-backup-verify.json last-health.json last-ops-status.json; do
