@@ -1,0 +1,26 @@
+name: Lucy remote broker recovery
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/lucy-remote-broker-recovery.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  recover:
+    runs-on: [self-hosted, linux, x64, chat-staging]
+    timeout-minutes: 5
+    steps:
+      - name: Restart existing lucy-remote broker
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          host="$(hostname -s)"
+          [[ "$host" == "agentlucy" || "$host" == "home00" ]]
+          systemctl --user restart lucy-remote-agent.service
+          sleep 3
+          systemctl --user is-active lucy-remote-agent.service
+          systemctl --user show lucy-remote-agent.service -p ActiveState -p SubState -p MainPID --no-pager
