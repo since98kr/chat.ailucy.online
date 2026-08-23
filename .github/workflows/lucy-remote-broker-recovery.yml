@@ -1,16 +1,20 @@
 name: Lucy remote broker recovery
 
 on:
-  push:
-    branches: [main]
-    paths:
-      - '.github/workflows/lucy-remote-broker-recovery.yml'
+  issue_comment:
+    types: [created]
 
 permissions:
   contents: read
+  issues: write
 
 jobs:
   recover:
+    if: >-
+      github.event.issue.number == 143 &&
+      github.event.comment.user.login == 'since98kr' &&
+      github.event.comment.author_association == 'OWNER' &&
+      github.event.comment.body == '/lucy-remote-recover'
     runs-on: [self-hosted, linux, x64, chat-staging]
     timeout-minutes: 5
     steps:
@@ -18,10 +22,19 @@ jobs:
         shell: bash
         run: |
           set -Eeuo pipefail
-          echo RECOVERY_TRIGGERED
           host="$(hostname -s)"
           [[ "$host" == "agentlucy" || "$host" == "home00" ]]
           systemctl --user restart lucy-remote-agent.service
           sleep 3
-          systemctl --user is-active lucy-remote-agent.service
+          [[ "$(systemctl --user is-active lucy-remote-agent.service)" == "active" ]]
           systemctl --user show lucy-remote-agent.service -p ActiveState -p SubState -p MainPID --no-pager
+      - name: Publish recovery receipt
+        uses: actions/github-script@v7
+        with:
+          script: |
+            await github.rest.issues.createComment({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: 143,
+              body: 'LUCY_REMOTE_BROKER_RECOVERY_PASS',
+            });
