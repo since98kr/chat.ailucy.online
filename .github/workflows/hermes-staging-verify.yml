@@ -102,8 +102,8 @@ jobs:
         run: |
           set -euo pipefail
           npx playwright test \
-            e2e-staging/hermes-only.spec.ts \
-            e2e-staging/multimodal.spec.ts \
+            hermes-only.spec.ts \
+            multimodal.spec.ts \
             --grep '^Hermes|^real Hermes returns' \
             --config playwright.staging.config.ts
 
@@ -117,8 +117,8 @@ jobs:
         run: |
           set -euo pipefail
           npx playwright test \
-            e2e-staging/hermes-only.spec.ts \
-            e2e-staging/multimodal.spec.ts \
+            hermes-only.spec.ts \
+            multimodal.spec.ts \
             --grep '^Hermes registry|^real Hermes returns' \
             --config playwright.external.config.ts
 
