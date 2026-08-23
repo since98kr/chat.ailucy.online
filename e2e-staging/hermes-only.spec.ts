@@ -45,9 +45,7 @@ async function context() {
 }
 
 async function createConversation(api: ApiContext, agentId: string, title: string) {
-  const response = await api.post('/api/conversations', {
-    data: { systemId: 'hermes', agentId, title },
-  });
+  const response = await api.post('/api/conversations', { data: { systemId: 'hermes', agentId, title } });
   expect(response.status(), await response.text()).toBe(201);
   return ((await response.json()) as { conversation: { id: string } }).conversation.id;
 }
@@ -62,8 +60,9 @@ async function send(api: ApiContext, id: string, content: string, artifactIds: s
     data: { content, artifactIds, clientMessageId: randomUUID() },
     timeout: 180_000,
   });
-  expect(response.status(), await response.text()).toBe(200);
-  return (await response.text()).trim().split('\n').filter(Boolean).map((line) => JSON.parse(line) as StreamEvent);
+  const body = await response.text();
+  expect(response.status(), body).toBe(200);
+  return body.trim().split('\n').filter(Boolean).map((line) => JSON.parse(line) as StreamEvent);
 }
 
 function completedText(events: StreamEvent[]) {
@@ -77,8 +76,9 @@ async function upload(api: ApiContext, conversationId: string, name: string, mim
   const response = await api.post(`/api/conversations/${conversationId}/artifacts`, {
     multipart: { file: { name, mimeType, buffer } },
   });
-  expect(response.status(), await response.text()).toBe(201);
-  return ((await response.json()) as { artifact: { id: string } }).artifact.id;
+  const body = await response.text();
+  expect(response.status(), body).toBe(201);
+  return (JSON.parse(body) as { artifact: { id: string } }).artifact.id;
 }
 
 test('Hermes registry, routing, participants, and fail-closed contracts', async ({}, testInfo) => {
@@ -126,20 +126,17 @@ test('Hermes registry, routing, participants, and fail-closed contracts', async 
       rejectedMentions: [],
     }));
 
-    const invalid = await api.post('/api/conversations', {
-      data: { systemId: 'hermes', agentId: 'DOES_NOT_EXIST', title: 'invalid-agent-contract' },
-    });
-    expect(invalid.status()).toBe(409);
-    expect(await invalid.json()).toEqual(expect.objectContaining({ error: 'AGENT_UNAVAILABLE' }));
-
-    const mismatch = await api.post('/api/conversations', {
-      data: { systemId: 'letta', agentId: 'Xixi', title: 'system-mismatch-contract' },
-    });
-    expect(mismatch.status()).toBe(409);
-    expect(await mismatch.json()).toEqual(expect.objectContaining({ error: 'AGENT_UNAVAILABLE' }));
+    for (const input of [
+      { systemId: 'hermes', agentId: 'DOES_NOT_EXIST', title: 'invalid-agent-contract' },
+      { systemId: 'letta', agentId: 'Xixi', title: 'system-mismatch-contract' },
+    ]) {
+      const rejected = await api.post('/api/conversations', { data: input });
+      expect(rejected.status()).toBe(409);
+      expect(await rejected.json()).toEqual(expect.objectContaining({ error: 'AGENT_UNAVAILABLE' }));
+    }
 
     await testInfo.attach('hermes-registry.json', {
-      body: Buffer.from(JSON.stringify({ agents: agents.map(({ createdAt: _createdAt, updatedAt: _updatedAt, ...agent }) => agent) }, null, 2)),
+      body: Buffer.from(JSON.stringify({ agents }, null, 2)),
       contentType: 'application/json',
     });
   } finally {
@@ -169,8 +166,7 @@ test('Hermes every enabled persona supports isolated direct chat', async ({}, te
     }
     expect(new Set(evidence.map((item) => item.conversationId)).size).toBe(evidence.length);
     await testInfo.attach('hermes-direct-chat.json', {
-      body: Buffer.from(JSON.stringify(evidence, null, 2)),
-      contentType: 'application/json',
+      body: Buffer.from(JSON.stringify(evidence, null, 2)), contentType: 'application/json',
     });
   } finally {
     for (const id of conversations.reverse()) await removeConversation(api, id);
@@ -198,14 +194,15 @@ test('Hermes Gemma understands an image-only marker', async ({ page }, testInfo)
       ctx.fillText(text, 30, 170);
       return canvas.toDataURL('image/png').split(',')[1];
     }, marker);
-    conversationId = await createConversation(api, process.env.CHAT_HERMES_VISION_AGENT_ID?.trim() || 'Gemma', `HERMES_VISION_QA_${Date.now()}`);
+    const visionAgentId = process.env.CHAT_HERMES_VISION_AGENT_ID?.trim() || 'Gemma';
+    conversationId = await createConversation(api, visionAgentId, `HERMES_VISION_QA_${Date.now()}`);
     const artifactId = await upload(api, conversationId, 'hermes-vision.png', 'image/png', Buffer.from(imageBase64, 'base64'));
     const events = await send(api, conversationId, 'Transcribe the large text in the attached synthetic QA image exactly.', [artifactId]);
-    const deliveries = events.filter((event) => event.type === 'artifacts.delivery').map((event) => event.delivery?.state);
-    expect(deliveries).toEqual(['delivering', 'delivered']);
+    expect(events.filter((event) => event.type === 'artifacts.delivery').map((event) => event.delivery?.state))
+      .toEqual(['delivering', 'delivered']);
     expect(completedText(events)).toContain(marker);
     await testInfo.attach('hermes-vision.json', {
-      body: Buffer.from(JSON.stringify({ agentId: 'Gemma', conversationId, artifactId, marker }, null, 2)),
+      body: Buffer.from(JSON.stringify({ agentId: visionAgentId, conversationId, artifactId, marker }, null, 2)),
       contentType: 'application/json',
     });
   } finally {

@@ -1,0 +1,168 @@
+name: Verify Hermes staging
+
+on:
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: Git ref containing the verification suite
+        required: true
+        default: main
+        type: string
+
+permissions:
+  contents: read
+  statuses: write
+
+concurrency:
+  group: chat-v2-hermes-staging-verify
+  cancel-in-progress: false
+
+jobs:
+  verify:
+    name: Verify Hermes independently of Letta and OpenClaw
+    runs-on: [self-hosted, linux, x64, chat-staging]
+    environment: staging
+    timeout-minutes: 45
+
+    steps:
+      - name: Checkout verification revision
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.ref || github.sha }}
+          clean: true
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Resolve verification revision
+        id: source
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+          git status --short
+          git rev-parse HEAD
+
+      - name: Mark Hermes verification pending
+        uses: actions/github-script@v7
+        env:
+          VERIFY_SHA: ${{ steps.source.outputs.sha }}
+        with:
+          script: |
+            await github.rest.repos.createCommitStatus({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              sha: process.env.VERIFY_SHA,
+              state: 'pending',
+              context: 'chat-v2/hermes-staging',
+              description: 'Hermes-only staging verification is running',
+              target_url: `${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`,
+            });
+
+      - name: Enforce Hermes artifact QA contract
+        shell: bash
+        env:
+          HERMES_PROTOCOL: ${{ vars.HERMES_PROTOCOL }}
+          HERMES_ARTIFACT_TOOL_ENABLED: ${{ vars.HERMES_ARTIFACT_TOOL_ENABLED }}
+          HERMES_ARTIFACT_ENVELOPE_ENABLED: ${{ vars.HERMES_ARTIFACT_ENVELOPE_ENABLED }}
+        run: |
+          set -euo pipefail
+          [[ "${HERMES_PROTOCOL}" == 'openai' ]] || { echo 'HERMES_PROTOCOL must be openai' >&2; exit 1; }
+          [[ "${HERMES_ARTIFACT_TOOL_ENABLED}" == 'true' ]] || { echo 'HERMES_ARTIFACT_TOOL_ENABLED must be true' >&2; exit 1; }
+          [[ "${HERMES_ARTIFACT_ENVELOPE_ENABLED}" == 'true' ]] || { echo 'HERMES_ARTIFACT_ENVELOPE_ENABLED must be true' >&2; exit 1; }
+
+      - name: Capture deployed health and operations state
+        shell: bash
+        env:
+          CHAT_STAGING_EMAIL: ${{ vars.CHAT_ALLOWED_EMAILS }}
+        run: |
+          set -euo pipefail
+          mkdir -p hermes-staging-evidence
+          email="$(printf '%s' "$CHAT_STAGING_EMAIL" | cut -d',' -f1 | xargs)"
+          curl --fail --silent --show-error http://127.0.0.1:14174/api/health > hermes-staging-evidence/health.json
+          curl --fail --silent --show-error -H "Cf-Access-Authenticated-User-Email: ${email}" http://127.0.0.1:14174/api/ops/status > hermes-staging-evidence/ops-status.json
+          node -e "const fs=require('fs');const h=JSON.parse(fs.readFileSync('hermes-staging-evidence/health.json'));if(!h.ok)process.exit(1)"
+
+      - name: Install verification dependencies
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ ! -x node_modules/.bin/playwright ]]; then npm install --no-audit --no-fund; fi
+          npx playwright install chromium
+
+      - name: Verify all Hermes personas, routing, vision, artifact, UI, and persistence locally
+        shell: bash
+        env:
+          CHAT_STAGING_BASE_URL: http://127.0.0.1:14174
+          CHAT_STAGING_EMAIL: ${{ vars.CHAT_ALLOWED_EMAILS }}
+          CHAT_HERMES_VISION_AGENT_ID: ${{ vars.CHAT_HERMES_VISION_AGENT_ID }}
+          CHAT_GENERATED_ARTIFACT_QA_REQUIRED: 'true'
+        run: |
+          set -euo pipefail
+          npx playwright test \
+            e2e-staging/hermes-only.spec.ts \
+            e2e-staging/multimodal.spec.ts \
+            --grep '^Hermes|^real Hermes returns' \
+            --config playwright.staging.config.ts
+
+      - name: Verify public Cloudflare Hermes API, generated artifact, UI, and persistence
+        shell: bash
+        env:
+          CHAT_STAGING_BASE_URL: ${{ vars.CHAT_PUBLIC_ORIGIN }}
+          CF_ACCESS_CLIENT_ID: ${{ vars.CF_ACCESS_CLIENT_ID }}
+          CF_ACCESS_CLIENT_SECRET: ${{ secrets.CF_ACCESS_CLIENT_SECRET }}
+          CHAT_GENERATED_ARTIFACT_QA_REQUIRED: 'true'
+        run: |
+          set -euo pipefail
+          npx playwright test \
+            e2e-staging/hermes-only.spec.ts \
+            e2e-staging/multimodal.spec.ts \
+            --grep '^Hermes registry|^real Hermes returns' \
+            --config playwright.external.config.ts
+
+      - name: Publish Hermes verification summary
+        if: always()
+        shell: bash
+        run: |
+          {
+            echo '## Hermes-only staging verification'
+            echo
+            echo "- Verification revision: \`$(git rev-parse HEAD)\`"
+            echo '- Scope: registry, all 4 direct-chat personas, routing, fail-closed rejection, session separation, Gemma vision, generated artifact, download bytes, reload persistence, and public Cloudflare Access'
+            echo '- Explicitly excluded: Letta, OpenClaw, and OpenAI credit-dependent checks'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload Hermes evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: chat-v2-hermes-staging-${{ github.run_id }}
+          path: |
+            hermes-staging-evidence
+            test-results-staging-browser
+            playwright-staging-report
+            test-results-external-staging-browser
+            playwright-external-staging-report
+          if-no-files-found: warn
+          retention-days: 30
+
+      - name: Publish Hermes verification status
+        if: always()
+        uses: actions/github-script@v7
+        env:
+          VERIFY_SHA: ${{ steps.source.outputs.sha }}
+          VERIFY_RESULT: ${{ job.status }}
+        with:
+          script: |
+            const success = process.env.VERIFY_RESULT === 'success';
+            await github.rest.repos.createCommitStatus({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              sha: process.env.VERIFY_SHA,
+              state: success ? 'success' : 'failure',
+              context: 'chat-v2/hermes-staging',
+              description: success ? 'Hermes-only staging verification passed' : 'Hermes-only staging verification failed',
+              target_url: `${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`,
+            });
