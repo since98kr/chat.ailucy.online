@@ -1,0 +1,67 @@
+name: Diagnose staging Cloudflare Access
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  diagnose:
+    runs-on: [self-hosted, linux, x64, chat-staging]
+    environment: staging
+    timeout-minutes: 10
+    steps:
+      - name: Diagnose service-token response without exposing credentials
+        shell: bash
+        env:
+          CHAT_STAGING_BASE_URL: ${{ vars.CHAT_PUBLIC_ORIGIN }}
+          CF_ACCESS_CLIENT_ID: ${{ vars.CF_ACCESS_CLIENT_ID }}
+          CF_ACCESS_CLIENT_SECRET: ${{ secrets.CF_ACCESS_CLIENT_SECRET }}
+        run: |
+          set -euo pipefail
+          [[ -n "${CHAT_STAGING_BASE_URL:-}" ]] || { echo 'CHAT_PUBLIC_ORIGIN is missing'; exit 1; }
+          [[ -n "${CF_ACCESS_CLIENT_ID:-}" ]] || { echo 'CF_ACCESS_CLIENT_ID is missing'; exit 1; }
+          [[ -n "${CF_ACCESS_CLIENT_SECRET:-}" ]] || { echo 'CF_ACCESS_CLIENT_SECRET is missing'; exit 1; }
+
+          tmp="$(mktemp -d)"
+          trap 'rm -rf "$tmp"' EXIT
+          url="${CHAT_STAGING_BASE_URL%/}/api/health"
+          status="$(curl --silent --show-error --max-redirs 0 \
+            -D "$tmp/headers" -o "$tmp/body" -w '%{http_code}' \
+            -H "CF-Access-Client-Id: ${CF_ACCESS_CLIENT_ID}" \
+            -H "CF-Access-Client-Secret: ${CF_ACCESS_CLIENT_SECRET}" \
+            "$url" || true)"
+
+          STATUS="$status" HEADERS_FILE="$tmp/headers" BODY_FILE="$tmp/body" node <<'NODE'
+          const fs = require('fs');
+          const headers = fs.existsSync(process.env.HEADERS_FILE) ? fs.readFileSync(process.env.HEADERS_FILE, 'utf8') : '';
+          const body = fs.existsSync(process.env.BODY_FILE) ? fs.readFileSync(process.env.BODY_FILE, 'utf8') : '';
+          const get = (name) => {
+            const match = headers.match(new RegExp(`^${name}:\\s*(.+)$`, 'im'));
+            return match ? match[1].trim() : null;
+          };
+          let location = get('location');
+          if (location) {
+            try {
+              const parsed = new URL(location);
+              location = `${parsed.origin}${parsed.pathname}`;
+            } catch {}
+          }
+          const title = body.match(/<title[^>]*>([^<]{0,200})<\/title>/i)?.[1]?.trim() ?? null;
+          const prefix = body.slice(0, 80).replace(/\s+/g, ' ').trim();
+          const evidence = {
+            status: Number(process.env.STATUS || 0),
+            contentType: get('content-type'),
+            server: get('server'),
+            location,
+            cfRayPresent: Boolean(get('cf-ray')),
+            accessJwtPresent: Boolean(get('cf-access-jwt-assertion')),
+            title,
+            bodyPrefix: prefix,
+          };
+          console.log(JSON.stringify(evidence, null, 2));
+          if (evidence.status !== 200 || !String(evidence.contentType || '').toLowerCase().includes('application/json')) {
+            process.exitCode = 2;
+          }
+          NODE
