@@ -22,25 +22,56 @@ jobs:
         id: restart
         shell: bash
         run: |
-          set -Eeuo pipefail
-          host="$(hostname -s)"
-          echo "host=$host"
-          [[ "$host" == "agentlucy" || "$host" == "home00" ]]
-          systemctl --user restart lucy-remote-agent.service
-          sleep 3
-          [[ "$(systemctl --user is-active lucy-remote-agent.service)" == "active" ]]
-          systemctl --user show lucy-remote-agent.service -p ActiveState -p SubState -p MainPID --no-pager
+          set +e
+          host="$(hostname -s 2>/dev/null || printf unknown)"
+          user="$(id -un 2>/dev/null || printf unknown)"
+          uid="$(id -u 2>/dev/null || printf unknown)"
+          home="${HOME:-unknown}"
+          rc=0
+          output="$(systemctl --user restart lucy-remote-agent.service 2>&1)" || rc=$?
+          sleep 2
+          state="$(systemctl --user is-active lucy-remote-agent.service 2>&1)"
+          state_rc=$?
+          {
+            printf 'host=%s\n' "$host"
+            printf 'user=%s\n' "$user"
+            printf 'uid=%s\n' "$uid"
+            printf 'home=%s\n' "$home"
+            printf 'restart_rc=%s\n' "$rc"
+            printf 'state_rc=%s\n' "$state_rc"
+            printf 'state=%s\n' "$state"
+            printf 'restart_msg=%s\n' "$(printf '%s' "$output" | head -c 300 | tr '\n' ' ')"
+          } >>"$GITHUB_OUTPUT"
+          [[ "$rc" -eq 0 && "$state_rc" -eq 0 && "$state" == active ]]
       - name: Publish recovery receipt
         if: always()
         uses: actions/github-script@v7
         env:
           OUTCOME: ${{ steps.restart.outcome }}
+          HOST: ${{ steps.restart.outputs.host }}
+          USER: ${{ steps.restart.outputs.user }}
+          UID: ${{ steps.restart.outputs.uid }}
+          HOME_DIR: ${{ steps.restart.outputs.home }}
+          RESTART_RC: ${{ steps.restart.outputs.restart_rc }}
+          STATE_RC: ${{ steps.restart.outputs.state_rc }}
+          STATE: ${{ steps.restart.outputs.state }}
+          RESTART_MSG: ${{ steps.restart.outputs.restart_msg }}
         with:
           script: |
-            const outcome = process.env.OUTCOME || 'unknown';
+            const body = [
+              `LUCY_REMOTE_BROKER_RECOVERY_${(process.env.OUTCOME || 'unknown').toUpperCase()}`,
+              `host=${process.env.HOST || 'unknown'}`,
+              `user=${process.env.USER || 'unknown'}`,
+              `uid=${process.env.UID || 'unknown'}`,
+              `home=${process.env.HOME_DIR || 'unknown'}`,
+              `restart_rc=${process.env.RESTART_RC || 'unknown'}`,
+              `state_rc=${process.env.STATE_RC || 'unknown'}`,
+              `state=${process.env.STATE || 'unknown'}`,
+              `message=${process.env.RESTART_MSG || ''}`,
+            ].join('\n');
             await github.rest.issues.createComment({
               owner: context.repo.owner,
               repo: context.repo.repo,
               issue_number: 143,
-              body: `LUCY_REMOTE_BROKER_RECOVERY_${outcome.toUpperCase()}`,
+              body,
             });
