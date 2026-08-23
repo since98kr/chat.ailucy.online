@@ -1,0 +1,8 @@
+host=agentlucy
+user=chat-runner
+uid=995
+home=/home/chat-runner
+restart_rc=1
+state_rc=1
+state=Failed to connect to bus: 미디어가 없음
+message=Failed to connect to bus: 미디어가 없음
