@@ -35,6 +35,9 @@ concurrency:
 
 jobs:
   invoke:
+    permissions:
+      contents: read
+      issues: write
     if: >-
       github.event_name == 'workflow_dispatch' ||
       (github.event_name == 'issue_comment' &&
@@ -184,6 +187,28 @@ jobs:
           grep -Fxq "head=${APPROVED_HEAD}" "${stdout_path}" \
             || fail 'remote response head did not match approval'
           cat "${HARNESS_RESULT_PATH}"
+
+      - name: Publish minimal PASS receipt
+        if: success() && github.event_name == 'issue_comment'
+        uses: actions/github-script@v7
+        env:
+          OPERATION: ${{ steps.request.outputs.operation }}
+          APPROVED_HEAD: ${{ steps.request.outputs.approved_head }}
+        with:
+          script: |
+            const operation = process.env.OPERATION;
+            const approvedHead = process.env.APPROVED_HEAD;
+            await github.rest.issues.createComment({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: 143,
+              body: [
+                '### Letta Harness gate receipt',
+                `- operation: \`${operation}\``,
+                `- approved head: \`${approvedHead}\``,
+                '- result: **PASS**',
+              ].join('\n'),
+            });
 
       - name: Upload sanitized Harness evidence
         if: always()
