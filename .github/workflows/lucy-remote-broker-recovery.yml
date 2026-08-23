@@ -33,10 +33,13 @@ jobs:
           user="$(id -un 2>/dev/null || printf unknown)"
           uid="$(id -u 2>/dev/null || printf unknown)"
           home="${HOME:-unknown}"
+          target_user='since98kr'
+          target_uid="$(id -u "$target_user" 2>/dev/null || true)"
+          target_runtime="/run/user/${target_uid}"
           rc=0
-          output="$(systemctl --user restart lucy-remote-agent.service 2>&1)" || rc=$?
+          output="$(sudo -n -u "$target_user" env XDG_RUNTIME_DIR="$target_runtime" DBUS_SESSION_BUS_ADDRESS="unix:path=${target_runtime}/bus" systemctl --user restart lucy-remote-agent.service 2>&1)" || rc=$?
           sleep 2
-          state="$(systemctl --user is-active lucy-remote-agent.service 2>&1)"
+          state="$(sudo -n -u "$target_user" env XDG_RUNTIME_DIR="$target_runtime" DBUS_SESSION_BUS_ADDRESS="unix:path=${target_runtime}/bus" systemctl --user is-active lucy-remote-agent.service 2>&1)"
           state_rc=$?
           mkdir -p ops/receipts
           cat > ops/receipts/lucy-remote-broker-recovery.txt <<EOF
@@ -44,6 +47,8 @@ jobs:
           user=$user
           uid=$uid
           home=$home
+          target_user=$target_user
+          target_uid=$target_uid
           restart_rc=$rc
           state_rc=$state_rc
           state=$state
