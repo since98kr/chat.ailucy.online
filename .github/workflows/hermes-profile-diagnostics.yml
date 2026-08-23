@@ -1,0 +1,75 @@
+name: Diagnose Hermes staging profiles
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: chat-v2-hermes-profile-diagnostics
+  cancel-in-progress: false
+
+jobs:
+  diagnose:
+    runs-on: [self-hosted, linux, x64, chat-staging]
+    environment: staging
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Inspect Hermes profiles without exposing secrets
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo '=== executable ==='
+          command -v hermes || true
+          hermes --version 2>/dev/null || true
+
+          echo '=== profile directories ==='
+          for profile in gemma lynn xixi; do
+            envfile="$HOME/.hermes/profiles/$profile/.env"
+            printf '%s: ' "$profile"
+            if [[ -f "$envfile" ]]; then
+              echo present
+              awk -F= '
+                /^(API_SERVER_ENABLED|API_SERVER_HOST|API_SERVER_PORT|API_SERVER_MODEL_NAME)=/ {print $1"="$2}
+                /^(OPENROUTER_API_KEY|ANTHROPIC_API_KEY|OPENAI_API_KEY|DEEPSEEK_API_KEY|LLM_API_KEY)=/ {print $1"=<set:"(length($2)>0?"yes":"no")">"}
+                /^(LLM_MODEL|MODEL|MODEL_NAME|LLM_PROVIDER|PROVIDER)=/ {print $1"="$2}
+              ' "$envfile" | sort
+            else
+              echo missing
+            fi
+          done
+
+          echo '=== listeners ==='
+          ss -ltnp 2>/dev/null | awk 'NR==1 || /:(8642|8643|8644|8645)[[:space:]]/' || true
+
+          echo '=== Hermes-related processes (arguments redacted to executable names only) ==='
+          ps -eo pid=,comm= | awk 'tolower($2) ~ /hermes|python|uvicorn/ {print}' | head -50 || true
+
+          echo '=== user services ==='
+          systemctl --user list-units --type=service --all --no-pager 2>/dev/null | awk 'tolower($0) ~ /hermes|gemma|lynn|xixi/' || true
+
+          echo '=== command help ==='
+          for args in 'profile --help' 'serve --help' 'proxy --help' 'gateway --help'; do
+            echo "--- hermes $args"
+            timeout 10s hermes $args 2>&1 | sed -E 's/(key|token|secret|password)=[^[:space:]]+/\1=<redacted>/Ig' | head -120 || true
+          done
+
+      - name: Inspect staging map coverage
+        shell: bash
+        env:
+          MODEL_MAP: ${{ vars.HERMES_MODEL_MAP_JSON }}
+          URL_MAP: ${{ vars.HERMES_BASE_URL_MAP_JSON }}
+        run: |
+          set -euo pipefail
+          node <<'NODE'
+          const required=['[Hermes] Lucy','Xixi','Lynn','Gemma'];
+          for (const [label,raw] of [['model',process.env.MODEL_MAP],['url',process.env.URL_MAP]]) {
+            let map={};
+            try { map=raw?.trim()?JSON.parse(raw):{}; } catch { console.log(`${label}: invalid-json`); continue; }
+            console.log(`${label} keys: ${Object.keys(map).sort().join(', ') || '<none>'}`);
+            for (const id of required) console.log(`${label} ${id}: ${typeof map[id]==='string'&&map[id].trim()?'present':'missing'}`);
+          }
+          NODE
