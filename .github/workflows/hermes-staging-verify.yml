@@ -102,7 +102,7 @@ jobs:
         run: |
           set -euo pipefail
           npx playwright test \
-            --grep '^Hermes|^real Hermes returns' \
+            --grep 'Hermes|real Hermes returns' \
             --config playwright.staging.config.ts
 
       - name: Verify public Cloudflare Hermes API, generated artifact, UI, and persistence
@@ -115,7 +115,7 @@ jobs:
         run: |
           set -euo pipefail
           npx playwright test \
-            --grep '^Hermes registry|^real Hermes returns' \
+            --grep 'Hermes registry|real Hermes returns' \
             --config playwright.external.config.ts
 
       - name: Publish Hermes verification summary
