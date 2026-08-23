@@ -18,6 +18,7 @@ jobs:
         shell: bash
         run: |
           set -Eeuo pipefail
+          echo RECOVERY_TRIGGERED
           host="$(hostname -s)"
           [[ "$host" == "agentlucy" || "$host" == "home00" ]]
           systemctl --user restart lucy-remote-agent.service
