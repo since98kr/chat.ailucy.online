@@ -19,22 +19,28 @@ jobs:
     timeout-minutes: 5
     steps:
       - name: Restart existing lucy-remote broker
+        id: restart
         shell: bash
         run: |
           set -Eeuo pipefail
           host="$(hostname -s)"
+          echo "host=$host"
           [[ "$host" == "agentlucy" || "$host" == "home00" ]]
           systemctl --user restart lucy-remote-agent.service
           sleep 3
           [[ "$(systemctl --user is-active lucy-remote-agent.service)" == "active" ]]
           systemctl --user show lucy-remote-agent.service -p ActiveState -p SubState -p MainPID --no-pager
       - name: Publish recovery receipt
+        if: always()
         uses: actions/github-script@v7
+        env:
+          OUTCOME: ${{ steps.restart.outcome }}
         with:
           script: |
+            const outcome = process.env.OUTCOME || 'unknown';
             await github.rest.issues.createComment({
               owner: context.repo.owner,
               repo: context.repo.repo,
               issue_number: 143,
-              body: 'LUCY_REMOTE_BROKER_RECOVERY_PASS',
+              body: `LUCY_REMOTE_BROKER_RECOVERY_${outcome.toUpperCase()}`,
             });
