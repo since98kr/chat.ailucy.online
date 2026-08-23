@@ -33,35 +33,30 @@ jobs:
             -H "CF-Access-Client-Secret: ${CF_ACCESS_CLIENT_SECRET}" \
             "$url" || true)"
 
-          STATUS="$status" HEADERS_FILE="$tmp/headers" BODY_FILE="$tmp/body" node <<'NODE'
-          const fs = require('fs');
-          const headers = fs.existsSync(process.env.HEADERS_FILE) ? fs.readFileSync(process.env.HEADERS_FILE, 'utf8') : '';
-          const body = fs.existsSync(process.env.BODY_FILE) ? fs.readFileSync(process.env.BODY_FILE, 'utf8') : '';
-          const get = (name) => {
-            const match = headers.match(new RegExp(`^${name}:\\s*(.+)$`, 'im'));
-            return match ? match[1].trim() : null;
-          };
-          let location = get('location');
-          if (location) {
-            try {
-              const parsed = new URL(location);
-              location = `${parsed.origin}${parsed.pathname}`;
-            } catch {}
+          header_value() {
+            awk -v key="$1" 'BEGIN { IGNORECASE=1 } index(tolower($0), tolower(key) ":") == 1 { sub(/^[^:]*:[[:space:]]*/, ""); sub(/\r$/, ""); print; exit }' "$tmp/headers"
           }
-          const title = body.match(/<title[^>]*>([^<]{0,200})<\/title>/i)?.[1]?.trim() ?? null;
-          const prefix = body.slice(0, 80).replace(/\s+/g, ' ').trim();
-          const evidence = {
-            status: Number(process.env.STATUS || 0),
-            contentType: get('content-type'),
-            server: get('server'),
-            location,
-            cfRayPresent: Boolean(get('cf-ray')),
-            accessJwtPresent: Boolean(get('cf-access-jwt-assertion')),
-            title,
-            bodyPrefix: prefix,
-          };
-          console.log(JSON.stringify(evidence, null, 2));
-          if (evidence.status !== 200 || !String(evidence.contentType || '').toLowerCase().includes('application/json')) {
-            process.exitCode = 2;
-          }
-          NODE
+
+          content_type="$(header_value content-type)"
+          server="$(header_value server)"
+          location="$(header_value location)"
+          cf_ray="$(header_value cf-ray)"
+          access_jwt="$(header_value cf-access-jwt-assertion)"
+          safe_location="$(printf '%s' "$location" | sed -E 's#(https?://[^/?#]+/[^?#]*).*#\1#')"
+          title="$(tr '\n' ' ' < "$tmp/body" | sed -nE 's#.*<title[^>]*>([^<]{0,200})</title>.*#\1#Ip' | head -n 1)"
+          prefix="$(head -c 80 "$tmp/body" | tr '\n\r\t' ' ' | sed -E 's/[[:space:]]+/ /g')"
+
+          printf '{\n'
+          printf '  "status": %s,\n' "${status:-0}"
+          printf '  "contentType": "%s",\n' "${content_type//\"/\\\"}"
+          printf '  "server": "%s",\n' "${server//\"/\\\"}"
+          printf '  "location": "%s",\n' "${safe_location//\"/\\\"}"
+          [[ -n "$cf_ray" ]] && cf_ray_present=true || cf_ray_present=false
+          [[ -n "$access_jwt" ]] && access_jwt_present=true || access_jwt_present=false
+          printf '  "cfRayPresent": %s,\n' "$cf_ray_present"
+          printf '  "accessJwtPresent": %s,\n' "$access_jwt_present"
+          printf '  "title": "%s",\n' "${title//\"/\\\"}"
+          printf '  "bodyPrefix": "%s"\n' "${prefix//\"/\\\"}"
+          printf '}\n'
+
+          [[ "$status" == "200" && "${content_type,,}" == *application/json* ]]
