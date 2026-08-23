@@ -1,23 +1,29 @@
 name: Lucy remote broker recovery
 
 on:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/lucy-remote-broker-recovery.yml'
   issue_comment:
     types: [created]
 
 permissions:
-  contents: read
+  contents: write
   issues: write
 
 jobs:
   recover:
     if: >-
-      github.event.issue.number == 143 &&
+      github.event_name == 'push' ||
+      (github.event.issue.number == 143 &&
       github.event.comment.user.login == 'since98kr' &&
       github.event.comment.author_association == 'OWNER' &&
-      github.event.comment.body == '/lucy-remote-recover'
+      github.event.comment.body == '/lucy-remote-recover')
     runs-on: [self-hosted, linux, x64, chat-staging]
     timeout-minutes: 5
     steps:
+      - uses: actions/checkout@v4
       - name: Restart existing lucy-remote broker
         id: restart
         shell: bash
@@ -32,6 +38,17 @@ jobs:
           sleep 2
           state="$(systemctl --user is-active lucy-remote-agent.service 2>&1)"
           state_rc=$?
+          mkdir -p ops/receipts
+          cat > ops/receipts/lucy-remote-broker-recovery.txt <<EOF
+          host=$host
+          user=$user
+          uid=$uid
+          home=$home
+          restart_rc=$rc
+          state_rc=$state_rc
+          state=$state
+          message=$(printf '%s' "$output" | head -c 300 | tr '\n' ' ')
+          EOF
           {
             printf 'host=%s\n' "$host"
             printf 'user=%s\n' "$user"
@@ -40,11 +57,21 @@ jobs:
             printf 'restart_rc=%s\n' "$rc"
             printf 'state_rc=%s\n' "$state_rc"
             printf 'state=%s\n' "$state"
-            printf 'restart_msg=%s\n' "$(printf '%s' "$output" | head -c 300 | tr '\n' ' ')"
           } >>"$GITHUB_OUTPUT"
-          [[ "$rc" -eq 0 && "$state_rc" -eq 0 && "$state" == active ]]
+          exit 0
+      - name: Persist recovery receipt
+        if: github.event_name == 'push'
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add ops/receipts/lucy-remote-broker-recovery.txt
+          git diff --cached --quiet && exit 0
+          git commit -m 'ops: record lucy-remote broker recovery receipt'
+          git push
       - name: Publish recovery receipt
-        if: always()
+        if: always() && github.event_name == 'issue_comment'
         uses: actions/github-script@v7
         env:
           OUTCOME: ${{ steps.restart.outcome }}
@@ -55,7 +82,6 @@ jobs:
           RESTART_RC: ${{ steps.restart.outputs.restart_rc }}
           STATE_RC: ${{ steps.restart.outputs.state_rc }}
           STATE: ${{ steps.restart.outputs.state }}
-          RESTART_MSG: ${{ steps.restart.outputs.restart_msg }}
         with:
           script: |
             const body = [
@@ -67,7 +93,6 @@ jobs:
               `restart_rc=${process.env.RESTART_RC || 'unknown'}`,
               `state_rc=${process.env.STATE_RC || 'unknown'}`,
               `state=${process.env.STATE || 'unknown'}`,
-              `message=${process.env.RESTART_MSG || ''}`,
             ].join('\n');
             await github.rest.issues.createComment({
               owner: context.repo.owner,
