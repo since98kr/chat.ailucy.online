@@ -1,0 +1,52 @@
+name: Diagnose CF Access staging
+
+on:
+  workflow_dispatch:
+
+jobs:
+  diagnose:
+    runs-on: [self-hosted, chat-staging]
+    environment: staging
+    timeout-minutes: 10
+    steps:
+      - name: Probe public staging endpoint with service token
+        env:
+          CHAT_PUBLIC_ORIGIN: ${{ vars.CHAT_PUBLIC_ORIGIN }}
+          CF_ACCESS_CLIENT_ID: ${{ vars.CF_ACCESS_CLIENT_ID }}
+          CF_ACCESS_CLIENT_SECRET: ${{ secrets.CF_ACCESS_CLIENT_SECRET }}
+        run: |
+          set -euo pipefail
+          echo "origin=${CHAT_PUBLIC_ORIGIN}"
+          code=$(curl -sS -o /tmp/cf_probe.out -w '%{http_code}' \
+            -H "CF-Access-Client-Id: ${CF_ACCESS_CLIENT_ID}" \
+            -H "CF-Access-Client-Secret: ${CF_ACCESS_CLIENT_SECRET}" \
+            "${CHAT_PUBLIC_ORIGIN}/api/health" || true)
+          echo "http_code=${code}"
+          echo "first_bytes:"
+          head -c 120 /tmp/cf_probe.out | tr -d '\r' | sed 's/[^[:print:]]//g'
+          echo
+          echo "is_json=$(head -c 1 /tmp/cf_probe.out | grep -q '{' && echo yes || echo no)"
+
+      - name: List Access apps and policies for staging host
+        env:
+          CF_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CF_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          CF_ACCESS_CLIENT_ID: ${{ vars.CF_ACCESS_CLIENT_ID }}
+        run: |
+          set -euo pipefail
+          api() {
+            curl -sS -H "Authorization: Bearer ${CF_API_TOKEN}" \
+              -H "Content-Type: application/json" "https://api.cloudflare.com/client/v4$1"
+          }
+          apps=$(api "/accounts/${CF_ACCOUNT_ID}/access/apps?per_page=100")
+          echo "apps_api_success=$(echo "$apps" | jq -r '.success')"
+          echo "$apps" | jq -r '.result[]? | select(.domain|test("chat-staging")) | "APP id=\(.id) name=\(.name) domain=\(.domain) session=\(.session_duration)"'
+          appid=$(echo "$apps" | jq -r '[.result[]? | select(.domain|test("chat-staging"))][0].id // empty')
+          if [ -z "$appid" ]; then echo "NO_APP_MATCHED_chat-staging"; else
+            pol=$(api "/accounts/${CF_ACCOUNT_ID}/access/apps/${appid}/policies")
+            echo "$pol" | jq -r '.result[]? | "POLICY name=\(.name) decision=\(.decision) include_types=\((.include//[])|map(keys[0])|join(","))"'
+            echo "service_token_in_policy=$(echo "$pol" | jq -r --arg cid "${CF_ACCESS_CLIENT_ID}" '[.result[]?.include[]?|select(has("service_token") or has("any_valid_service_token"))]|length')"
+            echo "$pol" | jq -r '.result[]?.include[]? | select(has("service_token")) | "POLICY_SERVICE_TOKEN_UUID=\(.service_token.token_id)"'
+          fi
+          st=$(api "/accounts/${CF_ACCOUNT_ID}/access/service_tokens?per_page=100")
+          echo "$st" | jq -r --arg cid "${CF_ACCESS_CLIENT_ID}" '.result[]? | "TOKEN id=\(.id) name=\(.name) expires_at=\(.expires_at) matches_ci=\(.client_id==$cid)"'
