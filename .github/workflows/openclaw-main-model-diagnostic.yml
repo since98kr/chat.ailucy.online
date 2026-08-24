@@ -10,7 +10,7 @@ permissions:
 
 jobs:
   diagnose:
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, linux, x64, chat-staging]
     environment: staging
     timeout-minutes: 10
     steps:
@@ -28,7 +28,7 @@ jobs:
           tmp="$(mktemp -d)"
           trap 'rm -rf "$tmp"' EXIT
           status="$(curl --silent --show-error --max-time 120 \
-            -o "$tmp/body.json" -w '%{http_code}' \
+            -D "$tmp/headers" -o "$tmp/body" -w '%{http_code}' \
             -H "Authorization: Bearer ${OPENCLAW_GATEWAY_TOKEN}" \
             -H "CF-Access-Client-Id: ${CF_ACCESS_CLIENT_ID}" \
             -H "CF-Access-Client-Secret: ${CF_ACCESS_CLIENT_SECRET}" \
@@ -36,16 +36,21 @@ jobs:
             -H 'x-openclaw-model: letta/lucy' \
             -d '{"model":"openclaw/main","user":"chat-route-diagnostic","messages":[{"role":"user","content":"Reply exactly OPENCLAW_LETTA_OVERRIDE_OK"}],"stream":false}' \
             "${OPENCLAW_GATEWAY_BASE_URL%/}/v1/chat/completions" || true)"
-          STATUS="$status" BODY="$tmp/body.json" node <<'NODE'
+          STATUS="$status" BODY="$tmp/body" HEADERS="$tmp/headers" node <<'NODE'
           const fs = require('node:fs');
           const status = Number(process.env.STATUS || 0);
-          let value = {};
-          try { value = JSON.parse(fs.readFileSync(process.env.BODY, 'utf8')); } catch {}
+          const raw = fs.existsSync(process.env.BODY) ? fs.readFileSync(process.env.BODY, 'utf8') : '';
+          const headers = fs.existsSync(process.env.HEADERS) ? fs.readFileSync(process.env.HEADERS, 'utf8') : '';
+          const contentType = headers.match(/^content-type:\s*(.+)$/im)?.[1]?.trim() ?? null;
+          let value = null;
+          try { value = JSON.parse(raw); } catch {}
           const text = value?.choices?.[0]?.message?.content ?? '';
-          const error = value?.error?.error?.message ?? value?.error?.message ?? null;
+          const error = value?.error?.error?.message ?? value?.error?.message ?? value?.message ?? null;
           const marker = String(text).includes('OPENCLAW_LETTA_OVERRIDE_OK');
           console.log(`RESULT http_status=${status}`);
+          console.log(`RESULT content_type=${contentType ?? 'unknown'}`);
           console.log(`RESULT letta_override_marker=${marker}`);
-          if (error) console.log(`RESULT sanitized_error=${String(error).slice(0, 180).replace(/\s+/g, ' ')}`);
+          if (error) console.log(`RESULT sanitized_error=${String(error).slice(0, 220).replace(/\s+/g, ' ')}`);
+          if (!value && raw) console.log(`RESULT non_json_body_prefix=${raw.slice(0, 120).replace(/[^\x20-\x7E]/g, ' ').replace(/\s+/g, ' ')}`);
           if (status !== 200 || !marker) process.exitCode = 2;
           NODE
