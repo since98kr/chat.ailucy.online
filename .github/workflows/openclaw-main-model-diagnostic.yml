@@ -1,0 +1,51 @@
+name: Diagnose OpenClaw main model
+
+on:
+  pull_request:
+    paths:
+      - '.github/workflows/openclaw-main-model-diagnostic.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  diagnose:
+    runs-on: ubuntu-latest
+    environment: staging
+    timeout-minutes: 10
+    steps:
+      - name: Probe OpenClaw main with explicit letta/lucy backend override
+        shell: bash
+        env:
+          OPENCLAW_GATEWAY_BASE_URL: ${{ vars.OPENCLAW_GATEWAY_BASE_URL }}
+          OPENCLAW_GATEWAY_TOKEN: ${{ secrets.OPENCLAW_GATEWAY_TOKEN }}
+          CF_ACCESS_CLIENT_ID: ${{ vars.CF_ACCESS_CLIENT_ID }}
+          CF_ACCESS_CLIENT_SECRET: ${{ secrets.CF_ACCESS_CLIENT_SECRET }}
+        run: |
+          set -euo pipefail
+          [[ -n "${OPENCLAW_GATEWAY_BASE_URL:-}" ]]
+          [[ -n "${OPENCLAW_GATEWAY_TOKEN:-}" ]]
+          tmp="$(mktemp -d)"
+          trap 'rm -rf "$tmp"' EXIT
+          status="$(curl --silent --show-error --max-time 120 \
+            -o "$tmp/body.json" -w '%{http_code}' \
+            -H "Authorization: Bearer ${OPENCLAW_GATEWAY_TOKEN}" \
+            -H "CF-Access-Client-Id: ${CF_ACCESS_CLIENT_ID}" \
+            -H "CF-Access-Client-Secret: ${CF_ACCESS_CLIENT_SECRET}" \
+            -H 'Content-Type: application/json' \
+            -H 'x-openclaw-model: letta/lucy' \
+            -d '{"model":"openclaw/main","user":"chat-route-diagnostic","messages":[{"role":"user","content":"Reply exactly OPENCLAW_LETTA_OVERRIDE_OK"}],"stream":false}' \
+            "${OPENCLAW_GATEWAY_BASE_URL%/}/v1/chat/completions" || true)"
+          STATUS="$status" BODY="$tmp/body.json" node <<'NODE'
+          const fs = require('node:fs');
+          const status = Number(process.env.STATUS || 0);
+          let value = {};
+          try { value = JSON.parse(fs.readFileSync(process.env.BODY, 'utf8')); } catch {}
+          const text = value?.choices?.[0]?.message?.content ?? '';
+          const error = value?.error?.error?.message ?? value?.error?.message ?? null;
+          const marker = String(text).includes('OPENCLAW_LETTA_OVERRIDE_OK');
+          console.log(`RESULT http_status=${status}`);
+          console.log(`RESULT letta_override_marker=${marker}`);
+          if (error) console.log(`RESULT sanitized_error=${String(error).slice(0, 180).replace(/\s+/g, ' ')}`);
+          if (status !== 200 || !marker) process.exitCode = 2;
+          NODE
