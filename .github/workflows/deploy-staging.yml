@@ -125,7 +125,7 @@ jobs:
           LETTA_API_KEY: ${{ secrets.OPENCLAW_GATEWAY_TOKEN }}
           LETTA_TIMEOUT_MS: ${{ vars.LETTA_TIMEOUT_MS }}
           LETTA_PROTOCOL: openclaw
-          LETTA_OPENCLAW_AGENT_TARGET: ${{ vars.LETTA_OPENCLAW_AGENT_TARGET }}
+          LETTA_OPENCLAW_AGENT_TARGET: openclaw/main
           LETTA_OPENCLAW_SESSION_PREFIX: ${{ vars.LETTA_OPENCLAW_SESSION_PREFIX }}
           CF_ACCESS_CLIENT_ID: ${{ vars.CF_ACCESS_CLIENT_ID }}
           CF_ACCESS_CLIENT_SECRET: ${{ secrets.CF_ACCESS_CLIENT_SECRET }}
@@ -184,7 +184,7 @@ jobs:
           OPENCLAW_GATEWAY_TOKEN: ${{ secrets.OPENCLAW_GATEWAY_TOKEN }}
           CF_ACCESS_CLIENT_ID: ${{ vars.CF_ACCESS_CLIENT_ID }}
           CF_ACCESS_CLIENT_SECRET: ${{ secrets.CF_ACCESS_CLIENT_SECRET }}
-          OPENCLAW_LUCY_TARGET: ${{ vars.LETTA_OPENCLAW_AGENT_TARGET }}
+          OPENCLAW_LUCY_TARGET: openclaw/main
           OPENCLAW_MODELS_EVIDENCE_PATH: ${{ runner.temp }}/openclaw-models.json
         run: |
           set -euo pipefail
@@ -238,12 +238,13 @@ jobs:
             echo '- Local endpoint: `http://127.0.0.1:14174`'
             echo "- Public endpoint: \`${{ vars.CHAT_PUBLIC_ORIGIN }}\`"
             echo '- Letta transport: `openclaw`'
-            echo "- OpenClaw Lucy target: \`${{ vars.LETTA_OPENCLAW_AGENT_TARGET }}\`"
+            echo '- OpenClaw Lucy target: `openclaw/main`'
+            echo '- Backend model override: disabled; OpenClaw main keeps its configured model (`letta/lucy`)'
             echo "- External QA required: \`${{ vars.CHAT_EXTERNAL_QA_REQUIRED }}\`"
             echo "- Multimodal QA required: \`${{ vars.CHAT_MULTIMODAL_QA_REQUIRED }}\`"
             echo "- Generated artifact QA required: \`${{ vars.CHAT_GENERATED_ARTIFACT_QA_REQUIRED }}\`"
             echo "- Letta full runtime QA required: \`${{ vars.CHAT_LETTA_FULL_RUNTIME_QA_REQUIRED }}\`"
-            echo '- Required Letta/OpenClaw gates: private Gateway health, explicit Lucy agent target, real Chat transport, two-turn same-Conversation session continuity, redaction, and configured artifact/browser gates'
+            echo '- Required Letta/OpenClaw gates: private Gateway health, canonical main agent target, real Chat transport, two-turn same-Conversation session continuity, redaction, and configured artifact/browser gates'
             echo '- Legacy direct Letta CLI/HMAC tool proof is not a release gate in OpenClaw mode.'
             for item in last-deployment.json last-preflight.json last-backup.json last-backup-verify.json last-health.json last-ops-status.json; do
               path="/opt/chat-v2/staging/state/${item}"
