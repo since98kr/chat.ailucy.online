@@ -94,7 +94,7 @@ jobs:
           CONFIRMATION: ${{ steps.request.outputs.confirmation }}
           LETTA_HARNESS_SSH_RESTRICTED_MODE: ${{ vars.LETTA_HARNESS_SSH_RESTRICTED_MODE }}
           LETTA_HARNESS_APPROVED_HEAD: ${{ vars.LETTA_HARNESS_APPROVED_HEAD }}
-          EXPECTED_CONTROL_HEAD: caa355e080c40f526375dd70056534b874d4872f
+          EXPECTED_CONTROL_HEAD: 90cc85b12626ff062b2f54c2702b74c2dd438e34
         run: |
           set -Eeuo pipefail
           [[ "${APPROVED_HEAD}" =~ ^[0-9a-f]{40}$ ]]
