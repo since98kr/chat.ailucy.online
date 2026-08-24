@@ -10,6 +10,7 @@ on:
         options:
           - preflight
           - isolated
+          - api-readiness
           - stage
           - shadow
           - cutover
@@ -71,7 +72,7 @@ jobs:
             exit 1
           fi
 
-          [[ "${operation}" =~ ^(preflight|isolated|stage|shadow|cutover|status|rollback)$ ]]
+          [[ "${operation}" =~ ^(preflight|isolated|api-readiness|stage|shadow|cutover|status|rollback)$ ]]
           [[ "${approved_head}" =~ ^[0-9a-f]{40}$ ]]
           case "${operation}" in
             stage) expected_confirmation='STAGE_OPENCLAW_HARNESS' ;;
@@ -94,7 +95,7 @@ jobs:
           CONFIRMATION: ${{ steps.request.outputs.confirmation }}
           LETTA_HARNESS_SSH_RESTRICTED_MODE: ${{ vars.LETTA_HARNESS_SSH_RESTRICTED_MODE }}
           LETTA_HARNESS_APPROVED_HEAD: ${{ vars.LETTA_HARNESS_APPROVED_HEAD }}
-          EXPECTED_CONTROL_HEAD: 90cc85b12626ff062b2f54c2702b74c2dd438e34
+          EXPECTED_CONTROL_HEAD: be3ca139fd062486e9fa6a36e3703ae28f9cbc80
         run: |
           set -Eeuo pipefail
           [[ "${APPROVED_HEAD}" =~ ^[0-9a-f]{40}$ ]]
@@ -106,7 +107,7 @@ jobs:
             stage) [[ "${CONFIRMATION}" == 'STAGE_OPENCLAW_HARNESS' ]] ;;
             cutover) [[ "${CONFIRMATION}" == 'CUTOVER_LETTA_HARNESS' ]] ;;
             rollback) [[ "${CONFIRMATION}" == 'ROLLBACK_OPENCLAW_HARNESS' ]] ;;
-            preflight|isolated|shadow|status) [[ -z "${CONFIRMATION}" ]] ;;
+            preflight|isolated|api-readiness|shadow|status) [[ -z "${CONFIRMATION}" ]] ;;
             *) exit 1 ;;
           esac
 
@@ -141,6 +142,7 @@ jobs:
           case "${OPERATION}" in
             preflight) remote_command='letta-harness-preflight-v1' ;;
             isolated) remote_command='letta-harness-isolated-v1' ;;
+            api-readiness) remote_command='letta-harness-api-readiness-v1' ;;
             stage) remote_command='letta-harness-stage-v1' ;;
             shadow) remote_command='letta-harness-shadow-v1' ;;
             cutover) remote_command='letta-harness-cutover-v1' ;;
