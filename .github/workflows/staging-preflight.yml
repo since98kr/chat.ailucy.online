@@ -72,20 +72,18 @@ jobs:
           esac
           echo 'Private OpenClaw staging ingress is configured.'
 
-      - name: Require explicit OpenClaw agent target
+      - name: Require canonical OpenClaw main agent target
         shell: bash
         env:
-          LETTA_OPENCLAW_AGENT_TARGET: ${{ vars.LETTA_OPENCLAW_AGENT_TARGET }}
+          LETTA_OPENCLAW_AGENT_TARGET: openclaw/main
           LETTA_OPENCLAW_SESSION_PREFIX: ${{ vars.LETTA_OPENCLAW_SESSION_PREFIX }}
         run: |
           set -euo pipefail
-          [[ -n "${LETTA_OPENCLAW_AGENT_TARGET}" ]] \
-            || { echo 'LETTA_OPENCLAW_AGENT_TARGET is not configured in the staging Environment; refusing to fall back to a hardcoded default target.' >&2; exit 1; }
-          [[ "${LETTA_OPENCLAW_AGENT_TARGET}" == openclaw/* || "${LETTA_OPENCLAW_AGENT_TARGET}" == openclaw:* || "${LETTA_OPENCLAW_AGENT_TARGET}" == agent:* ]] \
-            || { echo 'LETTA_OPENCLAW_AGENT_TARGET is not a valid explicit OpenClaw target.' >&2; exit 1; }
+          [[ "${LETTA_OPENCLAW_AGENT_TARGET}" == 'openclaw/main' ]] \
+            || { echo 'Chat Letta must route through the canonical OpenClaw main agent.' >&2; exit 1; }
           [[ -n "${LETTA_OPENCLAW_SESSION_PREFIX}" ]] \
             || { echo 'LETTA_OPENCLAW_SESSION_PREFIX is not configured in the staging Environment; refusing to fall back to a hardcoded default prefix.' >&2; exit 1; }
-          echo 'Explicit OpenClaw agent target and session prefix are configured.'
+          echo 'Canonical OpenClaw main agent target and explicit session prefix are configured.'
 
       - name: Run exact-runtime preflight
         env:
@@ -109,7 +107,7 @@ jobs:
           LETTA_API_KEY: ${{ secrets.OPENCLAW_GATEWAY_TOKEN }}
           LETTA_TIMEOUT_MS: ${{ vars.LETTA_TIMEOUT_MS }}
           LETTA_PROTOCOL: openclaw
-          LETTA_OPENCLAW_AGENT_TARGET: ${{ vars.LETTA_OPENCLAW_AGENT_TARGET }}
+          LETTA_OPENCLAW_AGENT_TARGET: openclaw/main
           LETTA_OPENCLAW_SESSION_PREFIX: ${{ vars.LETTA_OPENCLAW_SESSION_PREFIX }}
           LETTA_MODEL_MAP_JSON: ''
           LETTA_MAX_ARTIFACT_BYTES: ${{ vars.LETTA_MAX_ARTIFACT_BYTES }}
@@ -136,7 +134,8 @@ jobs:
             echo "- Revision: \`${CHAT_PREFLIGHT_REVISION:-unknown}\`"
             echo "- Strict mode: \`${{ inputs.strict }}\`"
             echo '- Letta transport: `openclaw`'
-            echo "- OpenClaw target: \`${{ vars.LETTA_OPENCLAW_AGENT_TARGET }}\`"
+            echo '- OpenClaw target: `openclaw/main`'
+            echo '- Backend model override: disabled; OpenClaw main keeps its configured model'
             if [[ -f /opt/chat-v2/staging/state/last-preflight.json ]]; then
               echo '- Runtime report:'
               echo '```json'

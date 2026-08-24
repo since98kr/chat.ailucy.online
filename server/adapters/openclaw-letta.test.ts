@@ -102,7 +102,7 @@ function adapter(baseUrl: string) {
     chatPath: '/v1/chat/completions',
     healthPath: '/health',
     apiKey: 'gateway-secret',
-    agentTarget: 'openclaw/lucy',
+    agentTarget: 'openclaw/main',
     sessionPrefix: 'chat-v2',
     timeoutMs: 2_000,
     maxArtifactBytes: 10 * 1024 * 1024,
@@ -112,7 +112,7 @@ function adapter(baseUrl: string) {
 }
 
 describe('OpenClawLettaAdapter', () => {
-  it('preserves Letta identity while routing a stable Chat conversation to an OpenClaw agent session', async () => {
+  it('preserves Letta identity while routing a stable Chat conversation to the OpenClaw main agent session', async () => {
     let authorization = '';
     let receivedBody: Record<string, unknown> = {};
     const baseUrl = await startServer((request, response) => {
@@ -153,7 +153,7 @@ describe('OpenClawLettaAdapter', () => {
     })) items.push(item);
 
     expect(authorization).toBe('Bearer gateway-secret');
-    expect(receivedBody.model).toBe('openclaw/lucy');
+    expect(receivedBody.model).toBe('openclaw/main');
     expect(receivedBody.user).toBe('chat-v2:conversation-1');
     expect(receivedBody.stream).toBe(true);
     expect(receivedBody).not.toHaveProperty('system_id');

@@ -42,16 +42,14 @@ jobs:
         env:
           OPENCLAW_GATEWAY_BASE_URL: ${{ vars.OPENCLAW_GATEWAY_BASE_URL }}
           OPENCLAW_GATEWAY_TOKEN: ${{ secrets.OPENCLAW_GATEWAY_TOKEN }}
-          LETTA_OPENCLAW_AGENT_TARGET: ${{ vars.LETTA_OPENCLAW_AGENT_TARGET }}
+          OPENCLAW_LUCY_TARGET: openclaw/main
           LETTA_OPENCLAW_SESSION_PREFIX: ${{ vars.LETTA_OPENCLAW_SESSION_PREFIX }}
         run: |
           set -euo pipefail
           [[ -n "${OPENCLAW_GATEWAY_BASE_URL}" ]] || { echo 'OPENCLAW_GATEWAY_BASE_URL is not configured.' >&2; exit 1; }
           [[ -n "${OPENCLAW_GATEWAY_TOKEN}" ]] || { echo 'OPENCLAW_GATEWAY_TOKEN is not configured.' >&2; exit 1; }
-          [[ -n "${LETTA_OPENCLAW_AGENT_TARGET}" ]] \
-            || { echo 'LETTA_OPENCLAW_AGENT_TARGET is not configured in the staging Environment; refusing to fall back to a hardcoded default target.' >&2; exit 1; }
-          [[ "${LETTA_OPENCLAW_AGENT_TARGET}" == openclaw/* || "${LETTA_OPENCLAW_AGENT_TARGET}" == openclaw:* || "${LETTA_OPENCLAW_AGENT_TARGET}" == agent:* ]] \
-            || { echo 'LETTA_OPENCLAW_AGENT_TARGET is not a valid explicit OpenClaw target.' >&2; exit 1; }
+          [[ "${OPENCLAW_LUCY_TARGET}" == 'openclaw/main' ]] \
+            || { echo 'Chat Letta must route through the canonical OpenClaw main agent.' >&2; exit 1; }
           [[ -n "${LETTA_OPENCLAW_SESSION_PREFIX}" ]] \
             || { echo 'LETTA_OPENCLAW_SESSION_PREFIX is not configured in the staging Environment; refusing to fall back to a hardcoded default prefix.' >&2; exit 1; }
           case "${OPENCLAW_GATEWAY_BASE_URL}" in
@@ -66,9 +64,9 @@ jobs:
             echo
             echo '- Gateway base URL: configured (value intentionally omitted)'
             echo '- Gateway credential: configured (value intentionally omitted)'
-            echo "- Agent target: \`${LETTA_OPENCLAW_AGENT_TARGET}\`"
+            echo '- Agent target: `openclaw/main` (repository-owned canonical target)'
             echo "- Session prefix: \`${LETTA_OPENCLAW_SESSION_PREFIX}\`"
-            echo '- Hardcoded fallback: disabled (unset configuration fails this gate)'
+            echo '- Backend model override: disabled; OpenClaw main keeps its configured model (`letta/lucy`)'
           } >> "$GITHUB_STEP_SUMMARY"
 
       - name: Publish configuration status
