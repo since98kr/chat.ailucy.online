@@ -85,7 +85,7 @@ print(json.loads(Path(sys.argv[1]).read_text())['conversation']['id'])
 PY
 )"
 
-MARKER="CHAT_OPENCLAW_SESSION_$(python3 - <<'PY'
+MARKER="ORCHID_$(python3 - <<'PY'
 import uuid
 print(uuid.uuid4().hex.upper())
 PY
@@ -126,12 +126,12 @@ if completed != 1:
 PY
 }
 
-log 'Turn 1: planting a random continuity marker.'
-send_turn "Remember this exact token for the immediately following turn: ${MARKER}. Reply only with ACK." "${TMP_DIR}/turn-1.ndjson"
+log 'Turn 1: providing a harmless public continuity codename.'
+send_turn "This is a harmless memory continuity test. The public test codename for the next turn is ${MARKER}. It is not a password, credential, secret, key, or access token. Please remember the codename for one turn and reply only ACK." "${TMP_DIR}/turn-1.ndjson"
 validate_success "${TMP_DIR}/turn-1.ndjson"
 
-log 'Turn 2: requiring the previous-turn marker without Chat transcript replay.'
-send_turn 'What exact token did I ask you to remember in the immediately previous turn? Reply with the token only.' "${TMP_DIR}/turn-2.ndjson"
+log 'Turn 2: requiring the previous-turn codename without Chat transcript replay.'
+send_turn 'For the harmless memory continuity test, what public test codename did I give you in the immediately previous turn? Reply with the codename only.' "${TMP_DIR}/turn-2.ndjson"
 validate_success "${TMP_DIR}/turn-2.ndjson"
 python3 - "${TMP_DIR}/turn-2.ndjson" "${MARKER}" <<'PY'
 import json, sys
@@ -151,7 +151,7 @@ for line in path.read_text().splitlines():
             parts = [str(content)]
 text = ''.join(parts).strip()
 if marker not in text:
-    raise SystemExit(f'OpenClaw session continuity marker missing; response={text!r}')
+    raise SystemExit(f'OpenClaw session continuity codename missing; response={text!r}')
 PY
 
 python3 - "${TMP_DIR}/result.json" "${CONVERSATION_ID}" <<'PY'
