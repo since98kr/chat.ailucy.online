@@ -19,22 +19,62 @@ jobs:
         with:
           node-version: '22'
 
-      - name: Inspect host and Docker ingress geometry
+      - name: Inspect persistence capabilities
         shell: bash
         run: |
           set -euo pipefail
+          uid="$(id -u)"
+          echo "RESULT uid=${uid}"
+          echo "RESULT xdg_runtime=${XDG_RUNTIME_DIR:-unset}"
+          echo "RESULT runtime_dir_exists=$(test -d /run/user/${uid} && echo true || echo false)"
+          echo "RESULT user_manager_default=$(systemctl --user show-environment >/dev/null 2>&1 && echo true || echo false)"
+          echo "RESULT user_manager_explicit=$(XDG_RUNTIME_DIR=/run/user/${uid} systemctl --user show-environment >/dev/null 2>&1 && echo true || echo false)"
+          echo "RESULT linger=$(loginctl show-user "$(id -un)" -p Linger --value 2>/dev/null || true)"
+          echo "RESULT sudo_nopass=$(sudo -n true >/dev/null 2>&1 && echo true || echo false)"
           echo "RESULT socat=$(command -v socat || true)"
-          echo "RESULT systemd_user=$(systemctl --user is-system-running 2>/dev/null || true)"
-          echo 'RESULT host_listener:'
-          ss -ltnp 'sport = :18789' || true
-          echo 'RESULT bridge_gateway:'
-          docker network inspect bridge --format '{{(index .IPAM.Config 0).Gateway}}'
-          echo 'RESULT hermes_gateway:'
-          docker network inspect hermes_default --format '{{(index .IPAM.Config 0).Gateway}}'
-          echo 'RESULT container_host_mapping:'
-          docker exec chat-v2-staging getent hosts host.docker.internal || true
-          echo 'RESULT container_health:'
-          docker exec chat-v2-staging node -e "fetch('http://host.docker.internal:18789/health').then(async r=>{console.log('http='+r.status);process.exit(r.ok?0:2)}).catch(e=>{console.log('error='+e.code);process.exit(3)})" || true
+          echo "RESULT bridge_gateway=$(docker network inspect bridge --format '{{(index .IPAM.Config 0).Gateway}}')"
+          echo "RESULT container_host=$(docker exec chat-v2-staging getent hosts host.docker.internal | awk '{print $1}' | head -n1)"
+
+      - name: Prove ephemeral Docker bridge proxy with real OpenClaw main call
+        shell: bash
+        env:
+          OPENCLAW_GATEWAY_TOKEN: ${{ secrets.OPENCLAW_GATEWAY_TOKEN }}
+        run: |
+          set -euo pipefail
+          bridge="$(docker network inspect bridge --format '{{(index .IPAM.Config 0).Gateway}}')"
+          [[ "${bridge}" == '172.17.0.1' ]]
+          ! ss -ltn 'sport = :18791' | tail -n +2 | grep -q .
+          socat TCP-LISTEN:18791,bind="${bridge}",reuseaddr,fork TCP:127.0.0.1:18789 &
+          proxy_pid=$!
+          trap 'kill "${proxy_pid}" >/dev/null 2>&1 || true; wait "${proxy_pid}" >/dev/null 2>&1 || true' EXIT
+          for _ in $(seq 1 20); do
+            ss -ltn 'sport = :18791' | tail -n +2 | grep -q . && break
+            sleep 0.1
+          done
+          docker exec -i \
+            -e OPENCLAW_GATEWAY_TOKEN="${OPENCLAW_GATEWAY_TOKEN}" \
+            chat-v2-staging node --input-type=module - <<'NODE'
+          const response = await fetch('http://host.docker.internal:18791/v1/chat/completions', {
+            method: 'POST',
+            headers: {
+              authorization: `Bearer ${process.env.OPENCLAW_GATEWAY_TOKEN}`,
+              'content-type': 'application/json',
+            },
+            body: JSON.stringify({
+              model: 'openclaw/main',
+              user: 'chat-private-proxy-diagnostic',
+              messages: [{ role: 'user', content: 'Reply exactly OPENCLAW_DOCKER_PROXY_OK' }],
+              stream: false,
+            }),
+          });
+          const raw = await response.text();
+          const marker = raw.includes('OPENCLAW_DOCKER_PROXY_OK');
+          const noCredits = raw.toLowerCase().includes('no credits remaining');
+          console.log(`RESULT proxy_http=${response.status}`);
+          console.log(`RESULT proxy_marker=${marker}`);
+          console.log(`RESULT proxy_no_credits=${noCredits}`);
+          if (!response.ok || !marker || noCredits) process.exit(2);
+          NODE
 
       - name: Confirm host OpenClaw route still succeeds
         shell: bash
