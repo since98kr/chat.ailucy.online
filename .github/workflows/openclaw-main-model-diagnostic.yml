@@ -19,34 +19,57 @@ jobs:
         with:
           node-version: '22'
 
-      - name: Probe real OpenClaw main through private reverse tunnel
+      - name: Probe real OpenClaw main through host private reverse tunnel
         shell: bash
         env:
           OPENCLAW_GATEWAY_TOKEN: ${{ secrets.OPENCLAW_GATEWAY_TOKEN }}
         run: |
           set -euo pipefail
-          [[ -n "${OPENCLAW_GATEWAY_TOKEN:-}" ]]
-          tmp="$(mktemp -d)"
-          trap 'rm -rf "$tmp"' EXIT
-          status="$(curl --silent --show-error --max-time 120 \
-            -D "$tmp/headers" -o "$tmp/body" -w '%{http_code}' \
+          tmp="$(mktemp)"
+          trap 'rm -f "$tmp"' EXIT
+          status="$(curl -sS --max-time 120 -o "$tmp" -w '%{http_code}' \
             -H "Authorization: Bearer ${OPENCLAW_GATEWAY_TOKEN}" \
             -H 'Content-Type: application/json' \
-            -d '{"model":"openclaw/main","user":"chat-private-tunnel-diagnostic","messages":[{"role":"user","content":"Reply exactly OPENCLAW_PRIVATE_TUNNEL_OK"}],"stream":false}' \
+            -d '{"model":"openclaw/main","user":"chat-private-host-diagnostic","messages":[{"role":"user","content":"Reply exactly OPENCLAW_PRIVATE_HOST_OK"}],"stream":false}' \
             'http://127.0.0.1:18789/v1/chat/completions' || true)"
-          STATUS="$status" BODY="$tmp/body" node <<'NODE'
+          STATUS="$status" BODY="$tmp" node <<'NODE'
           const fs = require('node:fs');
-          const status = Number(process.env.STATUS || 0);
-          const raw = fs.existsSync(process.env.BODY) ? fs.readFileSync(process.env.BODY, 'utf8') : '';
-          let value = null;
-          try { value = JSON.parse(raw); } catch {}
-          const text = value?.choices?.[0]?.message?.content ?? '';
-          const error = value?.error?.error?.message ?? value?.error?.message ?? value?.message ?? null;
-          const marker = String(text).includes('OPENCLAW_PRIVATE_TUNNEL_OK');
+          const raw = fs.readFileSync(process.env.BODY, 'utf8');
+          const ok = Number(process.env.STATUS) === 200 && raw.includes('OPENCLAW_PRIVATE_HOST_OK') && !raw.toLowerCase().includes('no credits remaining');
+          console.log(`RESULT host_http=${process.env.STATUS}`);
+          console.log(`RESULT host_marker=${raw.includes('OPENCLAW_PRIVATE_HOST_OK')}`);
+          console.log(`RESULT host_no_credits=${raw.toLowerCase().includes('no credits remaining')}`);
+          if (!ok) process.exit(2);
+          NODE
+
+      - name: Probe real OpenClaw main from running Chat staging container
+        shell: bash
+        env:
+          OPENCLAW_GATEWAY_TOKEN: ${{ secrets.OPENCLAW_GATEWAY_TOKEN }}
+        run: |
+          set -euo pipefail
+          docker inspect chat-v2-staging >/dev/null
+          docker exec \
+            -e OPENCLAW_GATEWAY_TOKEN="${OPENCLAW_GATEWAY_TOKEN}" \
+            chat-v2-staging node --input-type=module - <<'NODE'
+          const response = await fetch('http://host.docker.internal:18789/v1/chat/completions', {
+            method: 'POST',
+            headers: {
+              authorization: `Bearer ${process.env.OPENCLAW_GATEWAY_TOKEN}`,
+              'content-type': 'application/json',
+            },
+            body: JSON.stringify({
+              model: 'openclaw/main',
+              user: 'chat-private-container-diagnostic',
+              messages: [{ role: 'user', content: 'Reply exactly OPENCLAW_PRIVATE_CONTAINER_OK' }],
+              stream: false,
+            }),
+          });
+          const raw = await response.text();
           const noCredits = raw.toLowerCase().includes('no credits remaining');
-          console.log(`RESULT http_status=${status}`);
-          console.log(`RESULT private_tunnel_marker=${marker}`);
-          console.log(`RESULT no_credits=${noCredits}`);
-          if (error) console.log(`RESULT sanitized_error=${String(error).slice(0, 220).replace(/\s+/g, ' ')}`);
-          if (status !== 200 || !marker || noCredits) process.exitCode = 2;
+          const marker = raw.includes('OPENCLAW_PRIVATE_CONTAINER_OK');
+          console.log(`RESULT container_http=${response.status}`);
+          console.log(`RESULT container_marker=${marker}`);
+          console.log(`RESULT container_no_credits=${noCredits}`);
+          if (!response.ok || !marker || noCredits) process.exit(2);
           NODE
