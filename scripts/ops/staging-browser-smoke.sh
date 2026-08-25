@@ -50,6 +50,7 @@ npx playwright install chromium
 log 'Running Chromium against the real localhost staging container.'
 CHAT_STAGING_BASE_URL="${BASE_URL}" \
 CHAT_STAGING_EMAIL="${EMAIL}" \
+LETTA_PROTOCOL="${LETTA_PROTOCOL:-openclaw}" \
 npm run test:e2e:staging
 
 log 'PASS: real staging chat, links, uploads, downloads, persistence, drag-and-drop, and paste are healthy.'
