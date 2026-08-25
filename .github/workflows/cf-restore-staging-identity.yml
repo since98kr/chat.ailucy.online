@@ -1,0 +1,68 @@
+name: Restore preserved CF staging identity
+
+on:
+  push:
+    branches:
+      - diag/cf-preserved-service-identity
+    paths:
+      - .github/workflows/cf-restore-staging-identity.yml
+
+permissions:
+  actions: write
+  contents: read
+
+jobs:
+  restore:
+    runs-on: [self-hosted, linux, x64, chat-staging]
+    environment: staging
+    timeout-minutes: 10
+    env:
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
+    steps:
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Restore known-good service identity from protected runner state
+        shell: bash
+        run: |
+          set -euo pipefail
+          state=/opt/chat-v2/staging/secrets/cloudflare-access-staging.json
+          test -r "$state"
+          node - "$state" <<'NODE'
+          const fs = require('node:fs');
+          const { spawnSync } = require('node:child_process');
+          const state = JSON.parse(fs.readFileSync(process.argv[2], 'utf8'));
+          for (const key of ['clientId', 'clientSecret', 'issuer', 'audience']) {
+            if (typeof state[key] !== 'string' || !state[key]) throw new Error(`missing ${key}`);
+          }
+          process.stdout.write(`::add-mask::${state.clientSecret}\n`);
+          const repo = process.env.GH_REPO;
+          const envName = 'staging';
+          const vars = {
+            CF_ACCESS_CLIENT_ID: state.clientId,
+            CHAT_ALLOWED_SERVICE_CLIENT_IDS: state.clientId,
+            CHAT_CF_ACCESS_ISSUER: state.issuer,
+            CHAT_CF_ACCESS_AUD: state.audience,
+          };
+          function run(args, input) {
+            const result = spawnSync('gh', args, { input, encoding: 'utf8', stdio: ['pipe', 'pipe', 'pipe'] });
+            if (result.status !== 0) {
+              console.error(`gh failed: ${args.slice(0, 3).join(' ')} status=${result.status}`);
+              console.error(result.stderr.trim());
+              process.exit(result.status || 1);
+            }
+          }
+          for (const [name, value] of Object.entries(vars)) {
+            run(['variable', 'set', name, '--env', envName, '--repo', repo, '--body', value]);
+          }
+          run(['secret', 'set', 'CF_ACCESS_CLIENT_SECRET', '--env', envName, '--repo', repo], state.clientSecret);
+          const probe = spawnSync('curl', [
+            '-sS', '-o', '/tmp/cf-restored-probe.out', '-w', '%{http_code}',
+            '-H', `CF-Access-Client-Id: ${state.clientId}`,
+            '-H', `CF-Access-Client-Secret: ${state.clientSecret}`,
+            'https://chat-staging.ailucy.online/api/health',
+          ], { encoding: 'utf8' });
+          console.log(`RESULT restored_client_id=${state.clientId} vars_updated=${Object.keys(vars).length} secret_updated=true edge_http=${probe.stdout.trim()}`);
+          if (probe.status !== 0 || probe.stdout.trim() !== '200') process.exit(1);
+          NODE
