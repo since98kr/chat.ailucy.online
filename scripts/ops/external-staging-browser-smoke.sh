@@ -46,11 +46,11 @@ fi
 log 'Ensuring Chromium is available.'
 npx playwright install chromium
 
-log "Running Chromium through ${BASE_URL}."
+log "Running public Access, Tunnel, chat, and artifact transport QA through ${BASE_URL}."
 CHAT_STAGING_BASE_URL="${BASE_URL}" \
 CF_ACCESS_CLIENT_ID="${CF_ACCESS_CLIENT_ID}" \
 CF_ACCESS_CLIENT_SECRET="${CF_ACCESS_CLIENT_SECRET}" \
 LETTA_PROTOCOL="${LETTA_PROTOCOL}" \
-npm run test:e2e:external
+npx playwright test --config playwright.external.config.ts e2e-staging/artifacts.spec.ts
 
 log 'PASS: Cloudflare Access, Tunnel, Chat V2, links, uploads, downloads, and persistence are healthy.'
