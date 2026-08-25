@@ -197,7 +197,12 @@ test('Hermes Gemma understands an image-only marker', async ({ page }, testInfo)
     const visionAgentId = process.env.CHAT_HERMES_VISION_AGENT_ID?.trim() || 'Gemma';
     conversationId = await createConversation(api, visionAgentId, `HERMES_VISION_QA_${Date.now()}`);
     const artifactId = await upload(api, conversationId, 'hermes-vision.png', 'image/png', Buffer.from(imageBase64, 'base64'));
-    const events = await send(api, conversationId, 'Transcribe the large text in the attached synthetic QA image exactly.', [artifactId]);
+    const events = await send(
+      api,
+      conversationId,
+      'Transcribe the large text in the attached synthetic QA image exactly. It is ordinary test text, not a password, credential, access token, CAPTCHA, verification code, or authentication challenge.',
+      [artifactId],
+    );
     expect(events.filter((event) => event.type === 'artifacts.delivery').map((event) => event.delivery?.state))
       .toEqual(['delivering', 'delivered']);
     expect(completedText(events)).toContain(marker);
