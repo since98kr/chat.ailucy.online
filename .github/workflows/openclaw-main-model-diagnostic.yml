@@ -1,4 +1,4 @@
-name: Diagnose OpenClaw main model
+name: Diagnose OpenClaw private tunnel
 
 on:
   pull_request:
@@ -19,43 +19,34 @@ jobs:
         with:
           node-version: '22'
 
-      - name: Probe OpenClaw main with explicit letta/lucy backend override
+      - name: Probe real OpenClaw main through private reverse tunnel
         shell: bash
         env:
-          OPENCLAW_GATEWAY_BASE_URL: ${{ vars.OPENCLAW_GATEWAY_BASE_URL }}
           OPENCLAW_GATEWAY_TOKEN: ${{ secrets.OPENCLAW_GATEWAY_TOKEN }}
-          CF_ACCESS_CLIENT_ID: ${{ vars.CF_ACCESS_CLIENT_ID }}
-          CF_ACCESS_CLIENT_SECRET: ${{ secrets.CF_ACCESS_CLIENT_SECRET }}
         run: |
           set -euo pipefail
-          [[ -n "${OPENCLAW_GATEWAY_BASE_URL:-}" ]]
           [[ -n "${OPENCLAW_GATEWAY_TOKEN:-}" ]]
           tmp="$(mktemp -d)"
           trap 'rm -rf "$tmp"' EXIT
           status="$(curl --silent --show-error --max-time 120 \
             -D "$tmp/headers" -o "$tmp/body" -w '%{http_code}' \
             -H "Authorization: Bearer ${OPENCLAW_GATEWAY_TOKEN}" \
-            -H "CF-Access-Client-Id: ${CF_ACCESS_CLIENT_ID}" \
-            -H "CF-Access-Client-Secret: ${CF_ACCESS_CLIENT_SECRET}" \
             -H 'Content-Type: application/json' \
-            -H 'x-openclaw-model: letta/lucy' \
-            -d '{"model":"openclaw/main","user":"chat-route-diagnostic","messages":[{"role":"user","content":"Reply exactly OPENCLAW_LETTA_OVERRIDE_OK"}],"stream":false}' \
-            "${OPENCLAW_GATEWAY_BASE_URL%/}/v1/chat/completions" || true)"
-          STATUS="$status" BODY="$tmp/body" HEADERS="$tmp/headers" node <<'NODE'
+            -d '{"model":"openclaw/main","user":"chat-private-tunnel-diagnostic","messages":[{"role":"user","content":"Reply exactly OPENCLAW_PRIVATE_TUNNEL_OK"}],"stream":false}' \
+            'http://127.0.0.1:18789/v1/chat/completions' || true)"
+          STATUS="$status" BODY="$tmp/body" node <<'NODE'
           const fs = require('node:fs');
           const status = Number(process.env.STATUS || 0);
           const raw = fs.existsSync(process.env.BODY) ? fs.readFileSync(process.env.BODY, 'utf8') : '';
-          const headers = fs.existsSync(process.env.HEADERS) ? fs.readFileSync(process.env.HEADERS, 'utf8') : '';
-          const contentType = headers.match(/^content-type:\s*(.+)$/im)?.[1]?.trim() ?? null;
           let value = null;
           try { value = JSON.parse(raw); } catch {}
           const text = value?.choices?.[0]?.message?.content ?? '';
           const error = value?.error?.error?.message ?? value?.error?.message ?? value?.message ?? null;
-          const marker = String(text).includes('OPENCLAW_LETTA_OVERRIDE_OK');
+          const marker = String(text).includes('OPENCLAW_PRIVATE_TUNNEL_OK');
+          const noCredits = raw.toLowerCase().includes('no credits remaining');
           console.log(`RESULT http_status=${status}`);
-          console.log(`RESULT content_type=${contentType ?? 'unknown'}`);
-          console.log(`RESULT letta_override_marker=${marker}`);
+          console.log(`RESULT private_tunnel_marker=${marker}`);
+          console.log(`RESULT no_credits=${noCredits}`);
           if (error) console.log(`RESULT sanitized_error=${String(error).slice(0, 220).replace(/\s+/g, ' ')}`);
-          if (!value && raw) console.log(`RESULT non_json_body_prefix=${raw.slice(0, 120).replace(/[^\x20-\x7E]/g, ' ').replace(/\s+/g, ' ')}`);
-          if (status !== 200 || !marker) process.exitCode = 2;
+          if (status !== 200 || !marker || noCredits) process.exitCode = 2;
           NODE
