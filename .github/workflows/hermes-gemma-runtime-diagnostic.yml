@@ -13,34 +13,51 @@ jobs:
     runs-on: [self-hosted, linux, x64, chat-staging]
     steps:
       - uses: actions/checkout@v4
-      - name: Trace host-side Gemma relay without secrets
+      - name: Inspect Gemma profile model and provider without secrets
         shell: bash
         run: |
           set -euo pipefail
-          echo '=== listener ==='
-          ss -ltnp '( sport = :8643 )' || true
+          pid="$(pgrep -f '/hermes -p gemma gateway run' | head -n1 || true)"
+          [[ -n "$pid" ]] || { echo 'RESULT gemma_pid=not-found'; exit 1; }
+          echo "RESULT gemma_pid=$pid"
+          echo "RESULT gemma_cwd=$(readlink -f "/proc/$pid/cwd" 2>/dev/null || true)"
 
-          echo '=== matching processes ==='
-          ps -eo pid,ppid,user,comm,args --width 240 | grep -Ei '8643|gemma|hermes' | grep -v grep | sed -E 's/([A-Za-z0-9_]*(KEY|TOKEN|SECRET|PASSWORD|AUTH)[A-Za-z0-9_]*=)[^ ]+/\1[REDACTED]/Ig' || true
+          echo '=== process environment names only ==='
+          tr '\0' '\n' < "/proc/$pid/environ" 2>/dev/null | sed 's/=.*//' | sort | grep -Ei 'MODEL|PROVIDER|PROFILE|HERMES|GOOGLE|GEMINI|OPENAI|ANTHROPIC|CODEX|API' || true
 
-          echo '=== user systemd matches ==='
-          systemctl --user list-units --all --no-pager 2>/dev/null | grep -Ei 'gemma|hermes|8643' || true
-          systemctl --user list-unit-files --no-pager 2>/dev/null | grep -Ei 'gemma|hermes|8643' || true
+          echo '=== Hermes config/profile paths ==='
+          find "$HOME/.hermes" -maxdepth 5 -type f -size -1024k 2>/dev/null \
+            | grep -Ei '(gemma|profile|config|settings|\.ya?ml$|\.json$|\.toml$)' \
+            | sort | head -n 200 || true
 
-          echo '=== unit files containing 8643 ==='
-          for root in "$HOME/.config/systemd/user" /etc/systemd/system; do
-            [[ -d "$root" ]] || continue
-            grep -RIl --exclude='*.wants' '8643' "$root" 2>/dev/null || true
-          done
+          echo '=== sanitized model/provider config evidence ==='
+          python3 - <<'PY'
+          from pathlib import Path
+          import re
+          root = Path.home()/'.hermes'
+          allow = re.compile(r'gemma|model|provider|profile|base[_-]?url|api[_-]?base|endpoint|gateway[_-]?port|port', re.I)
+          block = re.compile(r'api[_-]?key|token|secret|password|authorization|credential|private[_-]?key', re.I)
+          suffixes={'.yaml','.yml','.json','.toml','.ini','.conf','.env',''}
+          count=0
+          for p in root.rglob('*'):
+              try:
+                  if not p.is_file() or p.stat().st_size > 1024*1024 or p.suffix.lower() not in suffixes:
+                      continue
+                  text=p.read_text(errors='ignore')
+              except Exception:
+                  continue
+              hits=[]
+              for line in text.splitlines():
+                  if allow.search(line) and not block.search(line):
+                      s=line.strip()
+                      if len(s)>400: s=s[:400]+'…'
+                      hits.append(s)
+              if hits:
+                  print(f'FILE {p}')
+                  for line in hits[:80]: print(line)
+                  count += 1
+                  if count >= 40: break
+          PY
 
-          echo '=== bridge health ==='
-          status="$(curl --silent --show-error --max-time 10 -o /tmp/gemma-health.body -w '%{http_code}' http://172.17.0.1:8643/health || true)"
-          echo "RESULT health_http=$status"
-          head -c 1500 /tmp/gemma-health.body 2>/dev/null | sed -E 's/("?(api[_-]?key|token|secret|password|authorization)"?[[:space:]]*:[[:space:]]*")[^"]+"/\1[REDACTED]"/Ig' || true
-          echo
-
-          echo '=== unauthenticated model metadata ==='
-          status="$(curl --silent --show-error --max-time 10 -o /tmp/gemma-models.body -w '%{http_code}' http://172.17.0.1:8643/v1/models || true)"
-          echo "RESULT models_http=$status"
-          head -c 2000 /tmp/gemma-models.body 2>/dev/null | sed -E 's/("?(api[_-]?key|token|secret|password|authorization)"?[[:space:]]*:[[:space:]]*")[^"]+"/\1[REDACTED]"/Ig' || true
-          echo
+          echo '=== Hermes CLI help hints ==='
+          "$HOME/.hermes/hermes-agent/venv/bin/hermes" -p gemma --help 2>&1 | grep -Ei 'model|provider|profile|config' | head -n 80 || true
