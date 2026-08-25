@@ -14,110 +14,38 @@ jobs:
     environment: staging
     steps:
       - uses: actions/checkout@v4
-      - name: Inspect Gemma credential names, profile precedence, and launcher
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Identify Gemma process supervisor
         shell: bash
-        env:
-          HERMES_API_KEY: ${{ secrets.HERMES_API_KEY }}
         run: |
           set -euo pipefail
-          IMAGE='chat-ailucy-v2:19523e65dd77f9477fdab4801cf36b36f665d4f3'
-          [[ -n "$HERMES_API_KEY" ]] || { echo 'RESULT hermes_api_key=missing'; exit 1; }
-
-          echo '=== gateway model aliases ==='
-          for port in 8642 8643 8644 8645; do
-            printf 'PORT %s ' "$port"
-            curl --fail --silent --show-error --max-time 15 \
-              -H "Authorization: Bearer $HERMES_API_KEY" \
-              "http://172.17.0.1:${port}/v1/models" \
-              | python3 -c 'import json,sys; j=json.load(sys.stdin); print(json.dumps([{"id":x.get("id"),"owned_by":x.get("owned_by")} for x in j.get("data",[])], separators=(",",":")))'
-          done
-
-          echo '=== env variable names only ==='
-          docker run --rm -i --user 0:0 \
-            -v /home/since98kr/.hermes:/mnt/hermes:ro \
-            "$IMAGE" node - <<'NODE'
-          const fs=require('node:fs');
-          const files=[
-            '/mnt/hermes/.env',
-            '/mnt/hermes/.env.gemma',
-            '/mnt/hermes/profiles/gemma/.env',
-            '/mnt/hermes/profiles/gemma/config.yaml',
-            '/mnt/hermes/.env.lynn',
-            '/mnt/hermes/profiles/lynn/.env',
-            '/mnt/hermes/.env.xixi',
-            '/mnt/hermes/profiles/xixi/.env',
-          ];
-          for(const p of files){
-            if(!fs.existsSync(p)) continue;
-            console.log('FILE '+p);
-            const text=fs.readFileSync(p,'utf8');
-            for(const raw of text.split(/\r?\n/)){
-              const line=raw.trim();
-              if(!line || line.startsWith('#')) continue;
-              const m=line.match(/^(?:export\s+)?([A-Za-z_][A-Za-z0-9_]*)\s*=/);
-              if(m) console.log('ENV '+m[1]);
-            }
-          }
-          NODE
-
-          echo '=== selected sanitized profile/model lines ==='
-          docker run --rm -i --user 0:0 \
-            -v /home/since98kr/.hermes:/mnt/hermes:ro \
-            "$IMAGE" node - <<'NODE'
-          const fs=require('node:fs');
-          const files=[
-            '/mnt/hermes/config.yaml',
-            '/mnt/hermes/.env.gemma',
-            '/mnt/hermes/profiles/gemma/config.yaml',
-            '/mnt/hermes/.env.lynn',
-            '/mnt/hermes/profiles/lynn/config.yaml',
-            '/mnt/hermes/.env.xixi',
-            '/mnt/hermes/profiles/xixi/config.yaml',
-          ];
-          const allow=/model|provider|profile|base[_-]?url|api[_-]?base|endpoint|gateway[_-]?port|vision|multimodal|gemini|openai|openrouter|anthropic|codex|qwen|deepseek/i;
-          const block=/api[_-]?key|token|secret|password|authorization|credential|private[_-]?key/i;
-          for(const p of files){
-            if(!fs.existsSync(p)) continue;
-            console.log('FILE '+p);
-            const text=fs.readFileSync(p,'utf8');
-            for(const raw of text.split(/\r?\n/)){
-              if(allow.test(raw) && !block.test(raw)) console.log(raw.trim().slice(0,600));
-            }
-          }
-          NODE
-
-          echo '=== Gemma process parent/command ==='
           pid="$(pgrep -f '/hermes -p gemma gateway run' | head -n1 || true)"
-          if [[ -n "$pid" ]]; then
-            ps -o pid=,ppid=,user=,lstart=,comm=,args= -p "$pid" | sed -E 's/([A-Za-z0-9_]*(KEY|TOKEN|SECRET|PASSWORD|AUTH)[A-Za-z0-9_]*=)[^ ]+/\1[REDACTED]/Ig'
-            ppid="$(ps -o ppid= -p "$pid" | tr -d ' ')"
-            [[ -n "$ppid" ]] && ps -o pid=,ppid=,user=,lstart=,comm=,args= -p "$ppid" | sed -E 's/([A-Za-z0-9_]*(KEY|TOKEN|SECRET|PASSWORD|AUTH)[A-Za-z0-9_]*=)[^ ]+/\1[REDACTED]/Ig' || true
-          fi
+          [[ -n "$pid" ]] || { echo 'RESULT gemma_pid=not-found'; exit 1; }
+          echo "RESULT gemma_pid=$pid"
+          echo '=== cgroup ==='
+          cat "/proc/$pid/cgroup" || true
+          echo '=== systemctl status by pid ==='
+          systemctl status "$pid" --no-pager --full 2>&1 | sed -E 's/([A-Za-z0-9_]*(KEY|TOKEN|SECRET|PASSWORD|AUTH)[A-Za-z0-9_]*=)[^ ]+/\1[REDACTED]/Ig' || true
+          echo '=== matching system services ==='
+          systemctl list-units --all --type=service --no-pager 2>/dev/null | grep -Ei 'hermes|gemma' || true
+          echo '=== matching service files ==='
+          systemctl list-unit-files --type=service --no-pager 2>/dev/null | grep -Ei 'hermes|gemma' || true
 
-          echo '=== launcher references ==='
-          docker run --rm -i --user 0:0 \
-            -v /home/since98kr/.hermes:/mnt/hermes:ro \
-            "$IMAGE" node - <<'NODE'
-          const fs=require('node:fs');
-          const path=require('node:path');
-          const root='/mnt/hermes';
-          const needle=/-p\s+gemma\s+gateway\s+run|profile.{0,20}gemma|\.env\.gemma/i;
-          const block=/api[_-]?key|token|secret|password|authorization|credential|private[_-]?key/i;
-          let shown=0;
-          function walk(dir,depth){
-            if(depth>6 || shown>=50) return;
-            let ents=[]; try{ents=fs.readdirSync(dir,{withFileTypes:true})}catch{return}
-            for(const e of ents){
-              if(shown>=50) return;
-              const p=path.join(dir,e.name);
-              if(e.isDirectory()) { if(!/node_modules|venv|\.git|sessions|logs|cache/i.test(p)) walk(p,depth+1); continue; }
-              if(!e.isFile()) continue;
-              let st; try{st=fs.statSync(p)}catch{continue}
-              if(st.size>1024*1024) continue;
-              let text; try{text=fs.readFileSync(p,'utf8')}catch{continue}
-              const hits=text.split(/\r?\n/).filter(l=>needle.test(l)&&!block.test(l)).slice(0,20);
-              if(hits.length){ console.log('FILE '+p); hits.forEach(l=>console.log(l.trim().slice(0,700))); shown++; }
-            }
-          }
-          walk(root,0);
-          NODE
+      - name: Install focused browser test dependencies
+        run: npm install --no-audit --no-fund
+
+      - name: Ensure Chromium
+        run: npx playwright install chromium
+
+      - name: Canary default Hermes OpenAI Codex vision path
+        env:
+          CHAT_STAGING_BASE_URL: http://127.0.0.1:14174
+          CHAT_STAGING_EMAIL: ${{ vars.CHAT_ALLOWED_EMAILS }}
+          CHAT_HERMES_VISION_AGENT_ID: '[Hermes] Lucy'
+        run: >-
+          npx playwright test --config playwright.staging.config.ts
+          e2e-staging/hermes-only.spec.ts
+          --grep 'Hermes Gemma understands an image-only marker'
