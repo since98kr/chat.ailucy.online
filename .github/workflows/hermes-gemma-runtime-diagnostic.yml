@@ -1,0 +1,69 @@
+name: Diagnose Hermes Gemma runtime
+
+on:
+  push:
+    branches:
+      - diag/hermes-gemma-runtime
+
+permissions:
+  contents: read
+
+jobs:
+  diagnose:
+    runs-on: [self-hosted, linux, x64, chat-staging]
+    steps:
+      - uses: actions/checkout@v4
+      - name: Inspect Gemma service geometry without secrets
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo '=== docker services ==='
+          docker ps --format 'name={{.Names}} image={{.Image}} ports={{.Ports}}'
+          echo '=== listeners ==='
+          ss -ltnp '( sport = :8643 )' || true
+
+          candidate=''
+          while IFS= read -r name; do
+            ports="$(docker port "$name" 2>/dev/null || true)"
+            if grep -Eq '(^|:)8643($|\s|->)' <<<"$ports" || docker ps --filter "name=^/${name}$" --format '{{.Ports}}' | grep -q '8643'; then
+              candidate="$name"
+              break
+            fi
+          done < <(docker ps --format '{{.Names}}')
+
+          if [[ -z "$candidate" ]]; then
+            candidate="$(docker ps --format '{{.Names}}' | grep -Ei 'gemma' | head -n1 || true)"
+          fi
+          [[ -n "$candidate" ]] || { echo 'RESULT gemma_container=not-found'; exit 1; }
+          echo "RESULT gemma_container=$candidate"
+
+          docker inspect "$candidate" | node -e '
+            let s=""; process.stdin.on("data",d=>s+=d).on("end",()=>{
+              const x=JSON.parse(s)[0];
+              const labels=x.Config?.Labels||{};
+              const allowed=/MODEL|PROVIDER|API_BASE|BASE_URL|ENDPOINT|PORT|HOST/i;
+              const blocked=/KEY|TOKEN|SECRET|PASSWORD|AUTH|CREDENTIAL/i;
+              const env=(x.Config?.Env||[]).map(v=>{const i=v.indexOf("="); return [v.slice(0,i),v.slice(i+1)]})
+                .filter(([k])=>allowed.test(k)&&!blocked.test(k))
+                .map(([k,v])=>({name:k,value:v}));
+              console.log(JSON.stringify({
+                name:x.Name,
+                image:x.Config?.Image,
+                entrypoint:x.Config?.Entrypoint,
+                cmd:x.Config?.Cmd,
+                restart:x.HostConfig?.RestartPolicy?.Name,
+                compose:{
+                  project:labels["com.docker.compose.project"],
+                  service:labels["com.docker.compose.service"],
+                  working_dir:labels["com.docker.compose.project.working_dir"],
+                  config_files:labels["com.docker.compose.project.config_files"]
+                },
+                env
+              },null,2));
+            });'
+
+          echo '=== health ==='
+          curl --silent --show-error --max-time 10 -D /tmp/gemma-health.headers -o /tmp/gemma-health.body http://127.0.0.1:8643/health || true
+          head -n 1 /tmp/gemma-health.headers || true
+          head -c 1000 /tmp/gemma-health.body || true
+          echo
