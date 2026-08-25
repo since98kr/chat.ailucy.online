@@ -1,6 +1,11 @@
 name: Diagnose OpenClaw private tunnel
 
 on:
+  push:
+    branches:
+      - diag/openclaw-main-model
+    paths:
+      - '.github/workflows/openclaw-main-model-diagnostic.yml'
   pull_request:
     paths:
       - '.github/workflows/openclaw-main-model-diagnostic.yml'
