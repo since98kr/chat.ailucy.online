@@ -48,6 +48,7 @@ log "Running Chromium through ${BASE_URL}."
 CHAT_STAGING_BASE_URL="${BASE_URL}" \
 CF_ACCESS_CLIENT_ID="${CF_ACCESS_CLIENT_ID}" \
 CF_ACCESS_CLIENT_SECRET="${CF_ACCESS_CLIENT_SECRET}" \
+LETTA_PROTOCOL="${LETTA_PROTOCOL:-openclaw}" \
 npm run test:e2e:external
 
 log 'PASS: Cloudflare Access, Tunnel, Chat V2, links, uploads, downloads, and persistence are healthy.'
