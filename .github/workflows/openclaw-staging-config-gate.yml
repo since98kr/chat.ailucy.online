@@ -40,14 +40,14 @@ jobs:
         id: validate
         shell: bash
         env:
-          OPENCLAW_CONTAINER_BASE_URL: http://host.docker.internal:18789
+          OPENCLAW_CONTAINER_BASE_URL: http://host.docker.internal:18792
           OPENCLAW_GATEWAY_TOKEN: ${{ secrets.OPENCLAW_GATEWAY_TOKEN }}
           OPENCLAW_LUCY_TARGET: openclaw/main
           LETTA_OPENCLAW_SESSION_PREFIX: ${{ vars.LETTA_OPENCLAW_SESSION_PREFIX }}
         run: |
           set -euo pipefail
-          [[ "${OPENCLAW_CONTAINER_BASE_URL}" == 'http://host.docker.internal:18789' ]] \
-            || { echo 'Chat staging must use the repository-owned private OpenClaw reverse-tunnel ingress.' >&2; exit 1; }
+          [[ "${OPENCLAW_CONTAINER_BASE_URL}" == 'http://host.docker.internal:18792' ]] \
+            || { echo 'Chat staging must use the repository-owned private OpenClaw Docker bridge proxy.' >&2; exit 1; }
           [[ -n "${OPENCLAW_GATEWAY_TOKEN}" ]] || { echo 'OPENCLAW_GATEWAY_TOKEN is not configured.' >&2; exit 1; }
           [[ "${OPENCLAW_LUCY_TARGET}" == 'openclaw/main' ]] \
             || { echo 'Chat Letta must route through the canonical OpenClaw main agent.' >&2; exit 1; }
@@ -57,7 +57,7 @@ jobs:
           {
             echo '## OpenClaw staging configuration'
             echo
-            echo '- Gateway ingress: repository-owned private reverse tunnel (`host.docker.internal:18789`)'
+            echo '- Gateway ingress: Docker bridge proxy (`host.docker.internal:18792`) to the private reverse tunnel'
             echo '- Gateway credential: configured (value intentionally omitted)'
             echo '- Agent target: `openclaw/main` (repository-owned canonical target)'
             echo "- Session prefix: \`${LETTA_OPENCLAW_SESSION_PREFIX}\`"
