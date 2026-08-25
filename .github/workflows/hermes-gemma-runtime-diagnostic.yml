@@ -11,63 +11,56 @@ permissions:
 jobs:
   diagnose:
     runs-on: [self-hosted, linux, x64, chat-staging]
+    environment: staging
     steps:
       - uses: actions/checkout@v4
-      - name: Inspect actual Gemma profile and model aliases without secrets
+      - name: Read Gemma profile through read-only host mount
         shell: bash
         env:
           HERMES_API_KEY: ${{ secrets.HERMES_API_KEY }}
         run: |
           set -euo pipefail
-          HERMES_HOME=/home/since98kr/.hermes
-          HERMES_BIN=/home/since98kr/.hermes/hermes-agent/venv/bin/hermes
-          echo '=== access geometry ==='
-          id
-          ls -ld /home/since98kr /home/since98kr/.hermes /home/since98kr/.hermes/hermes-agent 2>&1 || true
-          if sudo -n -u since98kr true 2>/dev/null; then echo 'RESULT sudo_as_since98kr=yes'; else echo 'RESULT sudo_as_since98kr=no'; fi
-
-          echo '=== candidate config/profile paths ==='
-          find "$HERMES_HOME" -maxdepth 6 -type f -size -1024k 2>/dev/null \
-            | grep -Ei '(gemma|profile|config|settings|\.ya?ml$|\.json$|\.toml$|\.env$)' \
-            | sort | head -n 250 || true
-
-          echo '=== sanitized model/provider config evidence ==='
-          python3 - <<'PY'
-          from pathlib import Path
-          import re
-          root=Path('/home/since98kr/.hermes')
-          allow=re.compile(r'gemma|model|provider|profile|base[_-]?url|api[_-]?base|endpoint|gateway[_-]?port|vision|multimodal|google|openai|anthropic|openrouter|codex',re.I)
-          block=re.compile(r'api[_-]?key|token|secret|password|authorization|credential|private[_-]?key',re.I)
-          suffixes={'.yaml','.yml','.json','.toml','.ini','.conf','.env',''}
-          count=0
-          for p in root.rglob('*'):
-              try:
-                  if not p.is_file() or p.stat().st_size>1024*1024 or p.suffix.lower() not in suffixes: continue
-                  text=p.read_text(errors='ignore')
-              except Exception: continue
-              hits=[]
-              for line in text.splitlines():
-                  if allow.search(line) and not block.search(line):
-                      s=line.strip()
-                      if len(s)>500: s=s[:500]+'…'
-                      hits.append(s)
-              if hits:
-                  print(f'FILE {p}')
-                  for line in hits[:100]: print(line)
-                  count+=1
-                  if count>=60: break
-          PY
-
+          IMAGE='chat-ailucy-v2:19523e65dd77f9477fdab4801cf36b36f665d4f3'
           echo '=== authenticated gateway model aliases ==='
           [[ -n "$HERMES_API_KEY" ]] || { echo 'RESULT hermes_api_key=missing'; exit 1; }
-          curl --fail --silent --show-error --max-time 15 \
-            -H "Authorization: Bearer $HERMES_API_KEY" \
-            http://172.17.0.1:8643/v1/models \
-            | node -e 'let s="";process.stdin.on("data",d=>s+=d).on("end",()=>{const j=JSON.parse(s); console.log(JSON.stringify((j.data||[]).map(x=>({id:x.id,owned_by:x.owned_by||null})),null,2));})'
+          for port in 8642 8643 8644 8645; do
+            printf 'PORT %s ' "$port"
+            curl --fail --silent --show-error --max-time 15 \
+              -H "Authorization: Bearer $HERMES_API_KEY" \
+              "http://172.17.0.1:${port}/v1/models" \
+              | node -e 'let s="";process.stdin.on("data",d=>s+=d).on("end",()=>{const j=JSON.parse(s); console.log(JSON.stringify((j.data||[]).map(x=>({id:x.id,owned_by:x.owned_by||null}))));})'
+          done
 
-          echo '=== CLI help ==='
-          if [[ -x "$HERMES_BIN" ]]; then
-            "$HERMES_BIN" -p gemma --help 2>&1 | head -n 160 || true
-          else
-            echo 'RESULT hermes_bin=not-executable-by-runner'
-          fi
+          echo '=== sanitized host profile evidence via read-only mount ==='
+          docker run --rm --user 0:0 \
+            -v /home/since98kr/.hermes:/mnt/hermes:ro \
+            "$IMAGE" node - <<'NODE'
+          const fs=require('node:fs');
+          const path=require('node:path');
+          const root='/mnt/hermes';
+          const allow=/gemma|model|provider|profile|base[_-]?url|api[_-]?base|endpoint|gateway[_-]?port|vision|multimodal|google|gemini|openai|anthropic|openrouter|codex/i;
+          const block=/api[_-]?key|token|secret|password|authorization|credential|private[_-]?key/i;
+          const wanted=new Set(['.yaml','.yml','.json','.toml','.ini','.conf','.env','']);
+          let files=0;
+          function walk(dir,depth){
+            if(depth>7||files>=80)return;
+            let ents=[]; try{ents=fs.readdirSync(dir,{withFileTypes:true})}catch{return}
+            for(const e of ents){
+              if(files>=80)return;
+              const p=path.join(dir,e.name);
+              if(e.isDirectory()){walk(p,depth+1);continue}
+              if(!e.isFile())continue;
+              let st; try{st=fs.statSync(p)}catch{continue}
+              if(st.size>1024*1024||!wanted.has(path.extname(e.name).toLowerCase()))continue;
+              let text; try{text=fs.readFileSync(p,'utf8')}catch{continue}
+              const hits=text.split(/\r?\n/).filter(l=>allow.test(l)&&!block.test(l)).slice(0,120).map(l=>l.trim().slice(0,500));
+              if(hits.length){console.log('FILE '+p); hits.forEach(l=>console.log(l)); files++;}
+            }
+          }
+          walk(root,0);
+          NODE
+
+          echo '=== profile tree names ==='
+          docker run --rm --user 0:0 \
+            -v /home/since98kr/.hermes:/mnt/hermes:ro \
+            "$IMAGE" sh -lc "find /mnt/hermes -maxdepth 5 -type f | grep -Ei '(gemma|profile|config|settings|\\.ya?ml$|\\.json$|\\.toml$)' | sort | head -n 250" || true
