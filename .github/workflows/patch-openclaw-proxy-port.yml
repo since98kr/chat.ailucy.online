@@ -1,0 +1,49 @@
+name: Patch OpenClaw staging proxy port
+
+on:
+  push:
+    branches:
+      - fix/staging-openclaw-docker-proxy-18792
+    paths:
+      - '.github/workflows/patch-openclaw-proxy-port.yml'
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: fix/staging-openclaw-docker-proxy-18792
+          fetch-depth: 0
+          persist-credentials: true
+
+      - name: Patch only the container-side OpenClaw proxy port
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          files=(
+            .github/workflows/deploy-staging.yml
+            .github/workflows/staging-preflight.yml
+            .github/workflows/openclaw-staging-config-gate.yml
+            .github/workflows/letta-full-runtime-ci.yml
+          )
+          for file in "${files[@]}"; do
+            grep -Fq 'host.docker.internal:18789' "${file}"
+            sed -i 's#host\.docker\.internal:18789#host.docker.internal:18792#g' "${file}"
+          done
+          grep -Fq 'OPENCLAW_GATEWAY_HOST_BASE_URL: http://127.0.0.1:18789' .github/workflows/deploy-staging.yml
+          grep -Fq 'OPENCLAW_GATEWAY_HOST_BASE_URL: http://127.0.0.1:18789' .github/workflows/staging-preflight.yml
+          ! grep -Fq 'host.docker.internal:18789' "${files[@]}"
+          grep -Fq 'LETTA_BASE_URL: http://host.docker.internal:18792' .github/workflows/deploy-staging.yml
+          grep -Fq 'LETTA_BASE_URL: http://host.docker.internal:18792' .github/workflows/staging-preflight.yml
+          grep -Fq 'OPENCLAW_CONTAINER_BASE_URL: http://host.docker.internal:18792' .github/workflows/openclaw-staging-config-gate.yml
+          rm -f .github/workflows/patch-openclaw-proxy-port.yml
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add .github/workflows/deploy-staging.yml .github/workflows/staging-preflight.yml .github/workflows/openclaw-staging-config-gate.yml .github/workflows/letta-full-runtime-ci.yml .github/workflows/patch-openclaw-proxy-port.yml
+          git commit -m 'fix(staging): use Docker bridge proxy port'
+          git push origin HEAD:fix/staging-openclaw-docker-proxy-18792
