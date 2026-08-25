@@ -28,11 +28,11 @@ jobs:
             curl --fail --silent --show-error --max-time 15 \
               -H "Authorization: Bearer $HERMES_API_KEY" \
               "http://172.17.0.1:${port}/v1/models" \
-              | node -e 'let s="";process.stdin.on("data",d=>s+=d).on("end",()=>{const j=JSON.parse(s); console.log(JSON.stringify((j.data||[]).map(x=>({id:x.id,owned_by:x.owned_by||null}))));})'
+              | python3 -c 'import json,sys; j=json.load(sys.stdin); print(json.dumps([{"id":x.get("id"),"owned_by":x.get("owned_by")} for x in j.get("data",[])], separators=(",",":")))'
           done
 
           echo '=== sanitized host profile evidence via read-only mount ==='
-          docker run --rm --user 0:0 \
+          docker run --rm -i --user 0:0 \
             -v /home/since98kr/.hermes:/mnt/hermes:ro \
             "$IMAGE" node - <<'NODE'
           const fs=require('node:fs');
