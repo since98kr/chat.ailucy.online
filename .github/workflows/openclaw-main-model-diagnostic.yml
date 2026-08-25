@@ -1,4 +1,4 @@
-name: Diagnose OpenClaw private tunnel
+name: Install OpenClaw private bridge proxy
 
 on:
   push:
@@ -6,56 +6,129 @@ on:
       - diag/openclaw-main-model
     paths:
       - '.github/workflows/openclaw-main-model-diagnostic.yml'
-  pull_request:
-    paths:
-      - '.github/workflows/openclaw-main-model-diagnostic.yml'
 
 permissions:
   contents: read
+  statuses: write
 
 jobs:
-  diagnose:
+  proxy:
     runs-on: [self-hosted, linux, x64, chat-staging]
     environment: staging
     timeout-minutes: 10
     steps:
-      - name: Setup Node.js
-        uses: actions/setup-node@v4
+      - name: Mark host proxy pending
+        uses: actions/github-script@v7
         with:
-          node-version: '22'
+          script: |
+            await github.rest.repos.createCommitStatus({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              sha: context.sha,
+              state: 'pending',
+              context: 'chat-v2/openclaw-proxy-host',
+              description: 'Installing private Docker bridge proxy',
+              target_url: `${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`,
+            });
 
-      - name: Inspect persistence capabilities
-        shell: bash
-        run: |
-          set -euo pipefail
-          uid="$(id -u)"
-          echo "RESULT uid=${uid}"
-          echo "RESULT xdg_runtime=${XDG_RUNTIME_DIR:-unset}"
-          echo "RESULT runtime_dir_exists=$(test -d /run/user/${uid} && echo true || echo false)"
-          echo "RESULT user_manager_default=$(systemctl --user show-environment >/dev/null 2>&1 && echo true || echo false)"
-          echo "RESULT user_manager_explicit=$(XDG_RUNTIME_DIR=/run/user/${uid} systemctl --user show-environment >/dev/null 2>&1 && echo true || echo false)"
-          echo "RESULT linger=$(loginctl show-user "$(id -un)" -p Linger --value 2>/dev/null || true)"
-          echo "RESULT sudo_nopass=$(sudo -n true >/dev/null 2>&1 && echo true || echo false)"
-          echo "RESULT socat=$(command -v socat || true)"
-          echo "RESULT bridge_gateway=$(docker network inspect bridge --format '{{(index .IPAM.Config 0).Gateway}}')"
-          echo "RESULT container_host=$(docker exec chat-v2-staging getent hosts host.docker.internal | awk '{print $1}' | head -n1)"
-
-      - name: Prove ephemeral Docker bridge proxy with real OpenClaw main call
+      - name: Install persistent bridge-scoped proxy and prove real route
+        id: install
         shell: bash
         env:
           OPENCLAW_GATEWAY_TOKEN: ${{ secrets.OPENCLAW_GATEWAY_TOKEN }}
         run: |
-          set -euo pipefail
+          set -Eeuo pipefail
+          test -x /usr/bin/socat
+          [[ -n "${OPENCLAW_GATEWAY_TOKEN:-}" ]]
           bridge="$(docker network inspect bridge --format '{{(index .IPAM.Config 0).Gateway}}')"
-          [[ "${bridge}" == '172.17.0.1' ]]
-          ! ss -ltn 'sport = :18791' | tail -n +2 | grep -q .
-          socat TCP-LISTEN:18791,bind="${bridge}",reuseaddr,fork TCP:127.0.0.1:18789 &
-          proxy_pid=$!
-          trap 'kill "${proxy_pid}" >/dev/null 2>&1 || true; wait "${proxy_pid}" >/dev/null 2>&1 || true' EXIT
-          for _ in $(seq 1 20); do
-            ss -ltn 'sport = :18791' | tail -n +2 | grep -q . && break
-            sleep 0.1
+          container_host="$(docker exec chat-v2-staging getent hosts host.docker.internal | awk '{print $1}' | head -n1)"
+          [[ -n "${bridge}" && "${container_host}" == "${bridge}" ]]
+          [[ "${bridge}" == 172.17.* ]]
+          listen_port=18791
+          target_port=18789
+          if ss -ltn "sport = :${listen_port}" | tail -n +2 | grep -q .; then
+            echo "Port ${listen_port} is already occupied; refusing to replace an unknown listener." >&2
+            exit 2
+          fi
+
+          mode=''
+          unit='chat-v2-openclaw-proxy.service'
+          uid="$(id -u)"
+          export XDG_RUNTIME_DIR="${XDG_RUNTIME_DIR:-/run/user/${uid}}"
+          rollback() {
+            rc=$?
+            if [[ "${rc}" -ne 0 ]]; then
+              if [[ "${mode}" == user ]]; then
+                systemctl --user disable --now "${unit}" >/dev/null 2>&1 || true
+                rm -f "${HOME}/.config/systemd/user/${unit}"
+                systemctl --user daemon-reload >/dev/null 2>&1 || true
+              elif [[ "${mode}" == system ]]; then
+                sudo -n systemctl disable --now "${unit}" >/dev/null 2>&1 || true
+                sudo -n rm -f "/etc/systemd/system/${unit}" >/dev/null 2>&1 || true
+                sudo -n systemctl daemon-reload >/dev/null 2>&1 || true
+              fi
+            fi
+            exit "${rc}"
+          }
+          trap rollback EXIT
+
+          if [[ -S "${XDG_RUNTIME_DIR}/bus" ]] && systemctl --user show-environment >/dev/null 2>&1; then
+            mode=user
+            mkdir -p "${HOME}/.config/systemd/user"
+            cat >"${HOME}/.config/systemd/user/${unit}" <<EOF
+          [Unit]
+          Description=Chat V2 private OpenClaw Docker bridge proxy
+          After=network-online.target
+
+          [Service]
+          ExecStart=/usr/bin/socat TCP-LISTEN:${listen_port},bind=${bridge},reuseaddr,fork TCP:127.0.0.1:${target_port}
+          Restart=always
+          RestartSec=2
+          NoNewPrivileges=true
+
+          [Install]
+          WantedBy=default.target
+          EOF
+            systemctl --user daemon-reload
+            systemctl --user enable --now "${unit}"
+          elif sudo -n true >/dev/null 2>&1; then
+            mode=system
+            tmp="$(mktemp)"
+            cat >"${tmp}" <<EOF
+          [Unit]
+          Description=Chat V2 private OpenClaw Docker bridge proxy
+          After=network-online.target docker.service
+          Wants=network-online.target
+
+          [Service]
+          Type=simple
+          User=$(id -un)
+          ExecStart=/usr/bin/socat TCP-LISTEN:${listen_port},bind=${bridge},reuseaddr,fork TCP:127.0.0.1:${target_port}
+          Restart=always
+          RestartSec=2
+          NoNewPrivileges=true
+
+          [Install]
+          WantedBy=multi-user.target
+          EOF
+            sudo -n install -m 0644 "${tmp}" "/etc/systemd/system/${unit}"
+            rm -f "${tmp}"
+            sudo -n systemctl daemon-reload
+            sudo -n systemctl enable --now "${unit}"
+          else
+            echo 'No persistent systemd control path is available; refusing a nohup-only proxy.' >&2
+            exit 3
+          fi
+
+          for _ in $(seq 1 30); do
+            if ss -ltn "sport = :${listen_port}" | tail -n +2 | grep -Fq "${bridge}:${listen_port}"; then
+              break
+            fi
+            sleep 0.2
           done
+          ss -ltn "sport = :${listen_port}" | tail -n +2 | grep -Fq "${bridge}:${listen_port}"
+          curl --fail --silent --show-error --max-time 5 "http://${bridge}:${listen_port}/health" >/dev/null
+
           docker exec -i \
             -e OPENCLAW_GATEWAY_TOKEN="${OPENCLAW_GATEWAY_TOKEN}" \
             chat-v2-staging node --input-type=module - <<'NODE'
@@ -67,13 +140,13 @@ jobs:
             },
             body: JSON.stringify({
               model: 'openclaw/main',
-              user: 'chat-private-proxy-diagnostic',
-              messages: [{ role: 'user', content: 'Reply exactly OPENCLAW_DOCKER_PROXY_OK' }],
+              user: 'chat-private-persistent-proxy-canary',
+              messages: [{ role: 'user', content: 'Reply exactly OPENCLAW_PERSISTENT_PROXY_OK' }],
               stream: false,
             }),
           });
           const raw = await response.text();
-          const marker = raw.includes('OPENCLAW_DOCKER_PROXY_OK');
+          const marker = raw.includes('OPENCLAW_PERSISTENT_PROXY_OK');
           const noCredits = raw.toLowerCase().includes('no credits remaining');
           console.log(`RESULT proxy_http=${response.status}`);
           console.log(`RESULT proxy_marker=${marker}`);
@@ -81,25 +154,25 @@ jobs:
           if (!response.ok || !marker || noCredits) process.exit(2);
           NODE
 
-      - name: Confirm host OpenClaw route still succeeds
-        shell: bash
+          echo "RESULT persistence_mode=${mode}"
+          echo "RESULT listen=${bridge}:${listen_port}"
+          echo "RESULT target=127.0.0.1:${target_port}"
+          trap - EXIT
+
+      - name: Publish host proxy status
+        if: always()
+        uses: actions/github-script@v7
         env:
-          OPENCLAW_GATEWAY_TOKEN: ${{ secrets.OPENCLAW_GATEWAY_TOKEN }}
-        run: |
-          set -euo pipefail
-          tmp="$(mktemp)"
-          trap 'rm -f "$tmp"' EXIT
-          status="$(curl -sS --max-time 120 -o "$tmp" -w '%{http_code}' \
-            -H "Authorization: Bearer ${OPENCLAW_GATEWAY_TOKEN}" \
-            -H 'Content-Type: application/json' \
-            -d '{"model":"openclaw/main","user":"chat-private-host-diagnostic","messages":[{"role":"user","content":"Reply exactly OPENCLAW_PRIVATE_HOST_OK"}],"stream":false}' \
-            'http://127.0.0.1:18789/v1/chat/completions' || true)"
-          STATUS="$status" BODY="$tmp" node <<'NODE'
-          const fs = require('node:fs');
-          const raw = fs.readFileSync(process.env.BODY, 'utf8');
-          const ok = Number(process.env.STATUS) === 200 && raw.includes('OPENCLAW_PRIVATE_HOST_OK') && !raw.toLowerCase().includes('no credits remaining');
-          console.log(`RESULT host_http=${process.env.STATUS}`);
-          console.log(`RESULT host_marker=${raw.includes('OPENCLAW_PRIVATE_HOST_OK')}`);
-          console.log(`RESULT host_no_credits=${raw.toLowerCase().includes('no credits remaining')}`);
-          if (!ok) process.exit(2);
-          NODE
+          INSTALL_OUTCOME: ${{ steps.install.outcome }}
+        with:
+          script: |
+            const success = process.env.INSTALL_OUTCOME === 'success';
+            await github.rest.repos.createCommitStatus({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              sha: context.sha,
+              state: success ? 'success' : 'failure',
+              context: 'chat-v2/openclaw-proxy-host',
+              description: success ? 'Private OpenClaw bridge proxy is live' : 'Private OpenClaw bridge proxy failed',
+              target_url: `${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`,
+            });
