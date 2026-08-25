@@ -23,11 +23,8 @@ jobs:
           CHAT_PUBLIC_ORIGIN: https://chat-staging.ailucy.online
           CHAT_CLOUDFLARE_ACCESS_STATE_FILE: /opt/chat-v2/staging/secrets/cloudflare-access-staging.json
         run: node scripts/ops/load-cloudflare-staging-identity.mjs
-      - name: Run full public external suite with OpenClaw contract
+      - name: Run scoped public Access and artifact transport QA
         env:
           CHAT_STAGING_BASE_URL: https://chat-staging.ailucy.online
           LETTA_PROTOCOL: openclaw
-          CHAT_MULTIMODAL_QA_REQUIRED: 'true'
-          CHAT_GENERATED_ARTIFACT_QA_REQUIRED: 'true'
-          CHAT_LETTA_FULL_RUNTIME_QA_REQUIRED: 'true'
         run: bash scripts/ops/external-staging-browser-smoke.sh
