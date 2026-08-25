@@ -1,0 +1,31 @@
+name: Diagnose full public OpenClaw QA
+
+on:
+  push:
+    branches:
+      - diag/full-external-openclaw-qa
+
+permissions:
+  contents: read
+
+jobs:
+  diagnose:
+    runs-on: [self-hosted, linux, x64, chat-staging]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Load authoritative Cloudflare staging identity
+        env:
+          CHAT_PUBLIC_ORIGIN: https://chat-staging.ailucy.online
+          CHAT_CLOUDFLARE_ACCESS_STATE_FILE: /opt/chat-v2/staging/secrets/cloudflare-access-staging.json
+        run: node scripts/ops/load-cloudflare-staging-identity.mjs
+      - name: Run full external OpenClaw suite against current staging
+        env:
+          CHAT_STAGING_BASE_URL: https://chat-staging.ailucy.online
+          LETTA_PROTOCOL: openclaw
+          CHAT_MULTIMODAL_QA_REQUIRED: 'true'
+          CHAT_GENERATED_ARTIFACT_QA_REQUIRED: 'true'
+          CHAT_LETTA_FULL_RUNTIME_QA_REQUIRED: 'true'
+        run: bash scripts/ops/external-staging-browser-smoke.sh
