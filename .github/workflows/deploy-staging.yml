@@ -66,23 +66,18 @@ jobs:
       - name: Require private OpenClaw staging ingress
         shell: bash
         env:
-          OPENCLAW_GATEWAY_BASE_URL: ${{ vars.OPENCLAW_GATEWAY_BASE_URL }}
+          OPENCLAW_GATEWAY_HOST_BASE_URL: http://127.0.0.1:18789
           OPENCLAW_GATEWAY_TOKEN: ${{ secrets.OPENCLAW_GATEWAY_TOKEN }}
         run: |
           set -euo pipefail
-          [[ -n "${OPENCLAW_GATEWAY_BASE_URL}" ]] || { echo 'OPENCLAW_GATEWAY_BASE_URL is required for staging cutover.' >&2; exit 1; }
+          [[ "${OPENCLAW_GATEWAY_HOST_BASE_URL}" == 'http://127.0.0.1:18789' ]]
           [[ -n "${OPENCLAW_GATEWAY_TOKEN}" ]] || { echo 'OPENCLAW_GATEWAY_TOKEN is required for staging cutover.' >&2; exit 1; }
-          case "${OPENCLAW_GATEWAY_BASE_URL}" in
-            http://127.0.0.1:*|http://localhost:*)
-              echo 'OpenClaw Gateway loopback URL is not reachable from the staging container; provide a private host/container-reachable ingress.' >&2
-              exit 1
-              ;;
-          esac
-          echo 'Private authenticated OpenClaw staging ingress is configured.'
+          curl --fail --silent --show-error --max-time 5 "${OPENCLAW_GATEWAY_HOST_BASE_URL}/health" >/dev/null
+          echo 'Private authenticated OpenClaw reverse-tunnel ingress is healthy.'
 
       - name: Legacy Letta bridge rollout is not used in OpenClaw mode
         run: |
-          echo 'SKIP: Letta Lucy cognition remains in Letta, while Chat side-effect execution is now routed through the OpenClaw Gateway.'
+          echo 'SKIP: Letta Lucy cognition remains in Letta, while Chat side-effect execution is routed through the native OpenClaw Gateway.'
           echo 'The legacy full-CLI bridge files remain in the repository for rollback investigation only.'
 
       - name: Enforce fail-closed staging QA gate configuration
@@ -118,17 +113,15 @@ jobs:
           CHAT_MAX_UPLOAD_BYTES: ${{ vars.CHAT_MAX_UPLOAD_BYTES }}
           CHAT_MAX_GENERATED_ARTIFACT_BYTES: ${{ vars.CHAT_MAX_GENERATED_ARTIFACT_BYTES }}
           CHAT_MAX_INLINE_GENERATED_ARTIFACT_PAYLOAD_BYTES: ${{ vars.CHAT_MAX_INLINE_GENERATED_ARTIFACT_PAYLOAD_BYTES }}
-          LETTA_BASE_URL: ${{ vars.OPENCLAW_GATEWAY_BASE_URL }}
-          LETTA_CHAT_PATH: ${{ vars.LETTA_CHAT_PATH || '/v1/chat/completions' }}
-          LETTA_HEALTH_PATH: ${{ vars.LETTA_HEALTH_PATH || '/health' }}
+          LETTA_BASE_URL: http://host.docker.internal:18789
+          LETTA_CHAT_PATH: /v1/chat/completions
+          LETTA_HEALTH_PATH: /health
           LETTA_AGENT_ID: ${{ vars.LETTA_AGENT_ID }}
           LETTA_API_KEY: ${{ secrets.OPENCLAW_GATEWAY_TOKEN }}
           LETTA_TIMEOUT_MS: ${{ vars.LETTA_TIMEOUT_MS }}
           LETTA_PROTOCOL: openclaw
           LETTA_OPENCLAW_AGENT_TARGET: openclaw/main
           LETTA_OPENCLAW_SESSION_PREFIX: ${{ vars.LETTA_OPENCLAW_SESSION_PREFIX }}
-          CF_ACCESS_CLIENT_ID: ${{ vars.CF_ACCESS_CLIENT_ID }}
-          CF_ACCESS_CLIENT_SECRET: ${{ secrets.CF_ACCESS_CLIENT_SECRET }}
           LETTA_MODEL_MAP_JSON: ''
           LETTA_MAX_ARTIFACT_BYTES: ${{ vars.LETTA_MAX_ARTIFACT_BYTES }}
           LETTA_MAX_ARTIFACT_TOTAL_BYTES: ${{ vars.LETTA_MAX_ARTIFACT_TOTAL_BYTES }}
@@ -177,37 +170,42 @@ jobs:
           CHAT_HERMES_VISION_AGENT_ID: ${{ vars.CHAT_HERMES_VISION_AGENT_ID }}
         run: bash scripts/ops/staging-browser-smoke.sh
 
-      - name: Capture authenticated OpenClaw Lucy target evidence
+      - name: Capture authenticated OpenClaw Lucy route evidence
         shell: bash
         env:
-          OPENCLAW_GATEWAY_BASE_URL: ${{ vars.OPENCLAW_GATEWAY_BASE_URL }}
+          OPENCLAW_GATEWAY_BASE_URL: http://127.0.0.1:18789
           OPENCLAW_GATEWAY_TOKEN: ${{ secrets.OPENCLAW_GATEWAY_TOKEN }}
-          CF_ACCESS_CLIENT_ID: ${{ vars.CF_ACCESS_CLIENT_ID }}
-          CF_ACCESS_CLIENT_SECRET: ${{ secrets.CF_ACCESS_CLIENT_SECRET }}
           OPENCLAW_LUCY_TARGET: openclaw/main
           OPENCLAW_MODELS_EVIDENCE_PATH: ${{ runner.temp }}/openclaw-models.json
         run: |
           set -euo pipefail
-          [[ -n "${OPENCLAW_GATEWAY_BASE_URL}" && -n "${OPENCLAW_GATEWAY_TOKEN}" ]]
+          [[ -n "${OPENCLAW_GATEWAY_TOKEN}" ]]
           umask 077
-          curl --fail --silent --show-error \
+          marker="CHAT_V2_OPENCLAW_MAIN_ROUTE_OK"
+          curl --fail --silent --show-error --max-time 120 \
             --header "Authorization: Bearer ${OPENCLAW_GATEWAY_TOKEN}" \
-            --header "CF-Access-Client-Id: ${CF_ACCESS_CLIENT_ID}" \
-            --header "CF-Access-Client-Secret: ${CF_ACCESS_CLIENT_SECRET}" \
-            "${OPENCLAW_GATEWAY_BASE_URL%/}/v1/models" >"${OPENCLAW_MODELS_EVIDENCE_PATH}"
-          node - "${OPENCLAW_MODELS_EVIDENCE_PATH}" "${OPENCLAW_LUCY_TARGET}" <<'NODE'
+            --header 'Content-Type: application/json' \
+            --data "{\"model\":\"${OPENCLAW_LUCY_TARGET}\",\"user\":\"chat-v2-route-evidence\",\"messages\":[{\"role\":\"user\",\"content\":\"Reply exactly ${marker}\"}],\"stream\":false}" \
+            "${OPENCLAW_GATEWAY_BASE_URL}/v1/chat/completions" >"${OPENCLAW_MODELS_EVIDENCE_PATH}"
+          node - "${OPENCLAW_MODELS_EVIDENCE_PATH}" "${OPENCLAW_LUCY_TARGET}" "${marker}" <<'NODE'
           const fs = require('node:fs');
-          const [path, target] = process.argv.slice(2);
-          const value = JSON.parse(fs.readFileSync(path, 'utf8'));
-          const items = Array.isArray(value.data) ? value.data : Array.isArray(value.models) ? value.models : [];
-          const ids = items.map((item) => typeof item === 'string' ? item : item && typeof item.id === 'string' ? item.id : '').filter(Boolean);
-          if (!ids.includes(target)) {
-            console.error(`Configured OpenClaw Lucy target is not advertised: ${target}`);
+          const [path, target, marker] = process.argv.slice(2);
+          const raw = fs.readFileSync(path, 'utf8');
+          const value = JSON.parse(raw);
+          const text = value?.choices?.[0]?.message?.content ?? '';
+          const noCredits = raw.toLowerCase().includes('no credits remaining');
+          if (!String(text).includes(marker) || noCredits) {
+            console.error('Native OpenClaw main route evidence did not pass.');
             process.exit(1);
           }
-          fs.writeFileSync(path, JSON.stringify({ object: value.object || 'list', targetAdvertised: true, target }, null, 2) + '\n');
+          fs.writeFileSync(path, JSON.stringify({
+            target,
+            targetVerified: true,
+            noCredits: false,
+            ingress: 'private-reverse-tunnel',
+          }, null, 2) + '\n');
           NODE
-          echo 'Authenticated OpenClaw Lucy target evidence captured without credential or provider-model disclosure.'
+          echo 'Authenticated native OpenClaw main route evidence captured without credential or provider-model disclosure.'
 
       - name: Verify public Cloudflare Access and artifact transport
         env:
@@ -238,6 +236,7 @@ jobs:
             echo '- Local endpoint: `http://127.0.0.1:14174`'
             echo "- Public endpoint: \`${{ vars.CHAT_PUBLIC_ORIGIN }}\`"
             echo '- Letta transport: `openclaw`'
+            echo '- OpenClaw ingress: private reverse SSH tunnel'
             echo '- OpenClaw Lucy target: `openclaw/main`'
             echo '- Backend model override: disabled; OpenClaw main keeps its configured model (`letta/lucy`)'
             echo "- External QA required: \`${{ vars.CHAT_EXTERNAL_QA_REQUIRED }}\`"

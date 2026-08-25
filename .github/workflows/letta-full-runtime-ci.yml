@@ -5,6 +5,7 @@ on:
     paths:
       - '.github/workflows/deploy-staging.yml'
       - '.github/workflows/staging-preflight.yml'
+      - '.github/workflows/openclaw-staging-config-gate.yml'
       - '.github/workflows/letta-full-runtime-ci.yml'
       - 'compose.staging.yml'
       - 'scripts/ops/openclaw-letta-staging-smoke.sh'
@@ -21,6 +22,7 @@ on:
     paths:
       - '.github/workflows/deploy-staging.yml'
       - '.github/workflows/staging-preflight.yml'
+      - '.github/workflows/openclaw-staging-config-gate.yml'
       - '.github/workflows/letta-full-runtime-ci.yml'
       - 'compose.staging.yml'
       - 'scripts/ops/openclaw-letta-staging-smoke.sh'
@@ -84,6 +86,7 @@ jobs:
           bootstrap='ops/letta-bridge/bootstrap-staging-ssh-access.sh'
           workflow='.github/workflows/deploy-staging.yml'
           preflight_workflow='.github/workflows/staging-preflight.yml'
+          config_workflow='.github/workflows/openclaw-staging-config-gate.yml'
           compose='compose.staging.yml'
           preflight='scripts/ops/staging-preflight.sh'
           qa_guard='scripts/ops/staging-qa-gate-guard.sh'
@@ -137,14 +140,17 @@ jobs:
             exit 1
           fi
 
-          # OpenClaw staging is the active acceptance boundary.
-          grep -Fq 'OPENCLAW_GATEWAY_BASE_URL' "${workflow}"
+          # OpenClaw staging is the active acceptance boundary. It must use the
+          # repository-owned private reverse tunnel, never the public gateway.
+          grep -Fq 'OPENCLAW_GATEWAY_HOST_BASE_URL: http://127.0.0.1:18789' "${workflow}"
+          grep -Fq 'LETTA_BASE_URL: http://host.docker.internal:18789' "${workflow}"
           grep -Fq 'OPENCLAW_GATEWAY_TOKEN' "${workflow}"
           grep -Fq 'LETTA_PROTOCOL: openclaw' "${workflow}"
-          grep -Fq 'LETTA_OPENCLAW_AGENT_TARGET' "${workflow}"
+          grep -Fq 'LETTA_OPENCLAW_AGENT_TARGET: openclaw/main' "${workflow}"
           grep -Fq '/v1/chat/completions' "${workflow}"
           grep -Fq 'Verify OpenClaw-backed Letta session continuity' "${workflow}"
-          grep -Fq 'Capture authenticated OpenClaw Lucy target evidence' "${workflow}"
+          grep -Fq 'Capture authenticated OpenClaw Lucy route evidence' "${workflow}"
+          ! grep -Fq 'vars.OPENCLAW_GATEWAY_BASE_URL' "${workflow}"
 
           # All staging QA decisions must come from explicit Environment variables.
           qa_expr='$'
@@ -165,7 +171,12 @@ jobs:
             grep -Fq "${qa_var}" "${qa_guard}"
           done
 
-          grep -Fq 'OPENCLAW_GATEWAY_BASE_URL' "${preflight_workflow}"
+          grep -Fq 'OPENCLAW_GATEWAY_HOST_BASE_URL: http://127.0.0.1:18789' "${preflight_workflow}"
+          grep -Fq 'OPENCLAW_GATEWAY_CONTAINER_BASE_URL: http://host.docker.internal:18789' "${preflight_workflow}"
+          grep -Fq 'LETTA_BASE_URL: http://host.docker.internal:18789' "${preflight_workflow}"
+          ! grep -Fq 'vars.OPENCLAW_GATEWAY_BASE_URL' "${preflight_workflow}"
+          grep -Fq 'OPENCLAW_CONTAINER_BASE_URL: http://host.docker.internal:18789' "${config_workflow}"
+          ! grep -Fq 'vars.OPENCLAW_GATEWAY_BASE_URL' "${config_workflow}"
           grep -Fq 'LETTA_PROTOCOL: openclaw' "${preflight_workflow}"
           grep -Fq 'LETTA_OPENCLAW_AGENT_TARGET' "${compose}"
           grep -Fq 'LETTA_OPENCLAW_SESSION_PREFIX' "${compose}"

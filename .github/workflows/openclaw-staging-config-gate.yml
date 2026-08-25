@@ -36,37 +36,33 @@ jobs:
               target_url: `${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`,
             });
 
-      - name: Validate non-secret configuration and secret presence
+      - name: Validate private OpenClaw routing contract and secret presence
         id: validate
         shell: bash
         env:
-          OPENCLAW_GATEWAY_BASE_URL: ${{ vars.OPENCLAW_GATEWAY_BASE_URL }}
+          OPENCLAW_CONTAINER_BASE_URL: http://host.docker.internal:18789
           OPENCLAW_GATEWAY_TOKEN: ${{ secrets.OPENCLAW_GATEWAY_TOKEN }}
           OPENCLAW_LUCY_TARGET: openclaw/main
           LETTA_OPENCLAW_SESSION_PREFIX: ${{ vars.LETTA_OPENCLAW_SESSION_PREFIX }}
         run: |
           set -euo pipefail
-          [[ -n "${OPENCLAW_GATEWAY_BASE_URL}" ]] || { echo 'OPENCLAW_GATEWAY_BASE_URL is not configured.' >&2; exit 1; }
+          [[ "${OPENCLAW_CONTAINER_BASE_URL}" == 'http://host.docker.internal:18789' ]] \
+            || { echo 'Chat staging must use the repository-owned private OpenClaw reverse-tunnel ingress.' >&2; exit 1; }
           [[ -n "${OPENCLAW_GATEWAY_TOKEN}" ]] || { echo 'OPENCLAW_GATEWAY_TOKEN is not configured.' >&2; exit 1; }
           [[ "${OPENCLAW_LUCY_TARGET}" == 'openclaw/main' ]] \
             || { echo 'Chat Letta must route through the canonical OpenClaw main agent.' >&2; exit 1; }
           [[ -n "${LETTA_OPENCLAW_SESSION_PREFIX}" ]] \
-            || { echo 'LETTA_OPENCLAW_SESSION_PREFIX is not configured in the staging Environment; refusing to fall back to a hardcoded default prefix.' >&2; exit 1; }
-          case "${OPENCLAW_GATEWAY_BASE_URL}" in
-            http://127.0.0.1:*|https://127.0.0.1:*|http://localhost:*|https://localhost:*)
-              echo 'OPENCLAW_GATEWAY_BASE_URL is loopback-only; the Chat staging container needs a private host/container-reachable ingress.' >&2
-              exit 1
-              ;;
-          esac
-          echo 'OpenClaw staging Environment contract is present.'
+            || { echo 'LETTA_OPENCLAW_SESSION_PREFIX is not configured in the staging Environment.' >&2; exit 1; }
+          echo 'OpenClaw private staging routing contract is present.'
           {
             echo '## OpenClaw staging configuration'
             echo
-            echo '- Gateway base URL: configured (value intentionally omitted)'
+            echo '- Gateway ingress: repository-owned private reverse tunnel (`host.docker.internal:18789`)'
             echo '- Gateway credential: configured (value intentionally omitted)'
             echo '- Agent target: `openclaw/main` (repository-owned canonical target)'
             echo "- Session prefix: \`${LETTA_OPENCLAW_SESSION_PREFIX}\`"
             echo '- Backend model override: disabled; OpenClaw main keeps its configured model (`letta/lucy`)'
+            echo '- Public `gateway.ailucy.online` is not a Chat Letta runtime dependency.'
           } >> "$GITHUB_STEP_SUMMARY"
 
       - name: Publish configuration status
@@ -84,7 +80,7 @@ jobs:
               state: success ? 'success' : 'failure',
               context: 'chat-v2/openclaw-config',
               description: success
-                ? 'OpenClaw staging Environment contract is configured'
-                : 'OpenClaw staging Environment contract is incomplete',
+                ? 'Private OpenClaw staging routing contract is configured'
+                : 'OpenClaw staging routing contract is incomplete',
               target_url: `${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`,
             });
