@@ -13,51 +13,61 @@ jobs:
     runs-on: [self-hosted, linux, x64, chat-staging]
     steps:
       - uses: actions/checkout@v4
-      - name: Inspect Gemma profile model and provider without secrets
+      - name: Inspect actual Gemma profile and model aliases without secrets
         shell: bash
+        env:
+          HERMES_API_KEY: ${{ secrets.HERMES_API_KEY }}
         run: |
           set -euo pipefail
-          pid="$(pgrep -f '/hermes -p gemma gateway run' | head -n1 || true)"
-          [[ -n "$pid" ]] || { echo 'RESULT gemma_pid=not-found'; exit 1; }
-          echo "RESULT gemma_pid=$pid"
-          echo "RESULT gemma_cwd=$(readlink -f "/proc/$pid/cwd" 2>/dev/null || true)"
+          HERMES_HOME=/home/since98kr/.hermes
+          HERMES_BIN=/home/since98kr/.hermes/hermes-agent/venv/bin/hermes
+          echo '=== access geometry ==='
+          id
+          ls -ld /home/since98kr /home/since98kr/.hermes /home/since98kr/.hermes/hermes-agent 2>&1 || true
+          if sudo -n -u since98kr true 2>/dev/null; then echo 'RESULT sudo_as_since98kr=yes'; else echo 'RESULT sudo_as_since98kr=no'; fi
 
-          echo '=== process environment names only ==='
-          tr '\0' '\n' < "/proc/$pid/environ" 2>/dev/null | sed 's/=.*//' | sort | grep -Ei 'MODEL|PROVIDER|PROFILE|HERMES|GOOGLE|GEMINI|OPENAI|ANTHROPIC|CODEX|API' || true
-
-          echo '=== Hermes config/profile paths ==='
-          find "$HOME/.hermes" -maxdepth 5 -type f -size -1024k 2>/dev/null \
-            | grep -Ei '(gemma|profile|config|settings|\.ya?ml$|\.json$|\.toml$)' \
-            | sort | head -n 200 || true
+          echo '=== candidate config/profile paths ==='
+          find "$HERMES_HOME" -maxdepth 6 -type f -size -1024k 2>/dev/null \
+            | grep -Ei '(gemma|profile|config|settings|\.ya?ml$|\.json$|\.toml$|\.env$)' \
+            | sort | head -n 250 || true
 
           echo '=== sanitized model/provider config evidence ==='
           python3 - <<'PY'
           from pathlib import Path
           import re
-          root = Path.home()/'.hermes'
-          allow = re.compile(r'gemma|model|provider|profile|base[_-]?url|api[_-]?base|endpoint|gateway[_-]?port|port', re.I)
-          block = re.compile(r'api[_-]?key|token|secret|password|authorization|credential|private[_-]?key', re.I)
+          root=Path('/home/since98kr/.hermes')
+          allow=re.compile(r'gemma|model|provider|profile|base[_-]?url|api[_-]?base|endpoint|gateway[_-]?port|vision|multimodal|google|openai|anthropic|openrouter|codex',re.I)
+          block=re.compile(r'api[_-]?key|token|secret|password|authorization|credential|private[_-]?key',re.I)
           suffixes={'.yaml','.yml','.json','.toml','.ini','.conf','.env',''}
           count=0
           for p in root.rglob('*'):
               try:
-                  if not p.is_file() or p.stat().st_size > 1024*1024 or p.suffix.lower() not in suffixes:
-                      continue
+                  if not p.is_file() or p.stat().st_size>1024*1024 or p.suffix.lower() not in suffixes: continue
                   text=p.read_text(errors='ignore')
-              except Exception:
-                  continue
+              except Exception: continue
               hits=[]
               for line in text.splitlines():
                   if allow.search(line) and not block.search(line):
                       s=line.strip()
-                      if len(s)>400: s=s[:400]+'…'
+                      if len(s)>500: s=s[:500]+'…'
                       hits.append(s)
               if hits:
                   print(f'FILE {p}')
-                  for line in hits[:80]: print(line)
-                  count += 1
-                  if count >= 40: break
+                  for line in hits[:100]: print(line)
+                  count+=1
+                  if count>=60: break
           PY
 
-          echo '=== Hermes CLI help hints ==='
-          "$HOME/.hermes/hermes-agent/venv/bin/hermes" -p gemma --help 2>&1 | grep -Ei 'model|provider|profile|config' | head -n 80 || true
+          echo '=== authenticated gateway model aliases ==='
+          [[ -n "$HERMES_API_KEY" ]] || { echo 'RESULT hermes_api_key=missing'; exit 1; }
+          curl --fail --silent --show-error --max-time 15 \
+            -H "Authorization: Bearer $HERMES_API_KEY" \
+            http://172.17.0.1:8643/v1/models \
+            | node -e 'let s="";process.stdin.on("data",d=>s+=d).on("end",()=>{const j=JSON.parse(s); console.log(JSON.stringify((j.data||[]).map(x=>({id:x.id,owned_by:x.owned_by||null})),null,2));})'
+
+          echo '=== CLI help ==='
+          if [[ -x "$HERMES_BIN" ]]; then
+            "$HERMES_BIN" -p gemma --help 2>&1 | head -n 160 || true
+          else
+            echo 'RESULT hermes_bin=not-executable-by-runner'
+          fi
