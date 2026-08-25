@@ -3,6 +3,7 @@ set -Eeuo pipefail
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 BASE_URL="${CHAT_STAGING_BASE_URL:-https://chat-staging.ailucy.online}"
+LETTA_PROTOCOL="${LETTA_PROTOCOL:-openclaw}"
 
 log() {
   printf '[chat-v2-external-smoke] %s\n' "$*"
@@ -19,6 +20,7 @@ done
 
 [[ -n "${CF_ACCESS_CLIENT_ID:-}" ]] || fail 'CF_ACCESS_CLIENT_ID is required'
 [[ -n "${CF_ACCESS_CLIENT_SECRET:-}" ]] || fail 'CF_ACCESS_CLIENT_SECRET is required'
+[[ "${LETTA_PROTOCOL,,}" == 'openclaw' ]] || fail 'external staging QA requires LETTA_PROTOCOL=openclaw'
 
 log 'Checking Cloudflare Access service authentication.'
 HTTP_STATUS="$(
@@ -48,6 +50,7 @@ log "Running Chromium through ${BASE_URL}."
 CHAT_STAGING_BASE_URL="${BASE_URL}" \
 CF_ACCESS_CLIENT_ID="${CF_ACCESS_CLIENT_ID}" \
 CF_ACCESS_CLIENT_SECRET="${CF_ACCESS_CLIENT_SECRET}" \
+LETTA_PROTOCOL="${LETTA_PROTOCOL}" \
 npm run test:e2e:external
 
 log 'PASS: Cloudflare Access, Tunnel, Chat V2, links, uploads, downloads, and persistence are healthy.'
