@@ -1,0 +1,48 @@
+name: Probe preserved CF staging identity
+
+on:
+  push:
+    branches:
+      - diag/cf-preserved-service-identity
+    paths:
+      - .github/workflows/cf-preserved-service-identity-probe.yml
+
+jobs:
+  probe:
+    runs-on: [self-hosted, linux, x64, chat-staging]
+    environment: staging
+    timeout-minutes: 5
+    steps:
+      - name: Probe preserved identity without exposing secret
+        shell: bash
+        run: |
+          set -euo pipefail
+          state=/opt/chat-v2/staging/secrets/cloudflare-access-staging.json
+          if [[ ! -e "$state" ]]; then
+            echo 'RESULT state_exists=false'
+            exit 0
+          fi
+          echo 'RESULT state_exists=true'
+          if [[ ! -r "$state" ]]; then
+            echo 'RESULT state_readable=false'
+            exit 0
+          fi
+          echo 'RESULT state_readable=true'
+          node - "$state" <<'NODE'
+          const fs = require('node:fs');
+          const { spawnSync } = require('node:child_process');
+          const state = JSON.parse(fs.readFileSync(process.argv[2], 'utf8'));
+          for (const key of ['clientId', 'clientSecret', 'issuer', 'audience']) {
+            if (typeof state[key] !== 'string' || !state[key]) throw new Error(`missing ${key}`);
+          }
+          process.stdout.write(`::add-mask::${state.clientSecret}\n`);
+          const probe = spawnSync('curl', [
+            '-sS', '-o', '/tmp/cf-preserved-probe.out', '-w', '%{http_code}',
+            '-H', `CF-Access-Client-Id: ${state.clientId}`,
+            '-H', `CF-Access-Client-Secret: ${state.clientSecret}`,
+            'https://chat-staging.ailucy.online/api/health',
+          ], { encoding: 'utf8' });
+          console.log(`RESULT client_id=${state.clientId}`);
+          console.log(`RESULT issuer_present=${Boolean(state.issuer)} audience_present=${Boolean(state.audience)} application_id_present=${Boolean(state.applicationId)} service_token_id_present=${Boolean(state.serviceTokenId)}`);
+          console.log(`RESULT http_code=${probe.stdout.trim() || 'none'} curl_status=${probe.status}`);
+          NODE
