@@ -1,4 +1,4 @@
-name: Diagnose public artifact stream failure
+name: Diagnose public external OpenClaw QA
 
 on:
   push:
@@ -13,6 +13,8 @@ jobs:
     runs-on: [self-hosted, linux, x64, chat-staging]
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: fix/external-openclaw-qa
       - uses: actions/setup-node@v4
         with:
           node-version: '22'
@@ -21,18 +23,11 @@ jobs:
           CHAT_PUBLIC_ORIGIN: https://chat-staging.ailucy.online
           CHAT_CLOUDFLARE_ACCESS_STATE_FILE: /opt/chat-v2/staging/secrets/cloudflare-access-staging.json
         run: node scripts/ops/load-cloudflare-staging-identity.mjs
-      - name: Install test dependencies
-        run: npm install --no-audit --no-fund
-      - name: Ensure Chromium
-        run: npx playwright install chromium
-      - name: Reproduce public artifact stream and capture origin error
+      - name: Run full public external suite with OpenClaw contract
         env:
           CHAT_STAGING_BASE_URL: https://chat-staging.ailucy.online
           LETTA_PROTOCOL: openclaw
-        run: |
-          set +e
-          npx playwright test --config playwright.external.config.ts e2e-staging/artifacts.spec.ts
-          result=$?
-          echo '=== staging container error tail ==='
-          docker logs --since 10m chat-v2-staging 2>&1 | tail -n 300 || true
-          exit "$result"
+          CHAT_MULTIMODAL_QA_REQUIRED: 'true'
+          CHAT_GENERATED_ARTIFACT_QA_REQUIRED: 'true'
+          CHAT_LETTA_FULL_RUNTIME_QA_REQUIRED: 'true'
+        run: bash scripts/ops/external-staging-browser-smoke.sh
