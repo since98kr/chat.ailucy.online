@@ -1,0 +1,37 @@
+name: Diagnose localhost browser auth with Cloudflare state
+
+on:
+  push:
+    branches:
+      - diag/local-browser-cloudflare-auth
+    paths:
+      - scripts/ops/staging-browser-smoke.sh
+      - .github/workflows/local-browser-cloudflare-auth-diagnostic.yml
+
+permissions:
+  contents: read
+
+jobs:
+  diagnose:
+    runs-on: [self-hosted, linux, x64, chat-staging]
+    environment: staging
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Load authoritative Cloudflare staging identity
+        env:
+          CHAT_PUBLIC_ORIGIN: ${{ vars.CHAT_PUBLIC_ORIGIN }}
+          CHAT_CLOUDFLARE_ACCESS_STATE_FILE: /opt/chat-v2/staging/secrets/cloudflare-access-staging.json
+        run: node scripts/ops/load-cloudflare-staging-identity.mjs
+      - name: Verify real localhost browser suite while Cloudflare service identity is loaded
+        env:
+          CHAT_STAGING_BASE_URL: http://127.0.0.1:14174
+          CHAT_STAGING_EMAIL: ${{ vars.CHAT_ALLOWED_EMAILS }}
+          CHAT_MULTIMODAL_QA_REQUIRED: ${{ vars.CHAT_MULTIMODAL_QA_REQUIRED }}
+          CHAT_GENERATED_ARTIFACT_QA_REQUIRED: ${{ vars.CHAT_GENERATED_ARTIFACT_QA_REQUIRED }}
+          CHAT_LETTA_FULL_RUNTIME_QA_REQUIRED: ${{ vars.CHAT_LETTA_FULL_RUNTIME_QA_REQUIRED }}
+          CHAT_HERMES_VISION_AGENT_ID: ${{ vars.CHAT_HERMES_VISION_AGENT_ID }}
+        run: bash scripts/ops/staging-browser-smoke.sh
