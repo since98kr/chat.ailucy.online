@@ -6,6 +6,9 @@ on:
       - fix/staging-openclaw-docker-proxy-18792
     paths:
       - '.github/workflows/patch-openclaw-proxy-port.yml'
+  pull_request:
+    paths:
+      - '.github/workflows/patch-openclaw-proxy-port.yml'
 
 permissions:
   contents: write
