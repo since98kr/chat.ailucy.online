@@ -1,0 +1,28 @@
+name: Diagnose benign OpenClaw continuity
+
+on:
+  push:
+    branches:
+      - diag/openclaw-benign-continuity
+    paths:
+      - scripts/ops/openclaw-letta-benign-continuity-smoke.sh
+      - .github/workflows/openclaw-benign-continuity-diagnostic.yml
+
+permissions:
+  contents: read
+
+jobs:
+  diagnose:
+    runs-on: [self-hosted, linux, x64, chat-staging]
+    environment: staging
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - name: Verify current deployed staging and benign continuity
+        env:
+          CHAT_STAGING_BASE_URL: http://127.0.0.1:14174
+          CHAT_STAGING_EMAIL: ${{ vars.CHAT_ALLOWED_EMAILS }}
+        run: |
+          set -euo pipefail
+          curl --fail --silent --show-error "${CHAT_STAGING_BASE_URL}/api/health" >/dev/null
+          bash scripts/ops/openclaw-letta-benign-continuity-smoke.sh
