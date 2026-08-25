@@ -67,13 +67,16 @@ jobs:
         shell: bash
         env:
           OPENCLAW_GATEWAY_HOST_BASE_URL: http://127.0.0.1:18789
+          OPENCLAW_GATEWAY_CONTAINER_BASE_URL: http://host.docker.internal:18792
           OPENCLAW_GATEWAY_TOKEN: ${{ secrets.OPENCLAW_GATEWAY_TOKEN }}
         run: |
           set -euo pipefail
           [[ "${OPENCLAW_GATEWAY_HOST_BASE_URL}" == 'http://127.0.0.1:18789' ]]
+          [[ "${OPENCLAW_GATEWAY_CONTAINER_BASE_URL}" == 'http://host.docker.internal:18792' ]]
           [[ -n "${OPENCLAW_GATEWAY_TOKEN}" ]] || { echo 'OPENCLAW_GATEWAY_TOKEN is required for staging cutover.' >&2; exit 1; }
           curl --fail --silent --show-error --max-time 5 "${OPENCLAW_GATEWAY_HOST_BASE_URL}/health" >/dev/null
-          echo 'Private authenticated OpenClaw reverse-tunnel ingress is healthy.'
+          curl --fail --silent --show-error --max-time 5 "${OPENCLAW_GATEWAY_CONTAINER_BASE_URL}/health" >/dev/null
+          echo 'Private authenticated OpenClaw reverse-tunnel ingress and Docker bridge proxy are healthy.'
 
       - name: Legacy Letta bridge rollout is not used in OpenClaw mode
         run: |
@@ -113,7 +116,7 @@ jobs:
           CHAT_MAX_UPLOAD_BYTES: ${{ vars.CHAT_MAX_UPLOAD_BYTES }}
           CHAT_MAX_GENERATED_ARTIFACT_BYTES: ${{ vars.CHAT_MAX_GENERATED_ARTIFACT_BYTES }}
           CHAT_MAX_INLINE_GENERATED_ARTIFACT_PAYLOAD_BYTES: ${{ vars.CHAT_MAX_INLINE_GENERATED_ARTIFACT_PAYLOAD_BYTES }}
-          LETTA_BASE_URL: http://host.docker.internal:18789
+          LETTA_BASE_URL: http://host.docker.internal:18792
           LETTA_CHAT_PATH: /v1/chat/completions
           LETTA_HEALTH_PATH: /health
           LETTA_AGENT_ID: ${{ vars.LETTA_AGENT_ID }}
@@ -202,7 +205,7 @@ jobs:
             target,
             targetVerified: true,
             noCredits: false,
-            ingress: 'private-reverse-tunnel',
+            ingress: 'private-reverse-tunnel-via-docker-bridge-proxy',
           }, null, 2) + '\n');
           NODE
           echo 'Authenticated native OpenClaw main route evidence captured without credential or provider-model disclosure.'
@@ -236,14 +239,14 @@ jobs:
             echo '- Local endpoint: `http://127.0.0.1:14174`'
             echo "- Public endpoint: \`${{ vars.CHAT_PUBLIC_ORIGIN }}\`"
             echo '- Letta transport: `openclaw`'
-            echo '- OpenClaw ingress: private reverse SSH tunnel'
+            echo '- OpenClaw ingress: private reverse SSH tunnel via Docker bridge proxy `host.docker.internal:18792`'
             echo '- OpenClaw Lucy target: `openclaw/main`'
             echo '- Backend model override: disabled; OpenClaw main keeps its configured model (`letta/lucy`)'
             echo "- External QA required: \`${{ vars.CHAT_EXTERNAL_QA_REQUIRED }}\`"
             echo "- Multimodal QA required: \`${{ vars.CHAT_MULTIMODAL_QA_REQUIRED }}\`"
             echo "- Generated artifact QA required: \`${{ vars.CHAT_GENERATED_ARTIFACT_QA_REQUIRED }}\`"
             echo "- Letta full runtime QA required: \`${{ vars.CHAT_LETTA_FULL_RUNTIME_QA_REQUIRED }}\`"
-            echo '- Required Letta/OpenClaw gates: private Gateway health, canonical main agent target, real Chat transport, two-turn same-Conversation session continuity, redaction, and configured artifact/browser gates'
+            echo '- Required Letta/OpenClaw gates: private Gateway health, Docker bridge proxy health, canonical main agent target, real Chat transport, two-turn same-Conversation session continuity, redaction, and configured artifact/browser gates'
             echo '- Legacy direct Letta CLI/HMAC tool proof is not a release gate in OpenClaw mode.'
             for item in last-deployment.json last-preflight.json last-backup.json last-backup-verify.json last-health.json last-ops-status.json; do
               path="/opt/chat-v2/staging/state/${item}"
