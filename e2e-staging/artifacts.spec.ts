@@ -106,6 +106,15 @@ test('real staging supports chat links and durable artifact transport', async ({
     conversationId = created.conversation?.id ?? '';
     expect(conversationId).not.toBe('');
 
+    const isolated = await api.patch(`/api/conversations/${conversationId}`, { data: { title: marker } });
+    expect(isolated.ok()).toBe(true);
+    await page.reload();
+    const qaConversation = page.locator('.conversation-row').filter({ hasText: marker }).first();
+    await expect(qaConversation).toBeVisible();
+    await qaConversation.click();
+    await expect(qaConversation).toHaveClass(/is-active/);
+    await expect(page.locator('.upload-chip--complete')).toHaveCount(0);
+
     await page.locator('input[type="file"]').setInputFiles([
       { name: 'staging-pixel.png', mimeType: 'image/png', buffer: PNG_1X1 },
       { name: 'staging-note.txt', mimeType: 'text/plain', buffer: NOTE },
@@ -169,9 +178,6 @@ test('real staging supports chat links and durable artifact transport', async ({
     const svgDownloadPromise = page.waitForEvent('download');
     await svgCard.getByRole('link', { name: '파일 다운로드' }).click();
     expect(await readDownload(await svgDownloadPromise)).toEqual(SVG);
-
-    const retitled = await api.patch(`/api/conversations/${conversationId}`, { data: { title: marker } });
-    expect(retitled.ok()).toBe(true);
 
     await page.reload();
     await page.locator('.conversation-row').filter({ hasText: marker }).first().click();
