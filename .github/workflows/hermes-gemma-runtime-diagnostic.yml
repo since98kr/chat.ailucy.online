@@ -13,57 +13,34 @@ jobs:
     runs-on: [self-hosted, linux, x64, chat-staging]
     steps:
       - uses: actions/checkout@v4
-      - name: Inspect Gemma service geometry without secrets
+      - name: Trace host-side Gemma relay without secrets
         shell: bash
         run: |
           set -euo pipefail
-          echo '=== docker services ==='
-          docker ps --format 'name={{.Names}} image={{.Image}} ports={{.Ports}}'
-          echo '=== listeners ==='
+          echo '=== listener ==='
           ss -ltnp '( sport = :8643 )' || true
 
-          candidate=''
-          while IFS= read -r name; do
-            ports="$(docker port "$name" 2>/dev/null || true)"
-            if grep -Eq '(^|:)8643($|\s|->)' <<<"$ports" || docker ps --filter "name=^/${name}$" --format '{{.Ports}}' | grep -q '8643'; then
-              candidate="$name"
-              break
-            fi
-          done < <(docker ps --format '{{.Names}}')
+          echo '=== matching processes ==='
+          ps -eo pid,ppid,user,comm,args --width 240 | grep -Ei '8643|gemma|hermes' | grep -v grep | sed -E 's/([A-Za-z0-9_]*(KEY|TOKEN|SECRET|PASSWORD|AUTH)[A-Za-z0-9_]*=)[^ ]+/\1[REDACTED]/Ig' || true
 
-          if [[ -z "$candidate" ]]; then
-            candidate="$(docker ps --format '{{.Names}}' | grep -Ei 'gemma' | head -n1 || true)"
-          fi
-          [[ -n "$candidate" ]] || { echo 'RESULT gemma_container=not-found'; exit 1; }
-          echo "RESULT gemma_container=$candidate"
+          echo '=== user systemd matches ==='
+          systemctl --user list-units --all --no-pager 2>/dev/null | grep -Ei 'gemma|hermes|8643' || true
+          systemctl --user list-unit-files --no-pager 2>/dev/null | grep -Ei 'gemma|hermes|8643' || true
 
-          docker inspect "$candidate" | node -e '
-            let s=""; process.stdin.on("data",d=>s+=d).on("end",()=>{
-              const x=JSON.parse(s)[0];
-              const labels=x.Config?.Labels||{};
-              const allowed=/MODEL|PROVIDER|API_BASE|BASE_URL|ENDPOINT|PORT|HOST/i;
-              const blocked=/KEY|TOKEN|SECRET|PASSWORD|AUTH|CREDENTIAL/i;
-              const env=(x.Config?.Env||[]).map(v=>{const i=v.indexOf("="); return [v.slice(0,i),v.slice(i+1)]})
-                .filter(([k])=>allowed.test(k)&&!blocked.test(k))
-                .map(([k,v])=>({name:k,value:v}));
-              console.log(JSON.stringify({
-                name:x.Name,
-                image:x.Config?.Image,
-                entrypoint:x.Config?.Entrypoint,
-                cmd:x.Config?.Cmd,
-                restart:x.HostConfig?.RestartPolicy?.Name,
-                compose:{
-                  project:labels["com.docker.compose.project"],
-                  service:labels["com.docker.compose.service"],
-                  working_dir:labels["com.docker.compose.project.working_dir"],
-                  config_files:labels["com.docker.compose.project.config_files"]
-                },
-                env
-              },null,2));
-            });'
+          echo '=== unit files containing 8643 ==='
+          for root in "$HOME/.config/systemd/user" /etc/systemd/system; do
+            [[ -d "$root" ]] || continue
+            grep -RIl --exclude='*.wants' '8643' "$root" 2>/dev/null || true
+          done
 
-          echo '=== health ==='
-          curl --silent --show-error --max-time 10 -D /tmp/gemma-health.headers -o /tmp/gemma-health.body http://127.0.0.1:8643/health || true
-          head -n 1 /tmp/gemma-health.headers || true
-          head -c 1000 /tmp/gemma-health.body || true
+          echo '=== bridge health ==='
+          status="$(curl --silent --show-error --max-time 10 -o /tmp/gemma-health.body -w '%{http_code}' http://172.17.0.1:8643/health || true)"
+          echo "RESULT health_http=$status"
+          head -c 1500 /tmp/gemma-health.body 2>/dev/null | sed -E 's/("?(api[_-]?key|token|secret|password|authorization)"?[[:space:]]*:[[:space:]]*")[^"]+"/\1[REDACTED]"/Ig' || true
+          echo
+
+          echo '=== unauthenticated model metadata ==='
+          status="$(curl --silent --show-error --max-time 10 -o /tmp/gemma-models.body -w '%{http_code}' http://172.17.0.1:8643/v1/models || true)"
+          echo "RESULT models_http=$status"
+          head -c 2000 /tmp/gemma-models.body 2>/dev/null | sed -E 's/("?(api[_-]?key|token|secret|password|authorization)"?[[:space:]]*:[[:space:]]*")[^"]+"/\1[REDACTED]"/Ig' || true
           echo
