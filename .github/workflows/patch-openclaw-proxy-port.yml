@@ -1,5 +1,6 @@
 name: Patch OpenClaw staging proxy port
 
+# One-shot branch patcher; it removes itself after success.
 on:
   push:
     branches:
