@@ -14,38 +14,21 @@ jobs:
     environment: staging
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
-        with:
-          node-version: '22'
-
-      - name: Identify Gemma process supervisor
+      - name: Inspect existing Hermes system service template
         shell: bash
         run: |
           set -euo pipefail
-          pid="$(pgrep -f '/hermes -p gemma gateway run' | head -n1 || true)"
-          [[ -n "$pid" ]] || { echo 'RESULT gemma_pid=not-found'; exit 1; }
-          echo "RESULT gemma_pid=$pid"
-          echo '=== cgroup ==='
-          cat "/proc/$pid/cgroup" || true
-          echo '=== systemctl status by pid ==='
-          systemctl status "$pid" --no-pager --full 2>&1 | sed -E 's/([A-Za-z0-9_]*(KEY|TOKEN|SECRET|PASSWORD|AUTH)[A-Za-z0-9_]*=)[^ ]+/\1[REDACTED]/Ig' || true
-          echo '=== matching system services ==='
-          systemctl list-units --all --type=service --no-pager 2>/dev/null | grep -Ei 'hermes|gemma' || true
-          echo '=== matching service files ==='
-          systemctl list-unit-files --type=service --no-pager 2>/dev/null | grep -Ei 'hermes|gemma' || true
-
-      - name: Install focused browser test dependencies
-        run: npm install --no-audit --no-fund
-
-      - name: Ensure Chromium
-        run: npx playwright install chromium
-
-      - name: Canary default Hermes OpenAI Codex vision path
-        env:
-          CHAT_STAGING_BASE_URL: http://127.0.0.1:14174
-          CHAT_STAGING_EMAIL: ${{ vars.CHAT_ALLOWED_EMAILS }}
-          CHAT_HERMES_VISION_AGENT_ID: '[Hermes] Lucy'
-        run: >-
-          npx playwright test --config playwright.staging.config.ts
-          e2e-staging/hermes-only.spec.ts
-          --grep 'Hermes Gemma understands an image-only marker'
+          echo '=== status ==='
+          systemctl status hermes-gateway.service --no-pager --full 2>&1 \
+            | sed -E 's/([A-Za-z0-9_]*(KEY|TOKEN|SECRET|PASSWORD|AUTH)[A-Za-z0-9_]*=)[^ ]+/\1[REDACTED]/Ig' || true
+          echo '=== show ==='
+          systemctl show hermes-gateway.service --no-pager \
+            -p FragmentPath -p User -p Group -p ExecStart -p WorkingDirectory -p Restart -p RestartUSec -p KillMode \
+            | sed -E 's/([A-Za-z0-9_]*(KEY|TOKEN|SECRET|PASSWORD|AUTH)[A-Za-z0-9_]*=)[^ ;]+/\1[REDACTED]/Ig'
+          echo '=== cat sanitized ==='
+          systemctl cat hermes-gateway.service --no-pager 2>&1 \
+            | sed -E 's/^([[:space:]]*Environment(File)?=.*(KEY|TOKEN|SECRET|PASSWORD|AUTH).*)$/[REDACTED ENVIRONMENT LINE]/Ig' \
+            | sed -E 's/([A-Za-z0-9_]*(KEY|TOKEN|SECRET|PASSWORD|AUTH)[A-Za-z0-9_]*=)[^ ]+/\1[REDACTED]/Ig'
+          echo '=== unit permissions ==='
+          unit="$(systemctl show hermes-gateway.service -p FragmentPath --value)"
+          [[ -n "$unit" ]] && stat -c '%A %U:%G %n' "$unit" || true
