@@ -106,6 +106,15 @@ test('real staging supports chat links and durable artifact transport', async ({
     conversationId = created.conversation?.id ?? '';
     expect(conversationId).not.toBe('');
 
+    const isolated = await api.patch(`/api/conversations/${conversationId}`, { data: { title: marker } });
+    expect(isolated.ok()).toBe(true);
+    await page.reload();
+    const qaConversation = page.locator('.conversation-row').filter({ hasText: marker }).first();
+    await expect(qaConversation).toBeVisible();
+    await qaConversation.click();
+    await expect(qaConversation).toHaveClass(/is-active/);
+    await expect(page.locator('.upload-chip--complete')).toHaveCount(0);
+
     await page.locator('input[type="file"]').setInputFiles([
       { name: 'staging-pixel.png', mimeType: 'image/png', buffer: PNG_1X1 },
       { name: 'staging-note.txt', mimeType: 'text/plain', buffer: NOTE },
@@ -152,7 +161,10 @@ test('real staging supports chat links and durable artifact transport', async ({
 
     const image = userMessage.locator('img[alt="staging-pixel.png"]');
     await expect(image).toBeVisible();
-    expect(await image.evaluate((element) => (element as HTMLImageElement).naturalWidth)).toBeGreaterThan(0);
+    await expect.poll(
+      () => image.evaluate((element) => (element as HTMLImageElement).naturalWidth),
+      { timeout: 20_000, message: 'uploaded PNG should finish loading through the active staging path' },
+    ).toBeGreaterThan(0);
 
     const noteCard = userMessage.locator('.file-card').filter({ hasText: 'staging-note.txt' });
     await expect(noteCard).toContainText('text/plain');
@@ -167,14 +179,16 @@ test('real staging supports chat links and durable artifact transport', async ({
     await svgCard.getByRole('link', { name: '파일 다운로드' }).click();
     expect(await readDownload(await svgDownloadPromise)).toEqual(SVG);
 
-    const retitled = await api.patch(`/api/conversations/${conversationId}`, { data: { title: marker } });
-    expect(retitled.ok()).toBe(true);
-
     await page.reload();
     await page.locator('.conversation-row').filter({ hasText: marker }).first().click();
     const restored = page.locator('.message--user').filter({ hasText: marker }).last();
     await expect(restored.getByRole('link', { name: 'https://example.com/staging-qa' })).toBeVisible();
-    await expect(restored.locator('img[alt="staging-pixel.png"]')).toBeVisible();
+    const restoredImage = restored.locator('img[alt="staging-pixel.png"]');
+    await expect(restoredImage).toBeVisible();
+    await expect.poll(
+      () => restoredImage.evaluate((element) => (element as HTMLImageElement).naturalWidth),
+      { timeout: 20_000, message: 'persisted PNG should reload through the active staging path' },
+    ).toBeGreaterThan(0);
     await expect(restored.locator('.file-card').filter({ hasText: 'staging-note.txt' })).toBeVisible();
 
     await page.screenshot({ path: testInfo.outputPath('real-staging-artifacts-and-links.png'), fullPage: false });
