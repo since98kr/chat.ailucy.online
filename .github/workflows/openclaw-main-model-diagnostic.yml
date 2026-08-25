@@ -19,7 +19,24 @@ jobs:
         with:
           node-version: '22'
 
-      - name: Probe real OpenClaw main through host private reverse tunnel
+      - name: Inspect host and Docker ingress geometry
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo "RESULT socat=$(command -v socat || true)"
+          echo "RESULT systemd_user=$(systemctl --user is-system-running 2>/dev/null || true)"
+          echo 'RESULT host_listener:'
+          ss -ltnp 'sport = :18789' || true
+          echo 'RESULT bridge_gateway:'
+          docker network inspect bridge --format '{{(index .IPAM.Config 0).Gateway}}'
+          echo 'RESULT hermes_gateway:'
+          docker network inspect hermes_default --format '{{(index .IPAM.Config 0).Gateway}}'
+          echo 'RESULT container_host_mapping:'
+          docker exec chat-v2-staging getent hosts host.docker.internal || true
+          echo 'RESULT container_health:'
+          docker exec chat-v2-staging node -e "fetch('http://host.docker.internal:18789/health').then(async r=>{console.log('http='+r.status);process.exit(r.ok?0:2)}).catch(e=>{console.log('error='+e.code);process.exit(3)})" || true
+
+      - name: Confirm host OpenClaw route still succeeds
         shell: bash
         env:
           OPENCLAW_GATEWAY_TOKEN: ${{ secrets.OPENCLAW_GATEWAY_TOKEN }}
@@ -40,36 +57,4 @@ jobs:
           console.log(`RESULT host_marker=${raw.includes('OPENCLAW_PRIVATE_HOST_OK')}`);
           console.log(`RESULT host_no_credits=${raw.toLowerCase().includes('no credits remaining')}`);
           if (!ok) process.exit(2);
-          NODE
-
-      - name: Probe real OpenClaw main from running Chat staging container
-        shell: bash
-        env:
-          OPENCLAW_GATEWAY_TOKEN: ${{ secrets.OPENCLAW_GATEWAY_TOKEN }}
-        run: |
-          set -euo pipefail
-          docker inspect chat-v2-staging >/dev/null
-          docker exec \
-            -e OPENCLAW_GATEWAY_TOKEN="${OPENCLAW_GATEWAY_TOKEN}" \
-            chat-v2-staging node --input-type=module - <<'NODE'
-          const response = await fetch('http://host.docker.internal:18789/v1/chat/completions', {
-            method: 'POST',
-            headers: {
-              authorization: `Bearer ${process.env.OPENCLAW_GATEWAY_TOKEN}`,
-              'content-type': 'application/json',
-            },
-            body: JSON.stringify({
-              model: 'openclaw/main',
-              user: 'chat-private-container-diagnostic',
-              messages: [{ role: 'user', content: 'Reply exactly OPENCLAW_PRIVATE_CONTAINER_OK' }],
-              stream: false,
-            }),
-          });
-          const raw = await response.text();
-          const noCredits = raw.toLowerCase().includes('no credits remaining');
-          const marker = raw.includes('OPENCLAW_PRIVATE_CONTAINER_OK');
-          console.log(`RESULT container_http=${response.status}`);
-          console.log(`RESULT container_marker=${marker}`);
-          console.log(`RESULT container_no_credits=${noCredits}`);
-          if (!response.ok || !marker || noCredits) process.exit(2);
           NODE
