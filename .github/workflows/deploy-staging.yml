@@ -96,6 +96,12 @@ jobs:
           HERMES_ARTIFACT_ENVELOPE_ENABLED: ${{ vars.HERMES_ARTIFACT_ENVELOPE_ENABLED }}
         run: bash scripts/ops/staging-qa-gate-guard.sh enforce-all
 
+      - name: Load authoritative Cloudflare staging service identity
+        env:
+          CHAT_PUBLIC_ORIGIN: ${{ vars.CHAT_PUBLIC_ORIGIN }}
+          CHAT_CLOUDFLARE_ACCESS_STATE_FILE: /opt/chat-v2/staging/secrets/cloudflare-access-staging.json
+        run: node scripts/ops/load-cloudflare-staging-identity.mjs
+
       - name: Deploy with strict preflight, backup, health check, and rollback
         env:
           CHAT_STAGING_ROOT: /opt/chat-v2/staging
@@ -108,9 +114,6 @@ jobs:
           CHAT_ALLOWED_ORIGIN: ${{ vars.CHAT_ALLOWED_ORIGIN }},http://127.0.0.1:14174
           CHAT_AUTH_MODE: ${{ vars.CHAT_AUTH_MODE }}
           CHAT_ALLOWED_EMAILS: ${{ vars.CHAT_ALLOWED_EMAILS }}
-          CHAT_ALLOWED_SERVICE_CLIENT_IDS: ${{ vars.CHAT_ALLOWED_SERVICE_CLIENT_IDS }}
-          CHAT_CF_ACCESS_ISSUER: ${{ vars.CHAT_CF_ACCESS_ISSUER }}
-          CHAT_CF_ACCESS_AUD: ${{ vars.CHAT_CF_ACCESS_AUD }}
           CHAT_ACCESS_TOKEN: ${{ secrets.CHAT_ACCESS_TOKEN }}
           CHAT_RATE_LIMIT_GENERAL: ${{ vars.CHAT_RATE_LIMIT_GENERAL }}
           CHAT_RATE_LIMIT_CHAT: ${{ vars.CHAT_RATE_LIMIT_CHAT }}
@@ -220,8 +223,6 @@ jobs:
           CHAT_LETTA_FULL_RUNTIME_QA_REQUIRED: ${{ vars.CHAT_LETTA_FULL_RUNTIME_QA_REQUIRED }}
           CHAT_HERMES_VISION_AGENT_ID: ${{ vars.CHAT_HERMES_VISION_AGENT_ID }}
           CHAT_STAGING_BASE_URL: ${{ vars.CHAT_PUBLIC_ORIGIN }}
-          CF_ACCESS_CLIENT_ID: ${{ vars.CF_ACCESS_CLIENT_ID }}
-          CF_ACCESS_CLIENT_SECRET: ${{ secrets.CF_ACCESS_CLIENT_SECRET }}
         run: |
           set -euo pipefail
           if [[ "${CHAT_EXTERNAL_QA_REQUIRED,,}" != 'true' ]]; then
