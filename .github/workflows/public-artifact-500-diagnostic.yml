@@ -8,7 +8,7 @@ on:
 permissions:
   contents: read
 
-# Re-run against fix/external-openclaw-qa head after image-load synchronization update.
+# Re-run against fix/external-openclaw-qa head after QA Conversation isolation update.
 jobs:
   diagnose:
     runs-on: [self-hosted, linux, x64, chat-staging]
