@@ -1,0 +1,34 @@
+name: Production environment probe once
+
+on:
+  push:
+    branches:
+      - ops/production-env-probe-fb6c4278
+
+permissions:
+  contents: read
+
+jobs:
+  probe:
+    name: Probe production environment gate only
+    runs-on: ubuntu-latest
+    environment: production
+    timeout-minutes: 10
+    steps:
+      - name: Verify non-secret production metadata
+        shell: bash
+        env:
+          APPROVED_SHA: ${{ vars.CHAT_PRODUCTION_APPROVED_SHA }}
+          RELEASE_ENABLED: ${{ vars.CHAT_PRODUCTION_RELEASE_ENABLED }}
+          PUBLIC_ORIGIN: ${{ vars.CHAT_PUBLIC_ORIGIN }}
+          PRODUCTION_PORT: ${{ vars.CHAT_PRODUCTION_PORT }}
+        run: |
+          set -euo pipefail
+          test -n "${APPROVED_SHA}"
+          test -n "${RELEASE_ENABLED}"
+          test -n "${PUBLIC_ORIGIN}"
+          test -n "${PRODUCTION_PORT}"
+          printf 'approved_sha=%s\n' "${APPROVED_SHA}"
+          printf 'release_enabled=%s\n' "${RELEASE_ENABLED}"
+          printf 'public_origin=%s\n' "${PUBLIC_ORIGIN}"
+          printf 'production_port=%s\n' "${PRODUCTION_PORT}"
