@@ -24,12 +24,14 @@ jobs:
         run: |
           set -euo pipefail
           f=.github/workflows/wake-lho-agentlucy-runner.yml
-          grep -Fq 'runs-on: [self-hosted, linux, x64, chat-staging]' "$f"
-          grep -Fq "test \"\$(hostname -s)\" = 'agentlucy'" "$f"
-          grep -Fq "target_user='since98kr'" "$f"
-          grep -Fq "unit='actions.runner.since98kr-lucy-hermes-optimization.agentlucy.service'" "$f"
-          grep -Fq 'systemctl --user start "$unit"' "$f"
-          ! grep -Eq 'config\.sh|remove\.sh|registration-token|systemctl --user enable|systemctl --user disable' "$f"
+          payload="$(mktemp)"
+          awk '/^  wake:/{emit=1} emit{print}' "$f" > "$payload"
+          grep -Fq 'runs-on: [self-hosted, linux, x64, chat-staging]' "$payload"
+          grep -Fq "test \"\$(hostname -s)\" = 'agentlucy'" "$payload"
+          grep -Fq "target_user='since98kr'" "$payload"
+          grep -Fq "unit='actions.runner.since98kr-lucy-hermes-optimization.agentlucy.service'" "$payload"
+          grep -Fq 'fixed_systemctl start "$unit"' "$payload"
+          ! grep -Eq 'config\.sh|remove\.sh|registration-token|systemctl --user enable|systemctl --user disable' "$payload"
 
   wake:
     needs: admission
