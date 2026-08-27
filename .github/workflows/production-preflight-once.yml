@@ -1,0 +1,122 @@
+name: Production preflight once
+
+on:
+  push:
+    branches:
+      - ops/production-preflight-fb6c4278
+
+permissions:
+  contents: read
+  statuses: write
+
+concurrency:
+  group: chat-v2-production-release
+  cancel-in-progress: false
+
+jobs:
+  preflight:
+    name: Verify production readiness without replacement
+    runs-on: [self-hosted, linux, x64, chat-production]
+    environment: production
+    timeout-minutes: 120
+    env:
+      APP_SHA: fb6c427811c13182914a53b8b551cb40368d5889
+    steps:
+      - name: Validate production control values
+        shell: bash
+        env:
+          APPROVED_SHA: ${{ vars.CHAT_PRODUCTION_APPROVED_SHA }}
+          RELEASE_ENABLED: ${{ vars.CHAT_PRODUCTION_RELEASE_ENABLED }}
+          PUBLIC_ORIGIN: ${{ vars.CHAT_PUBLIC_ORIGIN }}
+          ALLOWED_ORIGIN: ${{ vars.CHAT_ALLOWED_ORIGIN }}
+          PRODUCTION_PORT: ${{ vars.CHAT_PRODUCTION_PORT }}
+        run: |
+          set -euo pipefail
+          [[ "${APP_SHA}" =~ ^[0-9a-f]{40}$ ]]
+          [[ "${APPROVED_SHA}" == "${APP_SHA}" ]] || { echo 'approved SHA mismatch' >&2; exit 1; }
+          [[ "${RELEASE_ENABLED,,}" == 'false' ]] || { echo 'release switch must remain false during preflight' >&2; exit 1; }
+          [[ "${PUBLIC_ORIGIN}" == 'https://chat.ailucy.online' ]] || { echo 'production public origin mismatch' >&2; exit 1; }
+          [[ "${ALLOWED_ORIGIN}" == "${PUBLIC_ORIGIN}" ]] || { echo 'allowed origin mismatch' >&2; exit 1; }
+          [[ "${PRODUCTION_PORT}" =~ ^[0-9]{2,5}$ && "${PRODUCTION_PORT}" != '14174' ]] || { echo 'invalid production port' >&2; exit 1; }
+          echo "Production control values are frozen for ${APP_SHA}."
+
+      - name: Checkout immutable application revision
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ env.APP_SHA }}
+          clean: true
+          fetch-depth: 1
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Run strict production preflight only
+        shell: bash
+        env:
+          CHAT_PRODUCTION_MODE: preflight
+          CHAT_PRODUCTION_ROOT: ${{ vars.CHAT_PRODUCTION_ROOT || '/opt/chat-v2/production' }}
+          CHAT_PRODUCTION_DATA_DIR: ${{ vars.CHAT_PRODUCTION_DATA_DIR || '/opt/chat-v2/production/data' }}
+          CHAT_PRODUCTION_PORT: ${{ vars.CHAT_PRODUCTION_PORT }}
+          CHAT_PRODUCTION_CONTAINER_NAME: ${{ vars.CHAT_PRODUCTION_CONTAINER_NAME || 'chat-v2-production' }}
+          CHAT_PRODUCTION_COMPOSE_PROJECT: ${{ vars.CHAT_PRODUCTION_COMPOSE_PROJECT || 'chat-v2-production' }}
+          CHAT_ENVIRONMENT: production
+          CHAT_PREFLIGHT_STRICT: 'true'
+          CHAT_PREFLIGHT_MIN_FREE_BYTES: ${{ vars.CHAT_PREFLIGHT_MIN_FREE_BYTES }}
+          CHAT_BACKUP_RETENTION: ${{ vars.CHAT_BACKUP_RETENTION }}
+          CHAT_PUBLIC_ORIGIN: ${{ vars.CHAT_PUBLIC_ORIGIN }}
+          CHAT_ALLOWED_ORIGIN: ${{ vars.CHAT_ALLOWED_ORIGIN }}
+          CHAT_AUTH_MODE: ${{ vars.CHAT_AUTH_MODE }}
+          CHAT_ALLOWED_EMAILS: ${{ vars.CHAT_ALLOWED_EMAILS }}
+          CHAT_ALLOWED_SERVICE_CLIENT_IDS: ${{ vars.CHAT_ALLOWED_SERVICE_CLIENT_IDS }}
+          CHAT_CF_ACCESS_ISSUER: ${{ vars.CHAT_CF_ACCESS_ISSUER }}
+          CHAT_CF_ACCESS_AUD: ${{ vars.CHAT_CF_ACCESS_AUD }}
+          CHAT_ACCESS_TOKEN: ${{ secrets.CHAT_ACCESS_TOKEN }}
+          CHAT_RATE_LIMIT_GENERAL: ${{ vars.CHAT_RATE_LIMIT_GENERAL }}
+          CHAT_RATE_LIMIT_CHAT: ${{ vars.CHAT_RATE_LIMIT_CHAT }}
+          CHAT_RATE_LIMIT_UPLOAD: ${{ vars.CHAT_RATE_LIMIT_UPLOAD }}
+          CHAT_MAX_UPLOAD_BYTES: ${{ vars.CHAT_MAX_UPLOAD_BYTES }}
+          CHAT_MAX_GENERATED_ARTIFACT_BYTES: ${{ vars.CHAT_MAX_GENERATED_ARTIFACT_BYTES }}
+          CHAT_MAX_INLINE_GENERATED_ARTIFACT_PAYLOAD_BYTES: ${{ vars.CHAT_MAX_INLINE_GENERATED_ARTIFACT_PAYLOAD_BYTES }}
+          CHAT_MAX_EXTRACTED_TEXT_CHARACTERS: ${{ vars.CHAT_MAX_EXTRACTED_TEXT_CHARACTERS }}
+          CHAT_MAX_PDF_PAGES: ${{ vars.CHAT_MAX_PDF_PAGES }}
+          LETTA_BASE_URL: ${{ vars.LETTA_BASE_URL }}
+          LETTA_CHAT_PATH: ${{ vars.LETTA_CHAT_PATH }}
+          LETTA_HEALTH_PATH: ${{ vars.LETTA_HEALTH_PATH }}
+          LETTA_AGENT_ID: ${{ vars.LETTA_AGENT_ID }}
+          LETTA_API_KEY: ${{ secrets.LETTA_API_KEY }}
+          LETTA_TIMEOUT_MS: ${{ vars.LETTA_TIMEOUT_MS }}
+          LETTA_PROTOCOL: ${{ vars.LETTA_PROTOCOL }}
+          LETTA_MODEL_MAP_JSON: ${{ vars.LETTA_MODEL_MAP_JSON }}
+          LETTA_MAX_ARTIFACT_BYTES: ${{ vars.LETTA_MAX_ARTIFACT_BYTES }}
+          LETTA_MAX_ARTIFACT_TOTAL_BYTES: ${{ vars.LETTA_MAX_ARTIFACT_TOTAL_BYTES }}
+          LETTA_MAX_TEXT_ARTIFACT_BYTES: ${{ vars.LETTA_MAX_TEXT_ARTIFACT_BYTES }}
+          LETTA_NATIVE_BINARY_ARTIFACTS: ${{ vars.LETTA_NATIVE_BINARY_ARTIFACTS }}
+          LETTA_ARTIFACT_TOOL_ENABLED: ${{ vars.LETTA_ARTIFACT_TOOL_ENABLED }}
+          HERMES_BASE_URL: ${{ vars.HERMES_BASE_URL }}
+          HERMES_CHAT_PATH: ${{ vars.HERMES_CHAT_PATH }}
+          HERMES_HEALTH_PATH: ${{ vars.HERMES_HEALTH_PATH }}
+          HERMES_AGENT_ID: ${{ vars.HERMES_AGENT_ID }}
+          HERMES_API_KEY: ${{ secrets.HERMES_API_KEY }}
+          HERMES_TIMEOUT_MS: ${{ vars.HERMES_TIMEOUT_MS }}
+          HERMES_PROTOCOL: ${{ vars.HERMES_PROTOCOL }}
+          HERMES_MODEL_MAP_JSON: ${{ vars.HERMES_MODEL_MAP_JSON }}
+          HERMES_MAX_ARTIFACT_BYTES: ${{ vars.HERMES_MAX_ARTIFACT_BYTES }}
+          HERMES_MAX_ARTIFACT_TOTAL_BYTES: ${{ vars.HERMES_MAX_ARTIFACT_TOTAL_BYTES }}
+          HERMES_ARTIFACT_TOOL_ENABLED: ${{ vars.HERMES_ARTIFACT_TOOL_ENABLED }}
+          HERMES_ARTIFACT_ENVELOPE_ENABLED: ${{ vars.HERMES_ARTIFACT_ENVELOPE_ENABLED }}
+          HERMES_DOCKER_NETWORK: ${{ vars.HERMES_DOCKER_NETWORK }}
+        run: bash scripts/deploy/production.sh "${APP_SHA}"
+
+      - name: Publish readiness evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: chat-v2-production-preflight-once-${{ github.run_id }}
+          path: |
+            ${{ vars.CHAT_PRODUCTION_ROOT || '/opt/chat-v2/production' }}/state/last-production-readiness.json
+            ${{ vars.CHAT_PRODUCTION_ROOT || '/opt/chat-v2/production' }}/state/last-preflight.json
+            ${{ vars.CHAT_PRODUCTION_ROOT || '/opt/chat-v2/production' }}/state/last-preflight-output.log
+          if-no-files-found: warn
+          retention-days: 30
