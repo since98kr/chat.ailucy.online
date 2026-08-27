@@ -22,10 +22,13 @@ done
 [[ -n "${CF_ACCESS_CLIENT_SECRET:-}" ]] || fail 'CF_ACCESS_CLIENT_SECRET is required'
 [[ "${LETTA_PROTOCOL,,}" == 'openclaw' ]] || fail 'external staging QA requires LETTA_PROTOCOL=openclaw'
 
+AUTH_OUTPUT="$(mktemp)"
+trap 'rm -f "${AUTH_OUTPUT}"' EXIT
+
 log 'Checking Cloudflare Access service authentication.'
 HTTP_STATUS="$(
   curl --silent --show-error --max-time 30 \
-    --output /tmp/chat-v2-external-auth.json \
+    --output "${AUTH_OUTPUT}" \
     --write-out '%{http_code}' \
     --header "CF-Access-Client-Id: ${CF_ACCESS_CLIENT_ID}" \
     --header "CF-Access-Client-Secret: ${CF_ACCESS_CLIENT_SECRET}" \
@@ -33,7 +36,7 @@ HTTP_STATUS="$(
 )"
 if [[ "${HTTP_STATUS}" != '200' ]]; then
   log "External Access preflight returned HTTP ${HTTP_STATUS}."
-  cat /tmp/chat-v2-external-auth.json >&2 2>/dev/null || true
+  cat "${AUTH_OUTPUT}" >&2 2>/dev/null || true
   fail 'Cloudflare Service Auth policy or service credentials are not ready'
 fi
 
