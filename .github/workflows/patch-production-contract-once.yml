@@ -1,0 +1,93 @@
+name: Patch production contract once
+
+on:
+  push:
+    branches:
+      - fix/production-runtime-contract
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: fix/production-runtime-contract
+          fetch-depth: 0
+
+      - name: Patch remaining production contract files
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+
+          def replace_once(path, old, new):
+              p = Path(path)
+              text = p.read_text()
+              count = text.count(old)
+              if count != 1:
+                  raise SystemExit(f'{path}: expected one match, found {count}')
+              p.write_text(text.replace(old, new, 1))
+
+          dollar = '$'
+          let_protocol = f"          LETTA_PROTOCOL: {dollar}{{{{ vars.LETTA_PROTOCOL }}}}\n"
+          let_model = f"          LETTA_MODEL_MAP_JSON: {dollar}{{{{ vars.LETTA_MODEL_MAP_JSON }}}}\n"
+          replace_once(
+              '.github/workflows/production-release.yml',
+              let_protocol + let_model,
+              let_protocol
+              + f"          LETTA_OPENCLAW_AGENT_TARGET: {dollar}{{{{ vars.LETTA_OPENCLAW_AGENT_TARGET }}}}\n"
+              + f"          LETTA_OPENCLAW_SESSION_PREFIX: {dollar}{{{{ vars.LETTA_OPENCLAW_SESSION_PREFIX }}}}\n"
+              + let_model,
+          )
+
+          hermes_base = f"          HERMES_BASE_URL: {dollar}{{{{ vars.HERMES_BASE_URL }}}}\n"
+          hermes_chat = f"          HERMES_CHAT_PATH: {dollar}{{{{ vars.HERMES_CHAT_PATH }}}}\n"
+          replace_once(
+              '.github/workflows/production-release.yml',
+              hermes_base + hermes_chat,
+              hermes_base
+              + f"          HERMES_BASE_URL_MAP_JSON: {dollar}{{{{ vars.HERMES_BASE_URL_MAP_JSON }}}}\n"
+              + hermes_chat,
+          )
+
+          replace_once(
+              'scripts/ops/production-control-plane.sh',
+              '    CHAT_CF_ACCESS_ISSUER CHAT_CF_ACCESS_AUD CHAT_PREFLIGHT_MIN_FREE_BYTES CHAT_BACKUP_RETENTION \\\n    LETTA_BASE_URL LETTA_AGENT_ID HERMES_BASE_URL HERMES_AGENT_ID CF_ACCESS_CLIENT_ID; do\n',
+              '    CHAT_CF_ACCESS_ISSUER CHAT_CF_ACCESS_AUD CHAT_PREFLIGHT_MIN_FREE_BYTES CHAT_BACKUP_RETENTION \\\n    LETTA_BASE_URL LETTA_AGENT_ID LETTA_OPENCLAW_AGENT_TARGET \\\n    HERMES_BASE_URL HERMES_BASE_URL_MAP_JSON HERMES_AGENT_ID CF_ACCESS_CLIENT_ID; do\n',
+          )
+
+          replace_once(
+              'docs/HOME_SERVER_PRODUCTION_SETUP.md',
+              '- `LETTA_PROTOCOL`\n- `LETTA_MODEL_MAP_JSON`\n',
+              '- `LETTA_PROTOCOL`\n- `LETTA_OPENCLAW_AGENT_TARGET` — required for OpenClaw transport\n- `LETTA_OPENCLAW_SESSION_PREFIX`\n- `LETTA_MODEL_MAP_JSON`\n',
+          )
+          replace_once(
+              'docs/HOME_SERVER_PRODUCTION_SETUP.md',
+              '- `HERMES_BASE_URL`\n- `HERMES_CHAT_PATH`\n',
+              '- `HERMES_BASE_URL`\n- `HERMES_BASE_URL_MAP_JSON` — persona-specific Hermes gateway routing\n- `HERMES_CHAT_PATH`\n',
+          )
+
+          replace_once(
+              'config/adapters.env.example',
+              'LETTA_PROTOCOL=native\nLETTA_MODEL_MAP_JSON=\n',
+              'LETTA_PROTOCOL=native\nLETTA_OPENCLAW_AGENT_TARGET=\nLETTA_OPENCLAW_SESSION_PREFIX=chat-v2\nLETTA_MODEL_MAP_JSON=\n',
+          )
+          replace_once(
+              'config/adapters.env.example',
+              'HERMES_BASE_URL=http://hermes:8643\nHERMES_CHAT_PATH=/v1/chat/completions\n',
+              'HERMES_BASE_URL=http://hermes:8643\nHERMES_BASE_URL_MAP_JSON=\nHERMES_CHAT_PATH=/v1/chat/completions\n',
+          )
+          PY
+
+          rm .github/workflows/patch-production-contract-once.yml
+          git diff --check
+          bash -n scripts/ops/production-control-plane.sh
+          git config user.name 'since98kr'
+          git config user.email 'since98kr@gmail.com'
+          git add -A
+          git commit -m 'fix(production): align release routing contract'
+          git push origin HEAD:fix/production-runtime-contract
