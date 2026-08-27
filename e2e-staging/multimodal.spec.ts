@@ -6,6 +6,7 @@ type ApiContext = Awaited<ReturnType<typeof apiRequest.newContext>>;
 type StreamEvent = {
   type: string;
   delta?: string;
+  message?: { content?: string };
   artifact?: { id: string; filename: string; mimeType: string; sizeBytes: number };
   delivery?: {
     runId: string;
@@ -95,7 +96,9 @@ async function send(api: ApiContext, conversationId: string, content: string, ar
 }
 
 function responseText(events: StreamEvent[]) {
-  return events.filter((event) => event.type === 'content.delta').map((event) => event.delta ?? '').join('');
+  const completed = [...events].reverse().find((event) => event.type === 'run.completed' && event.message?.content);
+  return completed?.message?.content
+    ?? events.filter((event) => event.type === 'content.delta').map((event) => event.delta ?? '').join('');
 }
 
 function expectDelivery(events: StreamEvent[], input: {
