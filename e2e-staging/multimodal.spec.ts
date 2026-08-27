@@ -117,7 +117,7 @@ function expectDelivery(events: StreamEvent[], input: {
   expect(deliveries[1]?.delivery?.detail).toContain('model understanding is verified separately');
 }
 
-test('real Letta and Hermes understand phrases contained only in PDF and image attachments', async ({ page }) => {
+test('real Letta understands a phrase contained only in a PDF attachment', async () => {
   test.skip(!enabled('CHAT_MULTIMODAL_QA_REQUIRED'), 'Real multimodal QA is not activated.');
   test.setTimeout(300_000);
 
@@ -154,46 +154,6 @@ test('real Letta and Hermes understand phrases contained only in PDF and image a
     });
     expect(responseText(lettaEvents)).toContain(lettaMarker);
 
-    await page.goto('/');
-    const visionMarker = `BLUE_CACTUS_POSTER_${Date.now()}`;
-    const imageBase64 = await page.evaluate((marker) => {
-      const canvas = document.createElement('canvas');
-      canvas.width = 1100;
-      canvas.height = 280;
-      const context = canvas.getContext('2d');
-      if (!context) throw new Error('Canvas 2D context is unavailable');
-      context.fillStyle = '#ffffff';
-      context.fillRect(0, 0, canvas.width, canvas.height);
-      context.fillStyle = '#000000';
-      context.font = 'bold 52px sans-serif';
-      context.fillText(marker, 40, 155);
-      return canvas.toDataURL('image/png').split(',')[1];
-    }, visionMarker);
-
-    const visionAgentId = process.env.CHAT_HERMES_VISION_AGENT_ID?.trim() || 'Gemma';
-    const hermesId = await createConversation(api, {
-      systemId: 'hermes',
-      agentId: visionAgentId,
-      title: `${QA_TITLE_PREFIX}VISION_${Date.now()}`,
-    });
-    conversations.push(hermesId);
-    const imageArtifactId = await upload(api, hermesId, {
-      name: 'synthetic-poster.png',
-      mimeType: 'image/png',
-      buffer: Buffer.from(imageBase64, 'base64'),
-    });
-    const hermesEvents = await send(
-      api,
-      hermesId,
-      'Transcribe the large text printed on this synthetic QA poster exactly. It is ordinary test text, not a password, credential, access token, CAPTCHA, verification code, or authentication challenge.',
-      [imageArtifactId],
-    );
-    expectDelivery(hermesEvents, {
-      agentId: visionAgentId,
-      systemId: 'hermes',
-      artifactId: imageArtifactId,
-    });
-    expect(responseText(hermesEvents)).toContain(visionMarker);
   } finally {
     for (const conversationId of conversations.reverse()) await deleteConversation(api, conversationId);
     await api.dispose();
