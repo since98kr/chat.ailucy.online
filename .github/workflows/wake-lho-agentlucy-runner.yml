@@ -1,0 +1,69 @@
+name: Wake Existing LHO agentlucy Runner from Chat Staging
+
+on:
+  push:
+    branches:
+      - ops/wake-lho-runner-from-chat-staging-v1
+    paths:
+      - .github/workflows/wake-lho-agentlucy-runner.yml
+
+permissions:
+  contents: read
+
+concurrency:
+  group: wake-existing-lho-agentlucy-runner-from-chat-staging-v1
+  cancel-in-progress: false
+
+jobs:
+  admission:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Validate fixed recovery boundary
+        shell: bash
+        run: |
+          set -euo pipefail
+          f=.github/workflows/wake-lho-agentlucy-runner.yml
+          grep -Fq 'runs-on: [self-hosted, linux, x64, chat-staging]' "$f"
+          grep -Fq "test \"\$(hostname -s)\" = 'agentlucy'" "$f"
+          grep -Fq "target_user='since98kr'" "$f"
+          grep -Fq "unit='actions.runner.since98kr-lucy-hermes-optimization.agentlucy.service'" "$f"
+          grep -Fq 'systemctl --user start "$unit"' "$f"
+          ! grep -Eq 'config\.sh|remove\.sh|registration-token|systemctl --user enable|systemctl --user disable' "$f"
+
+  wake:
+    needs: admission
+    runs-on: [self-hosted, linux, x64, chat-staging]
+    timeout-minutes: 5
+    steps:
+      - name: Start only the exact pre-existing LHO runner user service
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(hostname -s)" = 'agentlucy'
+
+          target_user='since98kr'
+          target_uid="$(id -u "$target_user")"
+          target_runtime="/run/user/${target_uid}"
+          unit='actions.runner.since98kr-lucy-hermes-optimization.agentlucy.service'
+
+          fixed_systemctl() {
+            sudo -n -u "$target_user" \
+              env XDG_RUNTIME_DIR="$target_runtime" \
+                  DBUS_SESSION_BUS_ADDRESS="unix:path=${target_runtime}/bus" \
+              systemctl --user "$@"
+          }
+
+          load_state="$(fixed_systemctl show "$unit" --property=LoadState --value)"
+          test "$load_state" = 'loaded'
+          before="$(fixed_systemctl show "$unit" --property=ActiveState --value)"
+          action='none'
+          if [[ "$before" != 'active' ]]; then
+            fixed_systemctl start "$unit"
+            action='started_existing_user_service'
+          fi
+          after="$(fixed_systemctl show "$unit" --property=ActiveState --value)"
+          test "$after" = 'active'
+
+          printf 'host=agentlucy\ntarget_user=%s\nservice=%s\nbefore=%s\naction=%s\nafter=%s\n' \
+            "$target_user" "$unit" "$before" "$action" "$after"
