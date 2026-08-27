@@ -13,6 +13,11 @@ CONTAINER_NAME="${CHAT_PRODUCTION_CONTAINER_NAME:-chat-v2-production}"
 PROJECT_NAME="${CHAT_PRODUCTION_COMPOSE_PROJECT:-chat-v2-production}"
 BACKUP_RETENTION="${CHAT_BACKUP_RETENTION:-14}"
 HERMES_DOCKER_NETWORK="${HERMES_DOCKER_NETWORK:-}"
+export LETTA_OPENCLAW_AGENT_TARGET="${LETTA_OPENCLAW_AGENT_TARGET:-openclaw/main}"
+export LETTA_OPENCLAW_SESSION_PREFIX="${LETTA_OPENCLAW_SESSION_PREFIX:-chat-v2}"
+if [[ -z "${HERMES_BASE_URL_MAP_JSON:-}" ]]; then
+  export HERMES_BASE_URL_MAP_JSON='{"Gemma":"http://host.docker.internal:8643","Lynn":"http://host.docker.internal:8644","Xixi":"http://host.docker.internal:8645"}'
+fi
 VERSION="$(node -p "require('${REPO_ROOT}/package.json').version")"
 BUILD_TIME="$(date -u +'%Y-%m-%dT%H:%M:%SZ')"
 IMAGE="chat-ailucy-v2:production-${REVISION}"
