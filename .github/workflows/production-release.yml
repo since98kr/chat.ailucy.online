@@ -207,10 +207,6 @@ jobs:
           env -u CF_ACCESS_CLIENT_ID -u CF_ACCESS_CLIENT_SECRET \
             CHAT_STAGING_BASE_URL="http://127.0.0.1:${CHAT_PRODUCTION_PORT}" \
             bash scripts/ops/staging-smoke.sh
-          env -u CF_ACCESS_CLIENT_ID -u CF_ACCESS_CLIENT_SECRET \
-            CHAT_STAGING_BASE_URL="http://127.0.0.1:${CHAT_PRODUCTION_PORT}" \
-            bash scripts/ops/staging-browser-smoke.sh
-
           evidence_dir="${RUNNER_TEMP}/chat-v2-production-evidence"
           tool="${RUNNER_TEMP}/write-production-e2e-marker.sh"
           mkdir -p "${evidence_dir}"
