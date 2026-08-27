@@ -179,7 +179,9 @@ test('Hermes Gemma understands an image-only marker', async ({ page }, testInfo)
   const api = await context();
   let conversationId = '';
   try {
-    const marker = `HERMES_VISION_${Date.now()}_${randomUUID().slice(0, 8)}`;
+    const visionWords = ['MANGO', 'CEDAR', 'RAVEN', 'TIGER', 'CORAL', 'MAPLE', 'NOVA', 'PLUTO'];
+    const markerOffset = Number.parseInt(randomUUID().slice(0, 2), 16) % visionWords.length;
+    const marker = `VISION ${visionWords[markerOffset]} ${visionWords[(markerOffset + 3) % visionWords.length]} ${visionWords[(markerOffset + 5) % visionWords.length]}`;
     await page.goto('/');
     const imageBase64 = await page.evaluate((text) => {
       const canvas = document.createElement('canvas');
@@ -205,7 +207,8 @@ test('Hermes Gemma understands an image-only marker', async ({ page }, testInfo)
     );
     expect(events.filter((event) => event.type === 'artifacts.delivery').map((event) => event.delivery?.state))
       .toEqual(['delivering', 'delivered']);
-    expect(completedText(events)).toContain(marker);
+    const transcript = completedText(events).toUpperCase().replace(/[^A-Z]+/g, ' ').trim();
+    expect(transcript).toContain(marker);
     await testInfo.attach('hermes-vision.json', {
       body: Buffer.from(JSON.stringify({ agentId: visionAgentId, conversationId, artifactId, marker }, null, 2)),
       contentType: 'application/json',
