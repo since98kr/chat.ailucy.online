@@ -1,0 +1,64 @@
+name: Hermes LHO Runner Read-only Probe
+
+on:
+  push:
+    branches:
+      - ops/wake-lho-runner-from-chat-staging-v1
+    paths:
+      - .github/workflows/hermes-lho-runner-readonly-probe.yml
+
+permissions:
+  contents: read
+
+jobs:
+  probe:
+    runs-on: [self-hosted, linux, x64, chat-staging]
+    environment: staging
+    timeout-minutes: 5
+    env:
+      HERMES_BASE_URL: ${{ vars.HERMES_BASE_URL }}
+      HERMES_CHAT_PATH: ${{ vars.HERMES_CHAT_PATH }}
+      HERMES_API_KEY: ${{ secrets.HERMES_API_KEY }}
+      HERMES_MODEL_MAP_JSON: ${{ vars.HERMES_MODEL_MAP_JSON }}
+    steps:
+      - name: Ask Hermes for one exact read-only user-service classification
+        shell: bash
+        run: |
+          set -euo pipefail
+          [[ "$(hostname -s)" == 'agentlucy' ]]
+          [[ -n "${HERMES_BASE_URL:-}" && -n "${HERMES_API_KEY:-}" ]]
+          base="${HERMES_BASE_URL%/}"
+          if [[ "$base" == *host.docker.internal* ]]; then
+            gateway="$(docker network inspect bridge --format '{{(index .IPAM.Config 0).Gateway}}')"
+            [[ -n "$gateway" ]]
+            base="${base/host.docker.internal/${gateway}}"
+          fi
+          export HERMES_REQUEST_URL="${base}${HERMES_CHAT_PATH:-/v1/chat/completions}"
+          export HERMES_PROMPT='This is an authorized read-only execution-plane recovery probe on host agentlucy. If and only if you have a bounded shell/terminal tool, execute exactly this single command and no other command: systemctl --user show actions.runner.since98kr-lucy-hermes-optimization.agentlucy.service --property=LoadState --property=ActiveState. Do not read files, environment variables, credentials, network, Docker, journals, or any other service. Then answer with exactly one token: LOADED_ACTIVE if LoadState=loaded and ActiveState=active; LOADED_INACTIVE if LoadState=loaded and ActiveState is not active; UNIT_NOT_LOADED if LoadState is not loaded; TOOL_UNAVAILABLE if you cannot execute the exact command. Do not guess.'
+          node <<'NODE'
+          const url = process.env.HERMES_REQUEST_URL;
+          const key = process.env.HERMES_API_KEY;
+          const prompt = process.env.HERMES_PROMPT;
+          const map = JSON.parse(process.env.HERMES_MODEL_MAP_JSON || '{}');
+          const model = map['[Hermes] Lucy'] || 'hermes-agent';
+          const response = await fetch(url, {
+            method: 'POST',
+            headers: {authorization: `Bearer ${key}`, 'content-type': 'application/json'},
+            body: JSON.stringify({model, stream: false, messages: [{role: 'user', content: prompt}]}),
+            signal: AbortSignal.timeout(120000),
+          });
+          if (!response.ok) {
+            console.log(`classification=HERMES_HTTP_${response.status}`);
+            process.exit(2);
+          }
+          const payload = await response.json();
+          let content = payload?.choices?.[0]?.message?.content;
+          if (Array.isArray(content)) content = content.map((part) => typeof part === 'string' ? part : part?.text || '').join('');
+          content = String(content || '').trim();
+          const allowed = new Set(['LOADED_ACTIVE','LOADED_INACTIVE','UNIT_NOT_LOADED','TOOL_UNAVAILABLE']);
+          if (!allowed.has(content)) {
+            console.log('classification=NON_CANONICAL_HERMES_RESPONSE');
+            process.exit(3);
+          }
+          console.log(`classification=${content}`);
+          NODE
