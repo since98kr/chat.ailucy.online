@@ -50,7 +50,7 @@ services:
       LETTA_NATIVE_BINARY_ARTIFACTS: ${LETTA_NATIVE_BINARY_ARTIFACTS:-false}
       LETTA_ARTIFACT_TOOL_ENABLED: ${LETTA_ARTIFACT_TOOL_ENABLED:-false}
       HERMES_BASE_URL: ${HERMES_BASE_URL:?HERMES_BASE_URL is required}
-      HERMES_BASE_URL_MAP_JSON: '${HERMES_BASE_URL_MAP_JSON:-{"Gemma":"http://host.docker.internal:8643","Lynn":"http://host.docker.internal:8644","Xixi":"http://host.docker.internal:8645"}}'
+      HERMES_BASE_URL_MAP_JSON: ${HERMES_BASE_URL_MAP_JSON:-}
       HERMES_CHAT_PATH: ${HERMES_CHAT_PATH:-/v1/chat/stream}
       HERMES_HEALTH_PATH: ${HERMES_HEALTH_PATH:-/health}
       HERMES_AGENT_ID: ${HERMES_AGENT_ID:?HERMES_AGENT_ID is required}
