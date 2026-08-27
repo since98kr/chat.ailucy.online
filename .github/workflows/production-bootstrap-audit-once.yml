@@ -1,0 +1,64 @@
+name: Production bootstrap audit once
+
+on:
+  push:
+    branches:
+      - ops/production-bootstrap-audit-fb6c4278
+
+permissions:
+  contents: read
+
+jobs:
+  audit:
+    name: Audit production control-plane prerequisites
+    runs-on: [self-hosted, linux, x64, chat-staging]
+    environment: staging
+    timeout-minutes: 15
+    steps:
+      - name: Audit host and GitHub control plane without mutation
+        shell: bash
+        run: |
+          set -u
+          echo "runner_name=${RUNNER_NAME:-unknown}"
+          echo "host=$(hostname)"
+
+          if command -v gh >/dev/null 2>&1; then
+            echo 'gh_installed=true'
+            if gh auth status --hostname github.com >/dev/null 2>&1; then
+              echo 'gh_authenticated=true'
+            else
+              echo 'gh_authenticated=false'
+            fi
+          else
+            echo 'gh_installed=false'
+            echo 'gh_authenticated=false'
+          fi
+
+          if sudo -n true >/dev/null 2>&1; then
+            echo 'passwordless_sudo=true'
+          else
+            echo 'passwordless_sudo=false'
+          fi
+
+          test -d /opt/actions-runner-chat-production && echo 'production_runner_home_exists=true' || echo 'production_runner_home_exists=false'
+          test -d /opt/chat-v2/production && echo 'production_root_exists=true' || echo 'production_root_exists=false'
+
+          echo 'production_runner_services:'
+          systemctl list-unit-files --type=service 2>/dev/null | grep -Ei 'actions\.runner\..*production|chat.*production' || true
+
+          echo 'production_cloudflare_state_files:'
+          find /opt/chat-v2 -maxdepth 4 -type f \( -iname '*cloudflare*production*' -o -iname '*production*access*' \) -print 2>/dev/null | sort || true
+
+          if command -v gh >/dev/null 2>&1 && gh auth status --hostname github.com >/dev/null 2>&1; then
+            echo 'github_runner_inventory:'
+            gh api repos/since98kr/chat.ailucy.online/actions/runners --jq '.runners[] | {name,status,busy,labels:[.labels[].name]}' 2>/dev/null || echo 'runner_inventory_unavailable'
+
+            echo 'production_environment_protection:'
+            gh api repos/since98kr/chat.ailucy.online/environments/production --jq '{protection_rules, deployment_branch_policy}' 2>/dev/null || echo 'environment_read_unavailable'
+
+            echo 'production_environment_variable_names:'
+            gh api repos/since98kr/chat.ailucy.online/environments/production/variables --jq '[.variables[].name]' 2>/dev/null || echo 'variable_names_unavailable'
+
+            echo 'production_environment_secret_names:'
+            gh api repos/since98kr/chat.ailucy.online/environments/production/secrets --jq '[.secrets[].name]' 2>/dev/null || echo 'secret_names_unavailable'
+          fi
