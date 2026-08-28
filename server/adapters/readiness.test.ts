@@ -82,7 +82,10 @@ describe('sanitizeReadinessDetail', () => {
 
 describe('probeAdapterReadiness', () => {
   it('uses the canonical OpenClaw Letta target for generation readiness', async () => {
-    const fetchMock = vi.fn(async () => new Response(
+    const fetchMock = vi.fn(async (
+      _input: Parameters<typeof fetch>[0],
+      _init?: Parameters<typeof fetch>[1],
+    ) => new Response(
       JSON.stringify({ choices: [{ message: { content: 'pong' } }] }),
       { status: 200, headers: { 'Content-Type': 'application/json' } },
     ));
