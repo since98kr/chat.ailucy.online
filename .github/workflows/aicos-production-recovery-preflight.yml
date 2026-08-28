@@ -23,26 +23,49 @@ jobs:
       CF_ACCESS_CLIENT_ID: ${{ vars.CF_ACCESS_CLIENT_ID }}
       CF_ACCESS_CLIENT_SECRET: ${{ secrets.CF_ACCESS_CLIENT_SECRET }}
     steps:
-      - name: Verify existing recovery capabilities without mutation
+      - name: Classify existing recovery capabilities without mutation
         shell: bash
         run: |
-          set -euo pipefail
-          [[ "$(hostname -s)" == 'agentlucy' ]]
-          [[ "$(id -un)" == 'chat-runner' ]]
-          command -v gh >/dev/null
-          command -v docker >/dev/null
-          docker version >/dev/null
-          docker compose version >/dev/null
-          docker inspect aicos-app >/dev/null
-          gh auth status >/dev/null 2>&1
-          aicos_sha="$(gh api "repos/since98kr/ai-collaboration-os/commits/${AICOS_TARGET_SHA}" --jq .sha)"
-          lho_sha="$(gh api "repos/since98kr/lucy-hermes-optimization/commits/${LHO_CONTROL_SHA}" --jq .sha)"
-          [[ "$aicos_sha" == "$AICOS_TARGET_SHA" ]]
-          [[ "$lho_sha" == "$LHO_CONTROL_SHA" ]]
-          deployed_sha="$(docker inspect --format '{{range .Config.Env}}{{println .}}{{end}}' aicos-app | sed -n 's/^AICOS_COMMIT_SHA=//p' | tail -n1)"
-          [[ -n "$deployed_sha" ]]
-          [[ -n "${CLOUDFLARE_API_TOKEN:-}" ]]
-          [[ -n "${CLOUDFLARE_ACCOUNT_ID:-}" ]]
-          [[ -n "${CF_ACCESS_CLIENT_ID:-}" ]]
-          [[ -n "${CF_ACCESS_CLIENT_SECRET:-}" ]]
-          printf 'host=agentlucy\nuser=chat-runner\ndocker=true\naicos_private_repo_read=true\nlho_private_repo_read=true\ncloudflare_management=true\naccess_service_identity=true\ncurrent_deployed_sha=%s\n' "$deployed_sha"
+          set -u
+          host_ok=false
+          user_ok=false
+          docker_ok=false
+          app_ok=false
+          gh_present=false
+          gh_auth=false
+          aicos_read=false
+          lho_read=false
+          cloudflare_management=false
+          access_identity=false
+          deployed_sha=unavailable
+
+          [[ "$(hostname -s)" == 'agentlucy' ]] && host_ok=true
+          [[ "$(id -un)" == 'chat-runner' ]] && user_ok=true
+          command -v gh >/dev/null 2>&1 && gh_present=true
+          if command -v docker >/dev/null 2>&1 && docker version >/dev/null 2>&1 && docker compose version >/dev/null 2>&1; then
+            docker_ok=true
+          fi
+          if [[ "$docker_ok" == true ]] && docker inspect aicos-app >/dev/null 2>&1; then
+            app_ok=true
+            deployed_sha="$(docker inspect --format '{{range .Config.Env}}{{println .}}{{end}}' aicos-app 2>/dev/null | sed -n 's/^AICOS_COMMIT_SHA=//p' | tail -n1)"
+            [[ -n "$deployed_sha" ]] || deployed_sha=missing
+          fi
+          if [[ "$gh_present" == true ]] && gh auth status >/dev/null 2>&1; then
+            gh_auth=true
+            aicos_sha="$(gh api "repos/since98kr/ai-collaboration-os/commits/${AICOS_TARGET_SHA}" --jq .sha 2>/dev/null || true)"
+            lho_sha="$(gh api "repos/since98kr/lucy-hermes-optimization/commits/${LHO_CONTROL_SHA}" --jq .sha 2>/dev/null || true)"
+            [[ "$aicos_sha" == "$AICOS_TARGET_SHA" ]] && aicos_read=true
+            [[ "$lho_sha" == "$LHO_CONTROL_SHA" ]] && lho_read=true
+          fi
+          [[ -n "${CLOUDFLARE_API_TOKEN:-}" && -n "${CLOUDFLARE_ACCOUNT_ID:-}" ]] && cloudflare_management=true
+          [[ -n "${CF_ACCESS_CLIENT_ID:-}" && -n "${CF_ACCESS_CLIENT_SECRET:-}" ]] && access_identity=true
+
+          printf 'host_ok=%s\nuser_ok=%s\ndocker_ok=%s\naicos_app_present=%s\ngh_present=%s\ngh_auth=%s\naicos_private_repo_read=%s\nlho_private_repo_read=%s\ncloudflare_management=%s\naccess_service_identity=%s\ncurrent_deployed_sha=%s\n' \
+            "$host_ok" "$user_ok" "$docker_ok" "$app_ok" "$gh_present" "$gh_auth" "$aicos_read" "$lho_read" "$cloudflare_management" "$access_identity" "$deployed_sha"
+
+          [[ "$host_ok" == true ]]
+          [[ "$user_ok" == true ]]
+          [[ "$docker_ok" == true ]]
+          [[ "$app_ok" == true ]]
+          [[ "$cloudflare_management" == true ]]
+          [[ "$access_identity" == true ]]
