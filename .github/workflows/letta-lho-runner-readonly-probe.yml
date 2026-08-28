@@ -1,0 +1,96 @@
+name: Letta LHO Runner Read-only Probe
+
+on:
+  push:
+    branches:
+      - ops/wake-lho-runner-from-chat-staging-v1
+    paths:
+      - .github/workflows/letta-lho-runner-readonly-probe.yml
+
+permissions:
+  contents: read
+
+jobs:
+  probe:
+    runs-on: [self-hosted, linux, x64, chat-staging]
+    environment: staging
+    timeout-minutes: 5
+    env:
+      CF_ACCESS_CLIENT_ID: ${{ vars.CF_ACCESS_CLIENT_ID }}
+      CF_ACCESS_CLIENT_SECRET: ${{ secrets.CF_ACCESS_CLIENT_SECRET }}
+    steps:
+      - name: Run exact read-only user-service probe through Letta Lucy
+        shell: bash
+        run: |
+          set -euo pipefail
+          [[ "$(hostname -s)" == 'agentlucy' ]]
+          [[ -n "${CF_ACCESS_CLIENT_ID:-}" && -n "${CF_ACCESS_CLIENT_SECRET:-}" ]]
+          command -v python3 >/dev/null
+          python3 - <<'PY'
+          import json, os, sys, time, urllib.request, urllib.error
+
+          base = 'http://127.0.0.1:14174'
+          headers = {
+              'CF-Access-Client-Id': os.environ['CF_ACCESS_CLIENT_ID'],
+              'CF-Access-Client-Secret': os.environ['CF_ACCESS_CLIENT_SECRET'],
+              'Origin': base,
+              'Content-Type': 'application/json',
+          }
+          conversation_id = None
+
+          def request(method, path, payload=None, timeout=180):
+              data = None if payload is None else json.dumps(payload).encode('utf-8')
+              req = urllib.request.Request(base + path, data=data, method=method, headers=headers)
+              with urllib.request.urlopen(req, timeout=timeout) as response:
+                  return response.status, response.read().decode('utf-8')
+
+          try:
+              status, body = request('POST', '/api/conversations', {
+                  'systemId': 'letta',
+                  'agentId': '[Letta] Lucy',
+                  'title': f'LHO_RUNNER_READONLY_PROBE_{int(time.time())}',
+              })
+              if status != 201:
+                  print(f'classification=CREATE_HTTP_{status}')
+                  sys.exit(2)
+              conversation_id = json.loads(body)['conversation']['id']
+              prompt = (
+                  'Authorized read-only execution-plane recovery probe on agentlucy. '
+                  'Use an actual Bash or terminal tool and execute exactly one command, with no other command or filesystem/network/credential access: '
+                  'systemctl --user show actions.runner.since98kr-lucy-hermes-optimization.agentlucy.service --property=LoadState --property=ActiveState. '
+                  'Then answer with exactly one token: LOADED_ACTIVE if loaded+active; LOADED_INACTIVE if loaded but not active; '
+                  'UNIT_NOT_LOADED if not loaded; TOOL_UNAVAILABLE if you cannot execute that exact command. Do not guess.'
+              )
+              status, stream = request('POST', f'/api/conversations/{conversation_id}/messages/stream', {
+                  'content': prompt,
+                  'artifactIds': [],
+              })
+              if status != 200:
+                  print(f'classification=STREAM_HTTP_{status}')
+                  sys.exit(2)
+              events = [json.loads(line) for line in stream.splitlines() if line.strip()]
+              statuses = [str(event.get('status') or '') for event in events if event.get('type') == 'run.status']
+              running = [item for item in statuses if item.startswith('tool.running:')]
+              completed = [item for item in statuses if item.startswith('tool.completed:')]
+              failed = [event for event in events if event.get('type') == 'run.failed']
+              answer = ''.join(str(event.get('delta') or '') for event in events if event.get('type') == 'content.delta').strip()
+              allowed = {'LOADED_ACTIVE','LOADED_INACTIVE','UNIT_NOT_LOADED','TOOL_UNAVAILABLE'}
+              if failed:
+                  print('classification=LETTA_RUN_FAILED')
+                  sys.exit(3)
+              if not running or not completed:
+                  print('classification=NO_TOOL_EVIDENCE')
+                  sys.exit(3)
+              if answer not in allowed:
+                  print('classification=NON_CANONICAL_LETTA_RESPONSE')
+                  sys.exit(3)
+              print(f'classification={answer}')
+              print('tool_evidence=true')
+          finally:
+              if conversation_id:
+                  try:
+                      request('PATCH', f'/api/conversations/{conversation_id}', {'status': 'trashed'}, timeout=30)
+                      request('DELETE', f'/api/conversations/{conversation_id}', timeout=30)
+                  except Exception:
+                      pass
+          PY
