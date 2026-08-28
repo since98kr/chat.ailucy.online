@@ -120,7 +120,7 @@ jobs:
           body="$(mktemp)"
           headers="$(mktemp)"
           trap 'rm -f "$body" "$headers"' EXIT
-          status="$(curl --silent --show-error \
+          status="$(curl --silent --show-error --connect-timeout 10 --max-time 30 \
             --output "$body" \
             --dump-header "$headers" \
             --write-out '%{http_code}' \
@@ -130,20 +130,17 @@ jobs:
           content_type="$(awk 'BEGIN { IGNORECASE=1 } /^content-type:/ { value=$0 } END { sub(/\r$/, "", value); sub(/^[^:]+:[[:space:]]*/, "", value); print value }' "$headers")"
           echo "Public health status=${status} content-type=${content_type:-missing}"
 
+          location="$(awk 'BEGIN { IGNORECASE=1 } /^location:/ { value=$0 } END { sub(/\r$/, "", value); sub(/^[^:]+:[[:space:]]*/, "", value); print value }' "$headers")"
           if [[ "$status" != '200' ]]; then
-            if [[ "$status" =~ ^3[0-9][0-9]$ || "$content_type" == text/html* ]] || grep -Eiq '<!doctype|<html' "$body"; then
-              echo "CLOUDFLARE_ACCESS_NOT_AUTHENTICATED: public health returned HTTP ${status}; response body intentionally not logged." >&2
+            if [[ "$status" =~ ^30(1|2|3|7|8)$ ]] && [[ "$location" == *cloudflareaccess.com* || "$location" == */cdn-cgi/access/login* ]]; then
+              echo "CLOUDFLARE_ACCESS_NOT_AUTHENTICATED: public health returned Access redirect HTTP ${status}; response body intentionally not logged." >&2
             else
               echo "PUBLIC_HEALTH_HTTP_${status}" >&2
             fi
             exit 1
           fi
           if [[ "$content_type" != application/json* ]]; then
-            if grep -Eiq '<!doctype|<html' "$body"; then
-              echo 'CLOUDFLARE_ACCESS_NOT_AUTHENTICATED: expected application/json, received HTML; response body intentionally not logged.' >&2
-            else
-              echo 'PUBLIC_HEALTH_NOT_JSON: expected application/json; response body intentionally not logged.' >&2
-            fi
+            echo 'PUBLIC_HEALTH_NOT_JSON: expected application/json; response body intentionally not logged.' >&2
             exit 1
           fi
           node -e "const fs=require('fs');const h=JSON.parse(fs.readFileSync(process.argv[1],'utf8'));if(h.ok!==true){console.error('PUBLIC_HEALTH_NOT_OK');process.exit(1)}" "$body"
