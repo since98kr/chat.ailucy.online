@@ -1,0 +1,33 @@
+name: AICOS Existing Token LHO Read Preflight
+
+on:
+  push:
+    branches:
+      - ops/wake-lho-runner-from-chat-staging-v1
+    paths:
+      - .github/workflows/aicos-lho-private-read-preflight.yml
+
+permissions:
+  contents: read
+
+jobs:
+  preflight:
+    runs-on: [self-hosted, linux, x64, chat-staging]
+    environment: staging
+    timeout-minutes: 5
+    steps:
+      - name: Verify existing AICOS token can read reviewed LHO runtime
+        shell: bash
+        run: |
+          set -euo pipefail
+          token="$(docker inspect --format '{{range .Config.Env}}{{println .}}{{end}}' aicos-app | sed -n 's/^AICOS_GITHUB_TOKEN=//p' | tail -n1)"
+          [[ -n "$token" ]]
+          expected='c567aea0abefbdbd2615704a1fc9891769042e4c'
+          observed="$(GH_TOKEN="$token" gh api "repos/since98kr/lucy-hermes-optimization/commits/${expected}" --jq .sha 2>/dev/null || true)"
+          unset token
+          if [[ "$observed" == "$expected" ]]; then
+            echo 'lho_private_read=true'
+          else
+            echo 'lho_private_read=false'
+            exit 1
+          fi
