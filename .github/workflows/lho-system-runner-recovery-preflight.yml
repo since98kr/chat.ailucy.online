@@ -1,0 +1,40 @@
+name: LHO System Runner Recovery Preflight
+
+on:
+  push:
+    branches:
+      - ops/wake-lho-runner-from-chat-staging-v1
+    paths:
+      - .github/workflows/lho-system-runner-recovery-preflight.yml
+
+permissions:
+  contents: read
+
+jobs:
+  preflight:
+    runs-on: [self-hosted, linux, x64, chat-staging]
+    environment: staging
+    timeout-minutes: 5
+    steps:
+      - name: Inspect exact system runner unit and existing sudo admission
+        shell: bash
+        run: |
+          set -euo pipefail
+          [[ "$(hostname -s)" == 'agentlucy' ]]
+          [[ "$(id -un)" == 'chat-runner' ]]
+          unit='actions.runner.since98kr-lucy-hermes-optimization.agentlucy.service'
+          systemctl_bin="$(command -v systemctl)"
+          load_state="$(systemctl show "$unit" --property=LoadState --value 2>/dev/null || true)"
+          active_state="$(systemctl show "$unit" --property=ActiveState --value 2>/dev/null || true)"
+          unit_file_state="$(systemctl show "$unit" --property=UnitFileState --value 2>/dev/null || true)"
+          sudo_show=false
+          sudo_start_admitted=false
+          if sudo -n "$systemctl_bin" show "$unit" --property=LoadState --value >/dev/null 2>&1; then
+            sudo_show=true
+          fi
+          if sudo -n -l "$systemctl_bin" start "$unit" >/dev/null 2>&1; then
+            sudo_start_admitted=true
+          fi
+          printf 'system_unit_load=%s\nsystem_unit_active=%s\nsystem_unit_file=%s\nsudo_show=%s\nsudo_start_admitted=%s\n' \
+            "${load_state:-unknown}" "${active_state:-unknown}" "${unit_file_state:-unknown}" "$sudo_show" "$sudo_start_admitted"
+          [[ "$load_state" == 'loaded' ]]
