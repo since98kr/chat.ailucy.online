@@ -125,6 +125,9 @@ jobs:
           HERMES_PROTOCOL: ${{ vars.HERMES_PROTOCOL }}
           HERMES_MODEL_MAP_JSON: ${{ vars.HERMES_MODEL_MAP_JSON }}
           HERMES_DOCKER_NETWORK: ${{ vars.HERMES_DOCKER_NETWORK }}
+          HERMES_READINESS_PROBE_ENABLED: ${{ vars.HERMES_READINESS_PROBE_ENABLED }}
+          HERMES_READINESS_PROBE_MODEL: ${{ vars.HERMES_READINESS_PROBE_MODEL }}
+          HERMES_READINESS_PROBE_PROMPT: ${{ vars.HERMES_READINESS_PROBE_PROMPT }}
         run: bash scripts/ops/staging-preflight.sh "$CHAT_PREFLIGHT_IMAGE" "$CHAT_PREFLIGHT_REVISION"
 
       - name: Publish preflight summary
