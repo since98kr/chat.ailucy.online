@@ -1,0 +1,46 @@
+name: AICOS Lucy Bridge Network Preflight
+
+on:
+  push:
+    branches:
+      - ops/wake-lho-runner-from-chat-staging-v1
+    paths:
+      - .github/workflows/aicos-bridge-network-preflight.yml
+
+permissions:
+  contents: read
+
+jobs:
+  preflight:
+    runs-on: [self-hosted, linux, x64, chat-staging]
+    environment: staging
+    timeout-minutes: 5
+    env:
+      LETTA_BASE_URL: ${{ vars.LETTA_BASE_URL }}
+      LETTA_API_KEY: ${{ secrets.LETTA_API_KEY }}
+    steps:
+      - name: Classify current and host-gateway bridge reachability
+        shell: bash
+        run: |
+          set -euo pipefail
+          [[ "$(hostname -s)" == 'agentlucy' ]]
+          [[ -n "${LETTA_API_KEY:-}" ]]
+          image_id="$(docker inspect --format '{{.Image}}' aicos-app)"
+          network_name="$(docker inspect --format '{{range $name, $cfg := .NetworkSettings.Networks}}{{println $name}}{{end}}' aicos-app | head -n1)"
+          [[ -n "$image_id" && -n "$network_name" ]]
+
+          current_code="$(docker exec \
+            -e BRIDGE_URL='http://172.17.0.1:18283' \
+            -e BRIDGE_TOKEN="$LETTA_API_KEY" \
+            aicos-app node -e "fetch(process.env.BRIDGE_URL+'/health',{headers:{Authorization:'Bearer '+process.env.BRIDGE_TOKEN}}).then(r=>console.log('HTTP_'+r.status)).catch(e=>console.log('ERR_'+String(e&&e.cause&&e.cause.code||e&&e.name||'UNKNOWN').replace(/[^A-Z0-9_]/gi,'_').slice(0,40)))" 2>/dev/null | tail -n1)"
+
+          disposable_code="$(docker run --rm \
+            --network "$network_name" \
+            --add-host host.docker.internal:host-gateway \
+            -e BRIDGE_TOKEN="$LETTA_API_KEY" \
+            --entrypoint node "$image_id" \
+            -e "fetch('http://host.docker.internal:18283/health',{headers:{Authorization:'Bearer '+process.env.BRIDGE_TOKEN}}).then(r=>console.log('HTTP_'+r.status)).catch(e=>console.log('ERR_'+String(e&&e.cause&&e.cause.code||e&&e.name||'UNKNOWN').replace(/[^A-Z0-9_]/gi,'_').slice(0,40)))" \
+            2>/dev/null | tail -n1)"
+
+          printf 'aicos_network=%s\ncurrent_bridge_result=%s\nhost_gateway_bridge_result=%s\n' "$network_name" "$current_code" "$disposable_code"
+          [[ "$disposable_code" == 'HTTP_200' ]]
