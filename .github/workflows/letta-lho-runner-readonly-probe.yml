@@ -16,23 +16,21 @@ jobs:
     environment: staging
     timeout-minutes: 5
     env:
-      CF_ACCESS_CLIENT_ID: ${{ vars.CF_ACCESS_CLIENT_ID }}
-      CF_ACCESS_CLIENT_SECRET: ${{ secrets.CF_ACCESS_CLIENT_SECRET }}
+      CHAT_STAGING_EMAIL: ${{ vars.CHAT_STAGING_EMAIL }}
     steps:
       - name: Run exact read-only user-service probe through Letta Lucy
         shell: bash
         run: |
           set -euo pipefail
           [[ "$(hostname -s)" == 'agentlucy' ]]
-          [[ -n "${CF_ACCESS_CLIENT_ID:-}" && -n "${CF_ACCESS_CLIENT_SECRET:-}" ]]
+          [[ -n "${CHAT_STAGING_EMAIL:-}" ]]
           command -v python3 >/dev/null
           python3 - <<'PY'
           import json, os, sys, time, urllib.request, urllib.error
 
           base = 'http://127.0.0.1:14174'
           headers = {
-              'CF-Access-Client-Id': os.environ['CF_ACCESS_CLIENT_ID'],
-              'CF-Access-Client-Secret': os.environ['CF_ACCESS_CLIENT_SECRET'],
+              'Cf-Access-Authenticated-User-Email': os.environ['CHAT_STAGING_EMAIL'],
               'Origin': base,
               'Content-Type': 'application/json',
           }
