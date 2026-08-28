@@ -130,7 +130,14 @@ jobs:
           content_type="$(awk 'BEGIN { IGNORECASE=1 } /^content-type:/ { value=$0 } END { sub(/\r$/, "", value); sub(/^[^:]+:[[:space:]]*/, "", value); print value }' "$headers")"
           echo "Public health status=${status} content-type=${content_type:-missing}"
 
-          [[ "$status" == '200' ]] || { echo "PUBLIC_HEALTH_HTTP_${status}" >&2; exit 1; }
+          if [[ "$status" != '200' ]]; then
+            if [[ "$status" =~ ^3[0-9][0-9]$ || "$content_type" == text/html* ]] || grep -Eiq '<!doctype|<html' "$body"; then
+              echo "CLOUDFLARE_ACCESS_NOT_AUTHENTICATED: public health returned HTTP ${status}; response body intentionally not logged." >&2
+            else
+              echo "PUBLIC_HEALTH_HTTP_${status}" >&2
+            fi
+            exit 1
+          fi
           if [[ "$content_type" != application/json* ]]; then
             if grep -Eiq '<!doctype|<html' "$body"; then
               echo 'CLOUDFLARE_ACCESS_NOT_AUTHENTICATED: expected application/json, received HTML; response body intentionally not logged.' >&2
