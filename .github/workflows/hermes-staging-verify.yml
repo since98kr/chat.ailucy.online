@@ -132,11 +132,10 @@ jobs:
 
           [[ "$status" == '200' ]] || { echo "PUBLIC_HEALTH_HTTP_${status}" >&2; exit 1; }
           if [[ "$content_type" != application/json* ]]; then
-            prefix="$(head -c 160 "$body" | tr '\r\n' ' ' | sed 's/[[:space:]]\+/ /g')"
             if grep -Eiq '<!doctype|<html' "$body"; then
-              echo "CLOUDFLARE_ACCESS_NOT_AUTHENTICATED: expected application/json, received HTML. body-prefix=${prefix}" >&2
+              echo 'CLOUDFLARE_ACCESS_NOT_AUTHENTICATED: expected application/json, received HTML; response body intentionally not logged.' >&2
             else
-              echo "PUBLIC_HEALTH_NOT_JSON: expected application/json. body-prefix=${prefix}" >&2
+              echo 'PUBLIC_HEALTH_NOT_JSON: expected application/json; response body intentionally not logged.' >&2
             fi
             exit 1
           fi
