@@ -1,0 +1,48 @@
+name: AICOS Production Recovery Preflight
+
+on:
+  push:
+    branches:
+      - ops/wake-lho-runner-from-chat-staging-v1
+    paths:
+      - .github/workflows/aicos-production-recovery-preflight.yml
+
+permissions:
+  contents: read
+
+jobs:
+  preflight:
+    runs-on: [self-hosted, linux, x64, chat-staging]
+    environment: staging
+    timeout-minutes: 5
+    env:
+      AICOS_TARGET_SHA: 1d341e399e637f4115fdcf8b9f225fc777e42344
+      LHO_CONTROL_SHA: 5101bc37caa129799893d9e23de8b3d779a69aa3
+      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+      CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+      CF_ACCESS_CLIENT_ID: ${{ vars.CF_ACCESS_CLIENT_ID }}
+      CF_ACCESS_CLIENT_SECRET: ${{ secrets.CF_ACCESS_CLIENT_SECRET }}
+    steps:
+      - name: Verify existing recovery capabilities without mutation
+        shell: bash
+        run: |
+          set -euo pipefail
+          [[ "$(hostname -s)" == 'agentlucy' ]]
+          [[ "$(id -un)" == 'chat-runner' ]]
+          command -v gh >/dev/null
+          command -v docker >/dev/null
+          docker version >/dev/null
+          docker compose version >/dev/null
+          docker inspect aicos-app >/dev/null
+          gh auth status >/dev/null 2>&1
+          aicos_sha="$(gh api "repos/since98kr/ai-collaboration-os/commits/${AICOS_TARGET_SHA}" --jq .sha)"
+          lho_sha="$(gh api "repos/since98kr/lucy-hermes-optimization/commits/${LHO_CONTROL_SHA}" --jq .sha)"
+          [[ "$aicos_sha" == "$AICOS_TARGET_SHA" ]]
+          [[ "$lho_sha" == "$LHO_CONTROL_SHA" ]]
+          deployed_sha="$(docker inspect --format '{{range .Config.Env}}{{println .}}{{end}}' aicos-app | sed -n 's/^AICOS_COMMIT_SHA=//p' | tail -n1)"
+          [[ -n "$deployed_sha" ]]
+          [[ -n "${CLOUDFLARE_API_TOKEN:-}" ]]
+          [[ -n "${CLOUDFLARE_ACCOUNT_ID:-}" ]]
+          [[ -n "${CF_ACCESS_CLIENT_ID:-}" ]]
+          [[ -n "${CF_ACCESS_CLIENT_SECRET:-}" ]]
+          printf 'host=agentlucy\nuser=chat-runner\ndocker=true\naicos_private_repo_read=true\nlho_private_repo_read=true\ncloudflare_management=true\naccess_service_identity=true\ncurrent_deployed_sha=%s\n' "$deployed_sha"
