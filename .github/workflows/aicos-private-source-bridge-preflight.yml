@@ -1,0 +1,64 @@
+name: AICOS Private Source and Lucy Bridge Preflight
+
+on:
+  push:
+    branches:
+      - ops/wake-lho-runner-from-chat-staging-v1
+    paths:
+      - .github/workflows/aicos-private-source-bridge-preflight.yml
+
+permissions:
+  contents: read
+
+jobs:
+  preflight:
+    runs-on: [self-hosted, linux, x64, chat-staging]
+    environment: staging
+    timeout-minutes: 5
+    env:
+      AICOS_TARGET_SHA: 1d341e399e637f4115fdcf8b9f225fc777e42344
+      LETTA_BASE_URL: ${{ vars.LETTA_BASE_URL }}
+      LETTA_API_KEY: ${{ secrets.LETTA_API_KEY }}
+    steps:
+      - name: Prove existing source credential and private bridge reachability
+        shell: bash
+        run: |
+          set -euo pipefail
+          [[ "$(hostname -s)" == 'agentlucy' ]]
+          [[ -n "${LETTA_BASE_URL:-}" && -n "${LETTA_API_KEY:-}" ]]
+          docker inspect aicos-app >/dev/null
+
+          aicos_token="$(docker inspect --format '{{range .Config.Env}}{{println .}}{{end}}' aicos-app | sed -n 's/^AICOS_GITHUB_TOKEN=//p' | tail -n1)"
+          [[ -n "$aicos_token" ]]
+          private_source=false
+          if GH_TOKEN="$aicos_token" gh api "repos/since98kr/ai-collaboration-os/commits/${AICOS_TARGET_SHA}" --jq .sha 2>/dev/null | grep -qx "$AICOS_TARGET_SHA"; then
+            private_source=true
+          fi
+          unset aicos_token
+
+          bridge_url="${LETTA_BASE_URL%/}"
+          if [[ "$bridge_url" == *host.docker.internal* ]]; then
+            gateway="$(docker network inspect bridge --format '{{(index .IPAM.Config 0).Gateway}}')"
+            [[ -n "$gateway" ]]
+            bridge_url="${bridge_url/host.docker.internal/${gateway}}"
+          fi
+
+          host_bridge=false
+          if curl -fsS --max-time 10 -H "Authorization: Bearer ${LETTA_API_KEY}" "${bridge_url}/health" >/dev/null 2>&1; then
+            host_bridge=true
+          fi
+
+          container_bridge=false
+          if docker exec \
+              -e AICOS_LUCY_BRIDGE_URL="$bridge_url" \
+              -e AICOS_LUCY_BRIDGE_TOKEN="$LETTA_API_KEY" \
+              aicos-app node -e "const b=(process.env.AICOS_LUCY_BRIDGE_URL||'').replace(/\\\/$/,''); const t=process.env.AICOS_LUCY_BRIDGE_TOKEN||''; fetch(b+'/health',{headers:{Authorization:'Bearer '+t}}).then(r=>{if(!r.ok)process.exit(2)}).catch(()=>process.exit(2))" \
+              >/dev/null 2>&1; then
+            container_bridge=true
+          fi
+
+          printf 'private_source_with_existing_app_token=%s\nbridge_secret_present=true\nhost_bridge_reachable=%s\naicos_container_bridge_reachable=%s\n' \
+            "$private_source" "$host_bridge" "$container_bridge"
+          [[ "$private_source" == true ]]
+          [[ "$host_bridge" == true ]]
+          [[ "$container_bridge" == true ]]
