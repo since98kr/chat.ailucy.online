@@ -1,5 +1,6 @@
 import type { SystemId } from '../../shared/contracts.js';
 import { httpAdapterConfig } from './http.js';
+import { openClawLettaConfigFromEnv } from './openclaw-letta.js';
 
 export type AdapterReadinessRecord = {
   ok: boolean;
@@ -67,48 +68,73 @@ export async function probeAdapterReadiness(systemId: SystemId): Promise<Adapter
   if (!readinessProbeEnabled(systemId)) return null;
 
   const prefix = systemId.toUpperCase();
-  const config = httpAdapterConfig(systemId);
-  if (!config) {
-    return {
-      ok: false,
-      detail: `${prefix}_BASE_URL is required for the generation readiness probe`,
-      latencyMs: 0,
-    };
-  }
-
-  const model = process.env[`${prefix}_READINESS_PROBE_MODEL`]?.trim()
-    || Object.values(config.modelMap ?? {})[0]
-    || config.agentId?.trim()
-    || '';
-  if (config.protocol === 'openai' && !model) {
-    return {
-      ok: false,
-      detail: `${prefix}_MODEL_MAP_JSON or ${prefix}_READINESS_PROBE_MODEL is required for the generation readiness probe`,
-      latencyMs: 0,
-    };
-  }
-
   const prompt = process.env[`${prefix}_READINESS_PROBE_PROMPT`]?.trim() || 'ping';
-  const body = config.protocol === 'openai'
-    ? { model, messages: [{ role: 'user', content: prompt }], stream: false, max_tokens: 1 }
-    : {
-      stream: false,
-      system_id: systemId,
-      agent_id: model || config.agentId,
+  const openClawLetta = systemId === 'letta'
+    && (process.env.LETTA_PROTOCOL ?? '').trim().toLowerCase() === 'openclaw';
+
+  let baseUrl: string;
+  let chatPath: string;
+  let apiKey: string | undefined;
+  let timeoutMs: number;
+  let body: Record<string, unknown>;
+
+  if (openClawLetta) {
+    const config = openClawLettaConfigFromEnv();
+    baseUrl = config.baseUrl;
+    chatPath = config.chatPath;
+    apiKey = config.apiKey;
+    timeoutMs = config.timeoutMs;
+    body = {
+      model: process.env.LETTA_READINESS_PROBE_MODEL?.trim() || config.agentTarget,
+      user: `${config.sessionPrefix}:readiness-probe`,
       messages: [{ role: 'user', content: prompt }],
-      metadata: { source: 'chat.ailucy.online', probe: 'generation-readiness' },
+      stream: false,
     };
+  } else {
+    const config = httpAdapterConfig(systemId);
+    if (!config) {
+      return {
+        ok: false,
+        detail: `${prefix}_BASE_URL is required for the generation readiness probe`,
+        latencyMs: 0,
+      };
+    }
+    const model = process.env[`${prefix}_READINESS_PROBE_MODEL`]?.trim()
+      || Object.values(config.modelMap ?? {})[0]
+      || config.agentId?.trim()
+      || '';
+    if (config.protocol === 'openai' && !model) {
+      return {
+        ok: false,
+        detail: `${prefix}_MODEL_MAP_JSON or ${prefix}_READINESS_PROBE_MODEL is required for the generation readiness probe`,
+        latencyMs: 0,
+      };
+    }
+    baseUrl = config.baseUrl;
+    chatPath = config.chatPath;
+    apiKey = config.apiKey;
+    timeoutMs = config.timeoutMs;
+    body = config.protocol === 'openai'
+      ? { model, messages: [{ role: 'user', content: prompt }], stream: false, max_tokens: 1 }
+      : {
+        stream: false,
+        system_id: systemId,
+        agent_id: model || config.agentId,
+        messages: [{ role: 'user', content: prompt }],
+        metadata: { source: 'chat.ailucy.online', probe: 'generation-readiness' },
+      };
+  }
 
   const started = performance.now();
   const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), config.timeoutMs);
+  const timeout = setTimeout(() => controller.abort(), timeoutMs);
   try {
-    const response = await fetch(`${trimSlash(config.baseUrl)}${normalizePath(config.chatPath)}`, {
+    const response = await fetch(`${trimSlash(baseUrl)}${normalizePath(chatPath)}`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
         Accept: 'application/x-ndjson, text/event-stream, application/json',
-        ...(config.apiKey ? { Authorization: `Bearer ${config.apiKey}` } : {}),
+        ...(apiKey ? { Authorization: `Bearer ${apiKey}` } : {}),
       },
       signal: controller.signal,
       body: JSON.stringify(body),
