@@ -1,0 +1,53 @@
+name: AICOS Production Environment Presence
+
+on:
+  push:
+    branches:
+      - ops/wake-lho-runner-from-chat-staging-v1
+    paths:
+      - .github/workflows/aicos-production-env-presence.yml
+
+permissions:
+  contents: read
+
+jobs:
+  inspect:
+    runs-on: [self-hosted, linux, x64, chat-staging]
+    environment: staging
+    timeout-minutes: 5
+    steps:
+      - name: Report only allowlisted environment-key presence
+        shell: bash
+        run: |
+          set -euo pipefail
+          [[ "$(hostname -s)" == 'agentlucy' ]]
+          docker inspect aicos-app >/dev/null
+          python3 - <<'PY'
+          import json, subprocess
+          keys = [
+            'AICOS_GITHUB_TOKEN',
+            'AICOS_LUCY_BRIDGE_URL',
+            'AICOS_LUCY_BRIDGE_TOKEN',
+            'AICOS_LUCY_CHAT_ENABLED',
+            'AICOS_LUCY_REQUEST_TIMEOUT_MS',
+            'DATABASE_URL',
+            'HERMES_ENABLE_RUNS',
+            'HERMES_SUBMIT_RUN_ALLOWED',
+            'HERMES_TOOL_EXECUTION_ALLOWED',
+          ]
+          raw = subprocess.check_output(['docker','inspect','aicos-app'], text=True)
+          data = json.loads(raw)[0]
+          env = {}
+          for item in (data.get('Config') or {}).get('Env') or []:
+            if '=' in item:
+              key, value = item.split('=',1)
+              if key in keys:
+                env[key] = value
+          for key in keys:
+            if key in {'HERMES_ENABLE_RUNS','HERMES_SUBMIT_RUN_ALLOWED','HERMES_TOOL_EXECUTION_ALLOWED'}:
+              print(f'{key.lower()}_safe={str(env.get(key,"false").lower()=="false").lower()}')
+            elif key == 'AICOS_LUCY_CHAT_ENABLED':
+              print(f'aicos_lucy_chat_enabled_true={str(env.get(key,"").lower() in {"1","true","yes","on"}).lower()}')
+            else:
+              print(f'{key.lower()}_present={str(bool(env.get(key))).lower()}')
+          PY
