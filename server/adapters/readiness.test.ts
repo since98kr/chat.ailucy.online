@@ -1,5 +1,10 @@
-import { describe, expect, it } from 'vitest';
-import { readinessPayloadError, readinessStreamError, sanitizeReadinessDetail } from './readiness.js';
+import { afterEach, describe, expect, it, vi } from 'vitest';
+import { probeAdapterReadiness, readinessPayloadError, readinessStreamError, sanitizeReadinessDetail } from './readiness.js';
+
+afterEach(() => {
+  vi.unstubAllGlobals();
+  vi.unstubAllEnvs();
+});
 
 describe('readinessPayloadError', () => {
   it('extracts a string error field', () => {
@@ -71,5 +76,36 @@ describe('sanitizeReadinessDetail', () => {
 
   it('truncates long details to 500 characters', () => {
     expect(sanitizeReadinessDetail('x'.repeat(900))).toHaveLength(500);
+  });
+});
+
+
+describe('probeAdapterReadiness', () => {
+  it('uses the canonical OpenClaw Letta target for generation readiness', async () => {
+    const fetchMock = vi.fn(async (
+      _input: Parameters<typeof fetch>[0],
+      _init?: Parameters<typeof fetch>[1],
+    ) => new Response(
+      JSON.stringify({ choices: [{ message: { content: 'pong' } }] }),
+      { status: 200, headers: { 'Content-Type': 'application/json' } },
+    ));
+    vi.stubGlobal('fetch', fetchMock);
+    vi.stubEnv('LETTA_READINESS_PROBE_ENABLED', 'true');
+    vi.stubEnv('LETTA_PROTOCOL', 'openclaw');
+    vi.stubEnv('LETTA_BASE_URL', 'http://127.0.0.1:18792');
+    vi.stubEnv('LETTA_CHAT_PATH', '/v1/chat/completions');
+    vi.stubEnv('LETTA_OPENCLAW_AGENT_TARGET', 'openclaw/main');
+    vi.stubEnv('LETTA_OPENCLAW_SESSION_PREFIX', 'chat-v2');
+
+    const result = await probeAdapterReadiness('letta');
+    expect(result?.ok).toBe(true);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    const [, init] = fetchMock.mock.calls[0] ?? [];
+    const body = JSON.parse(String(init?.body ?? '{}'));
+    expect(body).toMatchObject({
+      model: 'openclaw/main',
+      user: 'chat-v2:readiness-probe',
+      stream: false,
+    });
   });
 });
