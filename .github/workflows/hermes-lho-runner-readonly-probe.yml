@@ -27,6 +27,7 @@ jobs:
           set -euo pipefail
           [[ "$(hostname -s)" == 'agentlucy' ]]
           [[ -n "${HERMES_BASE_URL:-}" && -n "${HERMES_API_KEY:-}" ]]
+          command -v python3 >/dev/null
           base="${HERMES_BASE_URL%/}"
           if [[ "$base" == *host.docker.internal* ]]; then
             gateway="$(docker network inspect bridge --format '{{(index .IPAM.Config 0).Gateway}}')"
@@ -35,30 +36,51 @@ jobs:
           fi
           export HERMES_REQUEST_URL="${base}${HERMES_CHAT_PATH:-/v1/chat/completions}"
           export HERMES_PROMPT='This is an authorized read-only execution-plane recovery probe on host agentlucy. If and only if you have a bounded shell/terminal tool, execute exactly this single command and no other command: systemctl --user show actions.runner.since98kr-lucy-hermes-optimization.agentlucy.service --property=LoadState --property=ActiveState. Do not read files, environment variables, credentials, network, Docker, journals, or any other service. Then answer with exactly one token: LOADED_ACTIVE if LoadState=loaded and ActiveState=active; LOADED_INACTIVE if LoadState=loaded and ActiveState is not active; UNIT_NOT_LOADED if LoadState is not loaded; TOOL_UNAVAILABLE if you cannot execute the exact command. Do not guess.'
-          node <<'NODE'
-          const url = process.env.HERMES_REQUEST_URL;
-          const key = process.env.HERMES_API_KEY;
-          const prompt = process.env.HERMES_PROMPT;
-          const map = JSON.parse(process.env.HERMES_MODEL_MAP_JSON || '{}');
-          const model = map['[Hermes] Lucy'] || 'hermes-agent';
-          const response = await fetch(url, {
-            method: 'POST',
-            headers: {authorization: `Bearer ${key}`, 'content-type': 'application/json'},
-            body: JSON.stringify({model, stream: false, messages: [{role: 'user', content: prompt}]}),
-            signal: AbortSignal.timeout(120000),
-          });
-          if (!response.ok) {
-            console.log(`classification=HERMES_HTTP_${response.status}`);
-            process.exit(2);
-          }
-          const payload = await response.json();
-          let content = payload?.choices?.[0]?.message?.content;
-          if (Array.isArray(content)) content = content.map((part) => typeof part === 'string' ? part : part?.text || '').join('');
-          content = String(content || '').trim();
-          const allowed = new Set(['LOADED_ACTIVE','LOADED_INACTIVE','UNIT_NOT_LOADED','TOOL_UNAVAILABLE']);
-          if (!allowed.has(content)) {
-            console.log('classification=NON_CANONICAL_HERMES_RESPONSE');
-            process.exit(3);
-          }
-          console.log(`classification=${content}`);
-          NODE
+          python3 - <<'PY'
+          import json, os, sys, urllib.request, urllib.error
+
+          url = os.environ['HERMES_REQUEST_URL']
+          key = os.environ['HERMES_API_KEY']
+          prompt = os.environ['HERMES_PROMPT']
+          try:
+              model_map = json.loads(os.environ.get('HERMES_MODEL_MAP_JSON') or '{}')
+          except Exception:
+              model_map = {}
+          model = model_map.get('[Hermes] Lucy') or 'hermes-agent'
+          body = json.dumps({
+              'model': model,
+              'stream': False,
+              'messages': [{'role': 'user', 'content': prompt}],
+          }).encode('utf-8')
+          request = urllib.request.Request(
+              url,
+              data=body,
+              method='POST',
+              headers={
+                  'Authorization': f'Bearer {key}',
+                  'Content-Type': 'application/json',
+              },
+          )
+          try:
+              with urllib.request.urlopen(request, timeout=120) as response:
+                  status = response.status
+                  payload = json.load(response)
+          except urllib.error.HTTPError as error:
+              print(f'classification=HERMES_HTTP_{error.code}')
+              sys.exit(2)
+          except Exception:
+              print('classification=HERMES_REQUEST_FAILED')
+              sys.exit(2)
+          if status != 200:
+              print(f'classification=HERMES_HTTP_{status}')
+              sys.exit(2)
+          content = (((payload.get('choices') or [{}])[0].get('message') or {}).get('content'))
+          if isinstance(content, list):
+              content = ''.join(part if isinstance(part, str) else str(part.get('text') or '') for part in content)
+          content = str(content or '').strip()
+          allowed = {'LOADED_ACTIVE', 'LOADED_INACTIVE', 'UNIT_NOT_LOADED', 'TOOL_UNAVAILABLE'}
+          if content not in allowed:
+              print('classification=NON_CANONICAL_HERMES_RESPONSE')
+              sys.exit(3)
+          print(f'classification={content}')
+          PY
