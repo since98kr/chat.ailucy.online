@@ -105,6 +105,46 @@ jobs:
             --grep 'Hermes|real Hermes returns' \
             --config playwright.staging.config.ts
 
+      - name: Preflight public Cloudflare service authentication
+        shell: bash
+        env:
+          CHAT_STAGING_BASE_URL: ${{ vars.CHAT_PUBLIC_ORIGIN }}
+          CF_ACCESS_CLIENT_ID: ${{ vars.CF_ACCESS_CLIENT_ID }}
+          CF_ACCESS_CLIENT_SECRET: ${{ secrets.CF_ACCESS_CLIENT_SECRET }}
+        run: |
+          set -euo pipefail
+          [[ -n "${CHAT_STAGING_BASE_URL:-}" ]] || { echo 'CHAT_PUBLIC_ORIGIN is empty' >&2; exit 1; }
+          [[ -n "${CF_ACCESS_CLIENT_ID:-}" ]] || { echo 'CF_ACCESS_CLIENT_ID is empty' >&2; exit 1; }
+          [[ -n "${CF_ACCESS_CLIENT_SECRET:-}" ]] || { echo 'CF_ACCESS_CLIENT_SECRET is empty' >&2; exit 1; }
+
+          body="$(mktemp)"
+          headers="$(mktemp)"
+          trap 'rm -f "$body" "$headers"' EXIT
+          status="$(curl --silent --show-error --connect-timeout 10 --max-time 30 \
+            --output "$body" \
+            --dump-header "$headers" \
+            --write-out '%{http_code}' \
+            -H "CF-Access-Client-Id: ${CF_ACCESS_CLIENT_ID}" \
+            -H "CF-Access-Client-Secret: ${CF_ACCESS_CLIENT_SECRET}" \
+            "${CHAT_STAGING_BASE_URL%/}/api/health")"
+          content_type="$(awk 'BEGIN { IGNORECASE=1 } /^content-type:/ { value=$0 } END { sub(/\r$/, "", value); sub(/^[^:]+:[[:space:]]*/, "", value); print value }' "$headers")"
+          echo "Public health status=${status} content-type=${content_type:-missing}"
+
+          location="$(awk 'BEGIN { IGNORECASE=1 } /^location:/ { value=$0 } END { sub(/\r$/, "", value); sub(/^[^:]+:[[:space:]]*/, "", value); print value }' "$headers")"
+          if [[ "$status" != '200' ]]; then
+            if [[ "$status" =~ ^30(1|2|3|7|8)$ ]] && [[ "$location" == *cloudflareaccess.com* || "$location" == */cdn-cgi/access/login* ]]; then
+              echo "CLOUDFLARE_ACCESS_NOT_AUTHENTICATED: public health returned Access redirect HTTP ${status}; response body intentionally not logged." >&2
+            else
+              echo "PUBLIC_HEALTH_HTTP_${status}" >&2
+            fi
+            exit 1
+          fi
+          if [[ "$content_type" != application/json* ]]; then
+            echo 'PUBLIC_HEALTH_NOT_JSON: expected application/json; response body intentionally not logged.' >&2
+            exit 1
+          fi
+          node -e "const fs=require('fs');const h=JSON.parse(fs.readFileSync(process.argv[1],'utf8'));if(h.ok!==true){console.error('PUBLIC_HEALTH_NOT_OK');process.exit(1)}" "$body"
+
       - name: Verify public Cloudflare Hermes API, generated artifact, UI, and persistence
         shell: bash
         env:
