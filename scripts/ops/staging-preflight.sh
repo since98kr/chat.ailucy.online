@@ -51,6 +51,24 @@ if command -v ss >/dev/null 2>&1 && ss -ltn "sport = :${PORT}" | tail -n +2 | gr
   fi
 fi
 
+# The compose file supports both native and OpenClaw-backed Letta, so a
+# protocol-specific path must not be silently selected by a generic compose
+# fallback. Fail before container start when OpenClaw is selected without its
+# canonical OpenAI-compatible chat path. This protects against a deleted,
+# renamed, or empty environment value regressing to /v1/chat/stream.
+LETTA_PROTOCOL_NORMALIZED="$(printf '%s' "${LETTA_PROTOCOL:-native}" | tr '[:upper:]' '[:lower:]')"
+LETTA_PROTOCOL_NORMALIZED="${LETTA_PROTOCOL_NORMALIZED#"${LETTA_PROTOCOL_NORMALIZED%%[![:space:]]*}"}"
+LETTA_PROTOCOL_NORMALIZED="${LETTA_PROTOCOL_NORMALIZED%"${LETTA_PROTOCOL_NORMALIZED##*[![:space:]]}"}"
+LETTA_CHAT_PATH_TRIMMED="${LETTA_CHAT_PATH:-}"
+LETTA_CHAT_PATH_TRIMMED="${LETTA_CHAT_PATH_TRIMMED#"${LETTA_CHAT_PATH_TRIMMED%%[![:space:]]*}"}"
+LETTA_CHAT_PATH_TRIMMED="${LETTA_CHAT_PATH_TRIMMED%"${LETTA_CHAT_PATH_TRIMMED##*[![:space:]]}"}"
+if [[ "${LETTA_PROTOCOL_NORMALIZED}" == 'openclaw' ]]; then
+  [[ -n "${LETTA_CHAT_PATH_TRIMMED}" ]] \
+    || fail 'LETTA_CHAT_PATH must be explicitly set for LETTA_PROTOCOL=openclaw'
+  [[ "${LETTA_CHAT_PATH_TRIMMED}" == '/v1/chat/completions' ]] \
+    || fail "LETTA_PROTOCOL=openclaw requires LETTA_CHAT_PATH=/v1/chat/completions, found ${LETTA_CHAT_PATH_TRIMMED}"
+fi
+
 ENV_VARS=(
   CHAT_ENVIRONMENT CHAT_PUBLIC_ORIGIN CHAT_ALLOWED_ORIGIN CHAT_AUTH_MODE CHAT_ALLOWED_EMAILS
   CHAT_ALLOWED_SERVICE_CLIENT_IDS CHAT_CF_ACCESS_ISSUER CHAT_CF_ACCESS_AUD CHAT_ACCESS_TOKEN
