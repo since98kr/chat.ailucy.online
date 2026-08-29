@@ -57,6 +57,8 @@ fi
 # canonical OpenAI-compatible chat path. This protects against a deleted,
 # renamed, or empty environment value regressing to /v1/chat/stream.
 LETTA_PROTOCOL_NORMALIZED="$(printf '%s' "${LETTA_PROTOCOL:-native}" | tr '[:upper:]' '[:lower:]')"
+LETTA_PROTOCOL_NORMALIZED="${LETTA_PROTOCOL_NORMALIZED#"${LETTA_PROTOCOL_NORMALIZED%%[![:space:]]*}"}"
+LETTA_PROTOCOL_NORMALIZED="${LETTA_PROTOCOL_NORMALIZED%"${LETTA_PROTOCOL_NORMALIZED##*[![:space:]]}"}"
 LETTA_CHAT_PATH_TRIMMED="${LETTA_CHAT_PATH:-}"
 LETTA_CHAT_PATH_TRIMMED="${LETTA_CHAT_PATH_TRIMMED#"${LETTA_CHAT_PATH_TRIMMED%%[![:space:]]*}"}"
 LETTA_CHAT_PATH_TRIMMED="${LETTA_CHAT_PATH_TRIMMED%"${LETTA_CHAT_PATH_TRIMMED##*[![:space:]]}"}"
