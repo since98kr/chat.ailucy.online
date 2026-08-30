@@ -71,6 +71,7 @@ export function useChat() {
   const draftTimerRef = useRef<number | null>(null);
   const searchTimerRef = useRef<number | null>(null);
   const activeIdRef = useRef<string | null>(null);
+  const suppressNextSelectionRefreshRef = useRef(false);
 
   useEffect(() => {
     activeIdRef.current = activeConversation?.id ?? null;
@@ -83,6 +84,9 @@ export function useChat() {
   }, [activeConversation?.id]);
 
   const applyDetail = useCallback((detail: ConversationDetail) => {
+    // Imperative navigation must publish its identity synchronously so a
+    // selection refresh cannot race it and restore an older Conversation.
+    activeIdRef.current = detail.id;
     setActiveConversation(detail);
     setActiveAgent(detail.agentId);
     setPendingArtifactIds(detail.artifacts.filter((artifact) => !artifact.messageId).map((artifact) => artifact.id));
@@ -117,6 +121,10 @@ export function useChat() {
   );
 
   useEffect(() => {
+    if (suppressNextSelectionRefreshRef.current) {
+      suppressNextSelectionRefreshRef.current = false;
+      return;
+    }
     let cancelled = false;
     setLoading(true);
     setError(null);
@@ -184,6 +192,9 @@ export function useChat() {
   const createFederatedConversation = useCallback(async () => {
     abortRef.current?.abort();
     setError(null);
+    if (selectedSystem !== 'hermes' || selectedStatus !== 'active') {
+      suppressNextSelectionRefreshRef.current = true;
+    }
     setSelectedSystem('hermes');
     setSelectedStatus('active');
     setActiveAgent('[Hermes] Lucy');
@@ -195,12 +206,15 @@ export function useChat() {
     });
     setConversations((current) => [detail, ...current]);
     return applyDetail(detail);
-  }, [applyDetail]);
+  }, [applyDetail, selectedStatus, selectedSystem]);
 
   const openAgentConversation = useCallback(async (systemId: SystemId, agentId: string) => {
     abortRef.current?.abort();
     setLoading(true);
     setError(null);
+    if (selectedSystem !== systemId || selectedStatus !== 'active') {
+      suppressNextSelectionRefreshRef.current = true;
+    }
     setSelectedSystem(systemId);
     setSelectedStatus('active');
     setActiveAgent(agentId);
@@ -222,7 +236,7 @@ export function useChat() {
     } finally {
       setLoading(false);
     }
-  }, [applyDetail, loadConversation]);
+  }, [applyDetail, loadConversation, selectedStatus, selectedSystem]);
 
   const branchConversation = useCallback(async (fromMessageId?: string | null) => {
     if (!activeIdRef.current) return null;
