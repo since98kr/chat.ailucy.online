@@ -1,3 +1,4 @@
+import type { ConversationOperatingContext } from '../shared/conversation-operating-context';
 import type {
   AgentRecord,
   ArtifactRecord,
@@ -134,6 +135,13 @@ export async function searchConversations(
 export async function getConversation(id: string) {
   const response = await requestJson<{ conversation: ConversationDetail }>(`/api/conversations/${id}`);
   return response.conversation;
+}
+
+export async function getConversationOperatingContext(id: string) {
+  const response = await requestJson<{ operatingContext: ConversationOperatingContext }>(
+    `/api/conversations/${id}/operating-context`,
+  );
+  return response.operatingContext;
 }
 
 export async function createConversation(input: CreateConversationInput) {

@@ -8,6 +8,7 @@ import type {
 } from './types.js';
 import { extractArtifactText } from './document-text.js';
 import { OpenAiArtifactToolAccumulator, RETURN_ARTIFACT_TOOL } from './openai-artifact-tool.js';
+import { operatingContextSystemMessage, safeOperatingContextSnapshot } from './operating-context.js';
 import {
   approvedAdapterCapabilities,
   authorizeSelectedAgentExecution,
@@ -178,6 +179,9 @@ function attachmentText(artifacts: SerializedArtifact[]) {
 function toOpenAiMessages(request: AdapterRequest, artifacts: SerializedArtifact[]) {
   const messages: OpenAiMessage[] = [];
   const capsules = request.memoryCapsules ?? [];
+  const operatingContext = operatingContextSystemMessage(request.operatingContext);
+
+  if (operatingContext) messages.push({ role: 'system', content: operatingContext });
 
   if (capsules.length > 0) {
     messages.push({
@@ -430,6 +434,7 @@ export class HttpAgentAdapter implements ChatBackendAdapter {
         })),
         cross_agent_isolation: 'selected-agent-only',
       },
+      operating_context: safeOperatingContextSnapshot(request.operatingContext),
       memory_capsules: (request.memoryCapsules ?? []).map((capsule) => ({
         capsule_id: capsule.id,
         source_system_id: capsule.sourceSystemId,

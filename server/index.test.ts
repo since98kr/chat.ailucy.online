@@ -95,6 +95,75 @@ describe('Chat Core API', () => {
     expect(messages[1].state).toBe('complete');
   });
 
+  it('persists a server-owned operating context and binds continuation without replacing the active task', async () => {
+    const created = await app.inject({
+      method: 'POST',
+      url: '/api/conversations',
+      payload: { systemId: 'letta', agentId: '[Letta] Lucy' },
+    });
+    const id = created.json().conversation.id as string;
+
+    const initial = await app.inject({ method: 'GET', url: `/api/conversations/${id}/operating-context` });
+    expect(initial.statusCode).toBe(200);
+    expect(initial.json().operatingContext).toMatchObject({
+      conversationId: id,
+      backendSystem: 'letta',
+      agentId: '[Letta] Lucy',
+      activeTask: null,
+      continuationTarget: null,
+      pendingApproval: null,
+    });
+
+    const first = await app.inject({
+      method: 'POST',
+      url: `/api/conversations/${id}/messages/stream`,
+      payload: { content: '실제 첫 작업을 이 대화의 중심으로 유지해줘.' },
+    });
+    expect(first.statusCode).toBe(200);
+    const afterFirst = (await app.inject({ method: 'GET', url: `/api/conversations/${id}/operating-context` })).json().operatingContext;
+    expect(afterFirst.activeTask.label).toContain('실제 첫 작업');
+    expect(afterFirst.continuationTarget.sessionIdentity).toBe(afterFirst.sessionIdentity);
+    expect(afterFirst.statusTruth.at(-1)).toMatchObject({ classification: 'FACT' });
+
+    const continued = await app.inject({
+      method: 'POST',
+      url: `/api/conversations/${id}/messages/stream`,
+      payload: { content: '계속해' },
+    });
+    expect(continued.statusCode).toBe(200);
+    const afterContinue = (await app.inject({ method: 'GET', url: `/api/conversations/${id}/operating-context` })).json().operatingContext;
+    expect(afterContinue.activeTask).toEqual(afterFirst.activeTask);
+    expect(afterContinue.continuationTarget).toEqual(afterFirst.continuationTarget);
+  });
+
+  it('fails closed for unbound continuation and bare approval before creating a message', async () => {
+    const created = await app.inject({
+      method: 'POST',
+      url: '/api/conversations',
+      payload: { systemId: 'letta', agentId: '[Letta] Lucy' },
+    });
+    const id = created.json().conversation.id as string;
+
+    const continuation = await app.inject({
+      method: 'POST',
+      url: `/api/conversations/${id}/messages/stream`,
+      payload: { content: '계속해' },
+    });
+    expect(continuation.statusCode).toBe(409);
+    expect(continuation.json()).toMatchObject({ error: 'CONTINUATION_BINDING_FAILED', reason: 'NO_CONTINUATION_TARGET' });
+
+    const approval = await app.inject({
+      method: 'POST',
+      url: `/api/conversations/${id}/messages/stream`,
+      payload: { content: '승인' },
+    });
+    expect(approval.statusCode).toBe(409);
+    expect(approval.json()).toMatchObject({ error: 'APPROVAL_BINDING_FAILED', reason: 'NO_PENDING_APPROVAL' });
+
+    const detail = await app.inject({ method: 'GET', url: `/api/conversations/${id}` });
+    expect(detail.json().conversation.messages).toHaveLength(0);
+  });
+
   it('searches message content and branches a Conversation at a selected message', async () => {
     const created = await app.inject({
       method: 'POST',

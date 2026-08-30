@@ -12,6 +12,8 @@ import { artifactDeliveryEvent, classifyArtifactDeliveryFailure } from './artifa
 import { storeGeneratedArtifact } from './artifacts.js';
 import type { CollaborationService } from './collaboration.js';
 import type { ChatDatabase } from './database.js';
+import type { ConversationOperatingIntent } from './conversation-intent.js';
+import { providerSessionIdentity } from './provider-session-identity.js';
 
 export type CollaborationRunInput = {
   database: ChatDatabase;
@@ -32,6 +34,7 @@ export type CollaborationRunInput = {
   idempotencyKey?: string;
   /** Optional durable workflow run identity when this direct runner is resumed by a coordinator. */
   workflowRunId?: string;
+  operatingIntent?: ConversationOperatingIntent;
 };
 
 function participantWorkState(agentId: string) {
@@ -64,13 +67,7 @@ function historyForSelectedAgent(
 }
 
 export function sessionIdentity(conversation: ConversationRecord, agentId: string, requestedSessionId?: string) {
-  const requested = requestedSessionId?.trim();
-  // A caller identity names a logical conversation request, not a provider
-  // session. Namespace it with the selected agent so team members cannot
-  // resume or overwrite one another's provider session.
-  return requested
-    ? `${conversation.systemId}:${conversation.id}:${agentId}:caller-session:${requested}`
-    : `${conversation.systemId}:${conversation.id}:${agentId}`;
+  return providerSessionIdentity(conversation, agentId, requestedSessionId);
 }
 
 export function operationIdentity(input: CollaborationRunInput, agentId: string, sessionId: string) {
@@ -98,6 +95,10 @@ export async function* runCollaborativeReply(input: CollaborationRunInput): Asyn
     ? forcedRouting(input.forcedAgentId)
     : collaboration.resolveRouting(conversation, userMessage.content, sendInput.targetAgentIds ?? []);
   let participants = collaboration.ensureRoutingParticipants(conversation, routing);
+
+  if ((input.operatingIntent ?? 'ordinary') === 'ordinary' && routing.leadAgentId === conversation.agentId) {
+    database.bindConversationTask(conversation.id, userMessage.id, userMessage.content);
+  }
 
   if (!input.suppressUserAccepted) yield { type: 'message.accepted', message: userMessage };
   if (attachedArtifacts.length && !input.suppressUserAccepted) {
@@ -185,6 +186,7 @@ export async function* runCollaborativeReply(input: CollaborationRunInput): Asyn
         workflowRunId: input.workflowRunId,
         sessionId,
         idempotencyKey,
+        operatingContext: database.getConversationOperatingContext(conversation.id) ?? undefined,
         retryMode: input.retryMode,
         regeneratedFromMessageId: input.regeneratedFromMessageId,
         signal,
@@ -293,6 +295,9 @@ export async function* runCollaborativeReply(input: CollaborationRunInput): Asyn
       participants = collaboration.listParticipants(conversation.id);
       yield { type: 'team.activity', activity: outputActivity };
       yield { type: 'participants.updated', participants };
+      if (agentId === conversation.agentId && !signal.aborted) {
+        database.recordConversationRunCompleted(conversation.id, runId);
+      }
       yield { type: 'run.completed', runId, message: finalMessage, agentId };
       if (signal.aborted) return;
     } catch (error) {
@@ -320,6 +325,9 @@ export async function* runCollaborativeReply(input: CollaborationRunInput): Asyn
         outputMessageId: assistantMessage.id,
       });
       collaboration.setParticipantState(conversation.id, agentId, 'blocked');
+      if (agentId === conversation.agentId) {
+        database.recordConversationRunFailure(conversation.id, runId, message);
+      }
       participants = collaboration.listParticipants(conversation.id);
       yield { type: 'team.activity', activity: failed };
       yield { type: 'participants.updated', participants };

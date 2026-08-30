@@ -2,6 +2,16 @@ import Database from 'better-sqlite3';
 import { mkdirSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
 import { randomUUID } from 'node:crypto';
+import {
+  bindActiveTask,
+  createConversationOperatingContext,
+  recordFailure,
+  recordVerifiedFact,
+  sameConversationRuntimeIdentity,
+  validateConversationOperatingContext,
+  type ConversationOperatingContext,
+} from '../shared/conversation-operating-context.js';
+import { conversationRuntimeIdentity } from './provider-session-identity.js';
 import type {
   ArtifactRecord,
   BranchConversationInput,
@@ -165,6 +175,12 @@ export class ChatDatabase {
         created_at TEXT NOT NULL
       );
 
+      CREATE TABLE IF NOT EXISTS conversation_operating_context (
+        conversation_id TEXT PRIMARY KEY REFERENCES conversations(id) ON DELETE CASCADE,
+        context_json TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+      );
+
       CREATE INDEX IF NOT EXISTS idx_conversations_system_status_updated
         ON conversations(system_id, status, pinned DESC, updated_at DESC);
       CREATE INDEX IF NOT EXISTS idx_messages_conversation_created
@@ -278,6 +294,77 @@ export class ChatDatabase {
       messages: messages.map(mapMessage),
       artifacts: artifacts.map(mapArtifact),
     };
+  }
+
+  getConversationOperatingContext(id: string): ConversationOperatingContext | null {
+    const row = this.db.prepare('SELECT * FROM conversations WHERE id = ?').get(id) as ConversationRow | undefined;
+    if (!row) return null;
+    const conversation = mapConversation(row);
+    const identity = conversationRuntimeIdentity(conversation);
+    const stored = this.db.prepare('SELECT context_json FROM conversation_operating_context WHERE conversation_id = ?')
+      .get(id) as { context_json: string } | undefined;
+    if (stored) {
+      try {
+        const parsed = validateConversationOperatingContext(JSON.parse(stored.context_json));
+        if (sameConversationRuntimeIdentity(parsed, identity)) return parsed;
+      } catch {
+        // Corrupt, stale, or identity-mismatched state is never reused.
+      }
+    }
+    const fresh = createConversationOperatingContext(identity);
+    this.saveConversationOperatingContext(id, fresh);
+    return fresh;
+  }
+
+  saveConversationOperatingContext(id: string, input: ConversationOperatingContext) {
+    const row = this.db.prepare('SELECT * FROM conversations WHERE id = ?').get(id) as ConversationRow | undefined;
+    if (!row) return null;
+    const conversation = mapConversation(row);
+    const currentIdentity = conversationRuntimeIdentity(conversation);
+    const context = validateConversationOperatingContext(input);
+    if (!sameConversationRuntimeIdentity(context, currentIdentity)) {
+      throw new Error('Operating context runtime identity does not match the current Conversation');
+    }
+    const timestamp = now();
+    this.db.prepare(`
+      INSERT INTO conversation_operating_context (conversation_id, context_json, updated_at)
+      VALUES (?, ?, ?)
+      ON CONFLICT(conversation_id) DO UPDATE SET context_json = excluded.context_json, updated_at = excluded.updated_at
+    `).run(id, JSON.stringify(context), timestamp);
+    return context;
+  }
+
+  updateConversationOperatingContext(
+    id: string,
+    updater: (context: ConversationOperatingContext) => ConversationOperatingContext,
+  ) {
+    const current = this.getConversationOperatingContext(id);
+    if (!current) return null;
+    return this.saveConversationOperatingContext(id, updater(current));
+  }
+
+  bindConversationTask(id: string, taskId: string, label: string) {
+    return this.updateConversationOperatingContext(id, (context) => bindActiveTask(context, {
+      taskId,
+      label: label.replace(/\s+/g, ' ').trim().slice(0, 160) || '현재 작업',
+    }));
+  }
+
+  recordConversationRunFailure(id: string, runId: string, summary: string) {
+    return this.updateConversationOperatingContext(id, (context) => recordFailure(context, {
+      blockerId: runId,
+      summary: summary.replace(/\s+/g, ' ').trim().slice(0, 500) || 'Backend execution failed',
+      nextAction: 'Retry or continue the same bound task after the backend blocker is resolved.',
+      evidenceRef: `run:${runId}`,
+    }));
+  }
+
+  recordConversationRunCompleted(id: string, runId: string) {
+    return this.updateConversationOperatingContext(id, (context) => ({
+      ...recordVerifiedFact(context, 'The latest bound Lucy run completed.', `run:${runId}`),
+      blocker: null,
+      nextAction: null,
+    }));
   }
 
   createConversation(

@@ -1,3 +1,4 @@
+import type { ConversationOperatingContext } from '../../shared/conversation-operating-context.js';
 import type {
   AdapterHealthRecord,
   AgentRecord,
@@ -35,6 +36,7 @@ export interface AdapterRequest {
   workflowRunId?: string;
   sessionId?: string;
   idempotencyKey?: string;
+  operatingContext?: ConversationOperatingContext;
   signal?: AbortSignal;
 }
 

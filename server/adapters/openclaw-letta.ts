@@ -1,6 +1,8 @@
 import { readFile } from 'node:fs/promises';
 import type { AdapterHealthRecord, ArtifactRecord } from '../../shared/contracts.js';
 import { approvedAdapterCapabilities } from './capability-contract.js';
+import { operatingContextSystemMessage } from './operating-context.js';
+import { openClawConversationSessionIdentity } from '../provider-session-identity.js';
 import { extractArtifactText } from './document-text.js';
 import { OpenAiArtifactToolAccumulator, RETURN_ARTIFACT_TOOL } from './openai-artifact-tool.js';
 import type {
@@ -80,12 +82,6 @@ function openClawAgentTarget(value: string | undefined) {
     throw new Error('LETTA_OPENCLAW_AGENT_TARGET must use an OpenClaw agent target such as openclaw/default or openclaw/<agentId>');
   }
   return target;
-}
-
-function sessionUser(prefix: string, conversationId: string) {
-  const normalizedPrefix = boundedIdentifier(prefix, 'LETTA_OPENCLAW_SESSION_PREFIX', 64);
-  const normalizedConversation = boundedIdentifier(conversationId, 'conversation id', 256);
-  return `${normalizedPrefix}:${normalizedConversation}`;
 }
 
 function backendError(payload: unknown) {
@@ -288,13 +284,15 @@ export class OpenClawLettaAdapter implements ChatBackendAdapter {
 
     const artifacts = await serializeCurrentArtifacts(request, this.config);
     const capsule = memoryCapsuleMessage(request);
+    const operatingContext = operatingContextSystemMessage(request.operatingContext);
     const messages: OpenClawMessage[] = [
+      ...(operatingContext ? [{ role: 'system' as const, content: operatingContext }] : []),
       ...(capsule ? [capsule] : []),
       currentUserMessage(request, artifacts),
     ];
     const body = {
       model: this.config.agentTarget,
-      user: sessionUser(this.config.sessionPrefix, request.conversation.id),
+      user: openClawConversationSessionIdentity(request.conversation.id, this.config.sessionPrefix),
       messages,
       stream: true,
       ...(this.config.artifactToolEnabled ? {

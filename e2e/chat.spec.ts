@@ -10,15 +10,15 @@ test('desktop Conversation workflow remains aligned and usable', async ({ page }
   test.skip(!testInfo.project.name.startsWith('desktop'));
   await page.goto('/');
   await expect(page.getByText('ailucy.online', { exact: true })).toBeVisible();
-  await expect(page.locator('.conversation-row').filter({ hasText: 'Chat V2 개발' }).first()).toBeVisible();
-  await expect(page.locator('.chat-header')).toContainText('[Hermes] Lucy');
+  await expect(page.locator('.conversation-row').filter({ hasText: '이번 주 업무 정리' }).first()).toBeVisible();
+  await expect(page.locator('.chat-header')).toContainText('[Letta] Lucy');
   await expectNoHorizontalOverflow(page);
   await page.locator('.conversations-title button[aria-label="새 대화"]').click();
   const composer = page.locator('.composer textarea');
   await composer.fill('브라우저 회귀검증 아젠다를 새 Conversation으로 유지해줘.');
   await page.locator('button[aria-label="전송"]').click();
   await expect(page.getByText('브라우저 회귀검증 아젠다를 새 Conversation으로 유지해줘.')).toBeVisible();
-  await expect(page.getByText(/\[Hermes\] Lucy가 이 Conversation의 책임자로/)).toBeVisible();
+  await expect(page.getByText(/\[Letta\] Lucy의 승인된 장기기억은 이어집니다/)).toBeVisible();
   const search = page.getByPlaceholder('제목·본문·파일 검색');
   await search.fill('회귀검증');
   await expect(page.locator('.conversation-row').filter({ hasText: '회귀검증' }).first()).toBeVisible();
@@ -31,6 +31,7 @@ test('desktop Conversation workflow remains aligned and usable', async ({ page }
 test('Hermes mentions preserve subagent originals and Lucy synthesis', async ({ page }, testInfo) => {
   test.skip(!testInfo.project.name.startsWith('desktop'));
   await page.goto('/');
+  await page.locator('.system-card--violet .system-card__header').click();
   await page.locator('.conversations-title button[aria-label="새 대화"]').click();
   await page.getByRole('button', { name: '@Xixi', exact: true }).click();
   await page.getByRole('button', { name: '@Lynn', exact: true }).click();
@@ -89,6 +90,40 @@ test('federated Conversation approves a capsule and records a parallel workflow'
   await page.screenshot({ path: testInfo.outputPath('desktop-federated-workflow.png'), fullPage: false });
 });
 
+test('personal Lucy binds 계속해 to the same persisted task and fails closed on unbound 승인', async ({ page }, testInfo) => {
+  test.skip(!testInfo.project.name.startsWith('desktop'));
+  await page.goto('/');
+  await page.locator('.conversations-title button[aria-label="새 대화"]').click();
+  const composer = page.locator('.composer textarea');
+  await composer.fill('첫 작업을 실제 대화 문맥으로 유지해줘.');
+  await page.locator('button[aria-label="전송"]').click();
+  await expect(page.getByText(/\[Letta\] Lucy의 승인된 장기기억은 이어집니다/)).toBeVisible();
+
+  const conversationId = await page.evaluate(() => {
+    const match = window.location.href.match(/conversations\/([^/?#]+)/);
+    return match?.[1] ?? null;
+  }).catch(() => null);
+  const activeId = conversationId ?? await page.locator('.conversation-row.is-active, .conversation-row--active').first().getAttribute('data-conversation-id').catch(() => null);
+  // The current UI does not encode the id in the URL on every layout, so use the
+  // API list to select the newest personal conversation if needed.
+  const list = await page.request.get('/api/conversations?systemId=letta&status=active');
+  const conversations = (await list.json()).conversations as Array<{ id: string; title: string }>;
+  const id = activeId ?? conversations.find((item) => item.title.includes('첫 작업'))?.id ?? conversations[0].id;
+  const before = (await (await page.request.get(`/api/conversations/${id}/operating-context`)).json()).operatingContext;
+  expect(before.activeTask.label).toContain('첫 작업');
+
+  await composer.fill('계속해');
+  await page.locator('button[aria-label="전송"]').click();
+  await expect(page.getByText('계속해', { exact: true })).toBeVisible();
+  const after = (await (await page.request.get(`/api/conversations/${id}/operating-context`)).json()).operatingContext;
+  expect(after.activeTask).toEqual(before.activeTask);
+  expect(after.continuationTarget).toEqual(before.continuationTarget);
+
+  await composer.fill('승인');
+  await page.locator('button[aria-label="전송"]').click();
+  await expect(page.locator('.error-banner')).toContainText('검증된 승인 대기가 없습니다');
+});
+
 test('mobile navigation preserves the System → Conversation hierarchy', async ({ page }, testInfo) => {
   test.skip(!testInfo.project.name.startsWith('mobile'));
   await page.goto('/');
@@ -107,6 +142,8 @@ test('mobile navigation preserves the System → Conversation hierarchy', async 
 test('mobile Hermes team panel stays inside the approved frame', async ({ page }, testInfo) => {
   test.skip(!testInfo.project.name.startsWith('mobile'));
   await page.goto('/');
+  await page.locator('.mobile-menu').click();
+  await page.locator('.system-card--violet .system-card__header').click();
   await page.getByRole('button', { name: /팀 1/ }).click();
   await expect(page.getByRole('complementary', { name: 'Hermes 팀 활동' })).toBeVisible();
   await expectNoHorizontalOverflow(page);

@@ -2,7 +2,7 @@
 
 Issue: #199
 Base truth: `main` @ `e022f0ea39e07a4181ea7ad96b5761b9f55d971b`
-Status: H0/H1/H2 audit in progress — no production/runtime mutation
+Status: H0/H1/H2 audit complete; first operating-context implementation slices active — no production/runtime mutation
 
 ## Outcome
 
@@ -184,4 +184,4 @@ Important boundaries:
 
 ## Current verdict
 
-`BLOCKED_FOR_IMPLEMENTATION_PLAN_FINALIZATION`, not because code cannot be written, but because the product-model conflict must be made explicit first. The smallest credible fix is a 1:1 Lucy-first root flow plus a typed operating-context contract; broad UI rewrites are not justified yet.
+`IMPLEMENTATION_ACTIVE`. The product-model conflict is now explicit: personal Letta Lucy is the default 1:1 entry contract, while legacy Hermes/Federation capability remains available only through explicit selection. The typed operating-context layer is being bound to the existing Conversation/backend session rather than creating a parallel controller or memory system.

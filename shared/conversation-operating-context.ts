@@ -154,6 +154,80 @@ export function resolveBareApproval(
   return { ok: true, value: { approvalId: approval.approvalId } };
 }
 
+export function bindActiveTask(
+  context: ConversationOperatingContext,
+  task: ActiveTaskBinding,
+): ConversationOperatingContext {
+  assertNonEmpty(task.taskId, 'taskId');
+  assertNonEmpty(task.label, 'task label');
+  return {
+    ...context,
+    activeTask: task,
+    continuationTarget: {
+      conversationId: context.conversationId,
+      backendSystem: context.backendSystem,
+      agentId: context.agentId,
+      sessionIdentity: context.sessionIdentity,
+      taskId: task.taskId,
+      label: task.label,
+      targetRef: context.sessionIdentity,
+    },
+    blocker: null,
+    nextAction: null,
+  };
+}
+
+export function recordVerifiedFact(
+  context: ConversationOperatingContext,
+  summary: string,
+  evidenceRef: string,
+  verifiedAt = new Date().toISOString(),
+): ConversationOperatingContext {
+  assertNonEmpty(summary, 'fact summary');
+  assertNonEmpty(evidenceRef, 'fact evidenceRef');
+  const statusTruth = [
+    ...context.statusTruth,
+    { classification: 'FACT' as const, summary, evidenceRef, verifiedAt },
+  ].slice(-20);
+  return { ...context, statusTruth };
+}
+
+export function validateConversationOperatingContext(value: unknown): ConversationOperatingContext {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) throw new Error('Operating context must be an object');
+  const context = value as ConversationOperatingContext;
+  if (context.schemaVersion !== CONVERSATION_OPERATING_CONTEXT_SCHEMA) throw new Error('Operating context schema is invalid');
+  assertIdentity(context);
+  if (!Array.isArray(context.statusTruth)) throw new Error('Operating context statusTruth must be an array');
+  if (context.statusTruth.length > 20) throw new Error('Operating context statusTruth exceeds its bound');
+  for (const item of context.statusTruth) {
+    if (!item || !['FACT', 'INFERENCE', 'UNKNOWN'].includes(item.classification)) throw new Error('Operating context truth class is invalid');
+    assertNonEmpty(item.summary, 'truth summary');
+  }
+  if (context.activeTask) {
+    assertNonEmpty(context.activeTask.taskId, 'taskId');
+    assertNonEmpty(context.activeTask.label, 'task label');
+  }
+  if (context.continuationTarget) {
+    assertIdentity(context.continuationTarget);
+    assertNonEmpty(context.continuationTarget.taskId, 'continuation taskId');
+    assertNonEmpty(context.continuationTarget.label, 'continuation label');
+    assertNonEmpty(context.continuationTarget.targetRef, 'continuation targetRef');
+  }
+  if (context.blocker) {
+    assertNonEmpty(context.blocker.blockerId, 'blockerId');
+    assertNonEmpty(context.blocker.summary, 'blocker summary');
+    assertNonEmpty(context.blocker.nextAction, 'blocker nextAction');
+  }
+  if (context.pendingApproval) {
+    assertIdentity(context.pendingApproval);
+    assertNonEmpty(context.pendingApproval.approvalId, 'approvalId');
+    assertNonEmpty(context.pendingApproval.kind, 'approval kind');
+    assertNonEmpty(context.pendingApproval.summary, 'approval summary');
+    if (!['pending', 'approved', 'expired', 'cancelled'].includes(context.pendingApproval.state)) throw new Error('Approval state is invalid');
+  }
+  return context;
+}
+
 export function recordFailure(
   context: ConversationOperatingContext,
   blocker: BlockerRecord,

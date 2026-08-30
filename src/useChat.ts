@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
+import type { ConversationOperatingContext } from '../shared/conversation-operating-context';
 import type {
   ArtifactDeliveryRecord,
   ArtifactRecord,
@@ -16,6 +17,7 @@ import {
   branchConversation as branchConversationApi,
   createConversation as createConversationApi,
   getConversation,
+  getConversationOperatingContext,
   listConversations,
   permanentlyDeleteConversation,
   searchConversations as searchConversationsApi,
@@ -49,11 +51,12 @@ function upsertArtifactDelivery(current: ArtifactDeliveryRecord[], next: Artifac
 }
 
 export function useChat() {
-  const [selectedSystem, setSelectedSystem] = useState<SystemId>('hermes');
+  const [selectedSystem, setSelectedSystem] = useState<SystemId>('letta');
   const [selectedStatus, setSelectedStatus] = useState<ConversationStatus>('active');
-  const [activeAgent, setActiveAgent] = useState(defaultAgent.hermes);
+  const [activeAgent, setActiveAgent] = useState(defaultAgent.letta);
   const [conversations, setConversations] = useState<ConversationRecord[]>([]);
   const [activeConversation, setActiveConversation] = useState<ConversationDetail | null>(null);
+  const [operatingContext, setOperatingContext] = useState<ConversationOperatingContext | null>(null);
   const [searchResults, setSearchResults] = useState<ConversationSearchResult[]>([]);
   const [searching, setSearching] = useState(false);
   const [uploads, setUploads] = useState<UploadProgressRecord[]>([]);
@@ -88,7 +91,11 @@ export function useChat() {
     return detail;
   }, []);
 
-  const loadConversation = useCallback(async (id: string) => applyDetail(await getConversation(id)), [applyDetail]);
+  const loadConversation = useCallback(async (id: string) => {
+    const [detail, context] = await Promise.all([getConversation(id), getConversationOperatingContext(id)]);
+    setOperatingContext(context);
+    return applyDetail(detail);
+  }, [applyDetail]);
 
   const refreshList = useCallback(
     async (systemId: SystemId, status: ConversationStatus, preferredId?: string | null) => {
@@ -99,6 +106,7 @@ export function useChat() {
         list[0]?.id;
       if (!selectedId) {
         setActiveConversation(null);
+        setOperatingContext(null);
         setPendingArtifactIds([]);
         setArtifactDeliveries([]);
         return;
@@ -125,6 +133,7 @@ export function useChat() {
           if (!cancelled) applyDetail(detail);
         } else if (!cancelled) {
           setActiveConversation(null);
+          setOperatingContext(null);
           setPendingArtifactIds([]);
           setArtifactDeliveries([]);
         }
@@ -475,6 +484,7 @@ export function useChat() {
     activeAgent,
     conversations,
     activeConversation,
+    operatingContext,
     searchResults,
     searching,
     uploads,

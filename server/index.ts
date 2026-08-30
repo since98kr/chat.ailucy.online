@@ -10,6 +10,9 @@ import { storeArtifact } from './artifacts.js';
 import { CollaborationService } from './collaboration.js';
 import { registerCollaborationRoutes } from './collaboration-routes.js';
 import { runCollaborativeReply } from './collaboration-runner.js';
+import { classifyConversationIntent } from './conversation-intent.js';
+import { conversationRuntimeIdentity } from './provider-session-identity.js';
+import { resolveBareApproval, resolveContinuation } from '../shared/conversation-operating-context.js';
 import { FederationService } from './federation.js';
 import { registerFederationRoutes } from './federation-routes.js';
 import { runFederatedWorkflow } from './federated-runner.js';
@@ -237,6 +240,13 @@ export function buildApp(options?: { databasePath?: string; artifactRoot?: strin
     });
   });
 
+  app.get('/api/conversations/:id/operating-context', async (request, reply) => {
+    const { id } = z.object({ id: z.string().min(1) }).parse(request.params);
+    const operatingContext = db.getConversationOperatingContext(id);
+    if (!operatingContext) return reply.status(404).send({ error: 'CONVERSATION_NOT_FOUND' });
+    return { operatingContext };
+  });
+
   app.post('/api/conversations/:id/branch', async (request, reply) => {
     const { id } = z.object({ id: z.string().min(1) }).parse(request.params);
     const input = branchConversationSchema.parse(request.body ?? {});
@@ -289,6 +299,37 @@ export function buildApp(options?: { databasePath?: string; artifactRoot?: strin
     const found = db.getConversation(id);
     if (!found) return reply.status(404).send({ error: 'CONVERSATION_NOT_FOUND' });
     const conversation = found;
+    const operatingIntent = classifyConversationIntent(input.content);
+    const operatingContext = db.getConversationOperatingContext(id)!;
+    const currentIdentity = conversationRuntimeIdentity(conversation);
+    if (operatingIntent === 'continuation') {
+      const binding = resolveContinuation(operatingContext, currentIdentity);
+      if (!binding.ok) {
+        return reply.status(409).send({
+          error: 'CONTINUATION_BINDING_FAILED',
+          reason: binding.reason,
+          message: '현재 대화에 검증된 계속하기 대상이 없습니다.',
+        });
+      }
+    }
+    if (operatingIntent === 'approval') {
+      const binding = resolveBareApproval(operatingContext, currentIdentity);
+      if (!binding.ok) {
+        return reply.status(409).send({
+          error: 'APPROVAL_BINDING_FAILED',
+          reason: binding.reason,
+          message: '현재 대화에 검증된 승인 대기가 없습니다.',
+        });
+      }
+      // A bound approval id is not execution authority. Until the selected
+      // backend exposes an explicit approval re-verification/consume contract,
+      // fail closed instead of turning natural-language approval into action.
+      return reply.status(409).send({
+        error: 'APPROVAL_BACKEND_HANDOFF_REQUIRED',
+        approvalId: binding.value.approvalId,
+        message: '승인 대상은 확인했지만 실행 백엔드의 재검증 계약이 아직 연결되지 않았습니다.',
+      });
+    }
     const config = federation.getConfig(id);
     const federated = config?.mode === 'federated' || input.workflowMode === 'federated';
     if (federated && config?.mode !== 'federated') {
@@ -334,6 +375,7 @@ export function buildApp(options?: { databasePath?: string; artifactRoot?: strin
             attachedArtifacts,
             sendInput: input,
             signal: controller.signal,
+            operatingIntent,
           });
       for await (const event of generator) yield eventLine(event);
     }
