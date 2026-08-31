@@ -14,6 +14,7 @@ import type {
   UploadProgressRecord,
 } from '../shared/contracts';
 import {
+  approveConversation as approveConversationApi,
   branchConversation as branchConversationApi,
   createConversation as createConversationApi,
   getConversation,
@@ -67,6 +68,7 @@ export function useChat() {
   const [error, setError] = useState<string | null>(null);
   const [runStatus, setRunStatus] = useState<string | null>(null);
   const [isStreaming, setIsStreaming] = useState(false);
+  const [approvingApproval, setApprovingApproval] = useState(false);
   const abortRef = useRef<AbortController | null>(null);
   const draftTimerRef = useRef<number | null>(null);
   const searchTimerRef = useRef<number | null>(null);
@@ -82,6 +84,32 @@ export function useChat() {
   useEffect(() => {
     setTranscripts(emptyTranscriptState);
   }, [activeConversation?.id]);
+
+  useEffect(() => {
+    const conversationId = activeConversation?.id;
+    if (!isStreaming || approvingApproval || selectedSystem !== 'letta' || !conversationId) return;
+    let cancelled = false;
+    let refreshing = false;
+    const refreshOperatingContext = async () => {
+      if (refreshing) return;
+      refreshing = true;
+      try {
+        const context = await getConversationOperatingContext(conversationId);
+        if (!cancelled) setOperatingContext(context);
+      } catch {
+        // The active response stream remains authoritative. Poll failures do not
+        // fabricate an approval or interrupt safe model output.
+      } finally {
+        refreshing = false;
+      }
+    };
+    void refreshOperatingContext();
+    const timer = window.setInterval(() => void refreshOperatingContext(), 750);
+    return () => {
+      cancelled = true;
+      window.clearInterval(timer);
+    };
+  }, [activeConversation?.id, approvingApproval, isStreaming, selectedSystem]);
 
   const applyDetail = useCallback((detail: ConversationDetail) => {
     // Imperative navigation must publish its identity synchronously so a
@@ -137,8 +165,14 @@ export function useChat() {
         const preferred = activeIdRef.current;
         const selected = list.find((conversation) => conversation.id === preferred) ?? list[0];
         if (selected) {
-          const detail = await getConversation(selected.id);
-          if (!cancelled) applyDetail(detail);
+          const [detail, context] = await Promise.all([
+            getConversation(selected.id),
+            getConversationOperatingContext(selected.id),
+          ]);
+          if (!cancelled) {
+            setOperatingContext(context);
+            applyDetail(detail);
+          }
         } else if (!cancelled) {
           setActiveConversation(null);
           setOperatingContext(null);
@@ -392,13 +426,38 @@ export function useChat() {
     }
   }, []);
 
+  const approvePending = useCallback(async () => {
+    const conversationId = activeIdRef.current;
+    const approval = operatingContext?.pendingApproval;
+    if (!conversationId || !approval || approval.state !== 'pending' || approvingApproval) return false;
+    setApprovingApproval(true);
+    setError(null);
+    try {
+      const result = await approveConversationApi(conversationId);
+      setOperatingContext(result.operatingContext);
+      setRunStatus('승인이 확인되어 실행을 계속합니다.');
+      return true;
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : '승인 상태를 재검증하지 못했습니다.');
+      return false;
+    } finally {
+      setApprovingApproval(false);
+    }
+  }, [approvingApproval, operatingContext]);
+
   const sendMessage = useCallback(async (
     content: string,
     targetAgentIds: string[] = [],
     workflowMode: 'chat' | 'federated' = 'chat',
   ) => {
     const trimmed = content.trim();
-    if (!trimmed || isStreaming || selectedStatus !== 'active') return;
+    if (!trimmed || selectedStatus !== 'active') return;
+    if (isStreaming) {
+      if (trimmed === '승인' && operatingContext?.pendingApproval?.state === 'pending') {
+        await approvePending();
+      }
+      return;
+    }
     let conversation = activeConversation;
     if (!conversation) conversation = workflowMode === 'federated'
       ? await createFederatedConversation()
@@ -455,7 +514,7 @@ export function useChat() {
         // Keep the optimistic transcript visible when a refresh fails.
       }
     }
-  }, [activeConversation, createConversation, createFederatedConversation, handleStreamEvent, isStreaming, pendingArtifactIds, refreshList, selectedStatus, selectedSystem]);
+  }, [activeConversation, approvePending, createConversation, createFederatedConversation, handleStreamEvent, isStreaming, operatingContext, pendingArtifactIds, refreshList, selectedStatus, selectedSystem]);
 
   const stopStreaming = useCallback(() => {
     abortRef.current?.abort();
@@ -511,6 +570,7 @@ export function useChat() {
     error,
     runStatus,
     isStreaming,
+    approvingApproval,
     switchSystem,
     switchStatus,
     selectConversation,
@@ -523,6 +583,7 @@ export function useChat() {
     saveDraft,
     searchConversations,
     sendMessage,
+    approvePending,
     stopStreaming,
     uploadFiles,
     ingestStreamEvent: handleStreamEvent,

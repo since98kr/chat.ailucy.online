@@ -125,6 +125,89 @@ test('personal Lucy binds 계속해 to the same persisted task and fails closed 
   await expect(page.locator('.error-banner')).toContainText('검증된 승인 대기가 없습니다');
 });
 
+test('personal Lucy accepts bare 승인 while a protected run is still waiting', async ({ page }, testInfo) => {
+  test.skip(!testInfo.project.name.startsWith('desktop'));
+  await page.goto('/');
+  const id = await createPersonalConversation(page);
+  const initialContext = (await (await page.request.get(`/api/conversations/${id}/operating-context`)).json()).operatingContext;
+  const approvalId = `approval:${id}`;
+  let streamWaiting = false;
+  let approvalPending = true;
+  let approvalCalls = 0;
+  let releaseStream: (() => void) | undefined;
+
+  await page.route(`**/api/conversations/${id}/operating-context`, async (route) => {
+    if (!streamWaiting) return route.continue();
+    await route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify({
+        operatingContext: {
+          ...initialContext,
+          pendingApproval: approvalPending ? {
+            conversationId: id,
+            backendSystem: 'letta',
+            agentId: '[Letta] Lucy',
+            sessionIdentity: initialContext.sessionIdentity,
+            approvalId,
+            kind: 'exec',
+            summary: '브라우저 보호 작업',
+            state: 'pending',
+            createdAt: new Date().toISOString(),
+            expiresAt: new Date(Date.now() + 60_000).toISOString(),
+          } : null,
+        },
+      }),
+    });
+  });
+
+  await page.route(`**/api/conversations/${id}/approval`, async (route) => {
+    if (route.request().method() !== 'POST') return route.continue();
+    approvalCalls += 1;
+    approvalPending = false;
+    await route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify({
+        approvalId,
+        operatingContext: {
+          ...initialContext,
+          pendingApproval: {
+            conversationId: id,
+            backendSystem: 'letta',
+            agentId: '[Letta] Lucy',
+            sessionIdentity: initialContext.sessionIdentity,
+            approvalId,
+            kind: 'exec',
+            summary: '브라우저 보호 작업',
+            state: 'approved',
+            createdAt: new Date().toISOString(),
+            expiresAt: new Date(Date.now() + 60_000).toISOString(),
+          },
+        },
+      }),
+    });
+    releaseStream?.();
+  });
+
+  await page.route(`**/api/conversations/${id}/messages/stream`, async (route) => {
+    const payload = route.request().postDataJSON() as { content?: string };
+    if (payload.content !== '브라우저 승인 대기 테스트') return route.continue();
+    streamWaiting = true;
+    await new Promise<void>((resolve) => { releaseStream = resolve; });
+    await route.fulfill({ status: 200, contentType: 'application/x-ndjson', body: '' });
+  });
+
+  const composer = page.locator('.composer textarea');
+  await composer.fill('브라우저 승인 대기 테스트');
+  await page.locator('button[aria-label="전송"]').click();
+  await expect(page.getByTestId('pending-approval')).toContainText('브라우저 보호 작업');
+  await composer.fill('승인');
+  await page.locator('button[aria-label="승인 전송"]').click();
+  await expect.poll(() => approvalCalls).toBe(1);
+  await expect(page.getByTestId('pending-approval')).toHaveCount(0);
+});
+
 test('personal Lucy reports verified status and preserves blocker truth until successful recovery', async ({ page }, testInfo) => {
   test.skip(!testInfo.project.name.startsWith('desktop'));
   await page.goto('/');

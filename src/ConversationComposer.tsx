@@ -31,7 +31,12 @@ export default function ConversationComposer({
   const pendingArtifacts = chat.activeConversation?.artifacts.filter((artifact) => chat.pendingArtifactIds.includes(artifact.id)) ?? [];
   const hermesMentionAgents = collaboration.agents.filter((agent) => agent.systemId === 'hermes' && !agent.isLead && agent.enabled);
   const federatedChoices = collaboration.agents.filter((agent) => agent.enabled && agent.directChatEnabled && agent.id !== '[Hermes] Lucy');
-  const busy = chat.isStreaming || externalBusy;
+  const pendingApproval = chat.operatingContext?.pendingApproval?.state === 'pending'
+    ? chat.operatingContext.pendingApproval
+    : null;
+  const approvalTurnEnabled = Boolean(chat.isStreaming && pendingApproval && !externalBusy);
+  const busy = externalBusy || chat.approvingApproval || (chat.isStreaming && !approvalTurnEnabled);
+  const attachmentBusy = externalBusy || chat.approvingApproval || chat.isStreaming;
 
   const toggleFederatedTarget = (agent: AgentRecord) => {
     if (busy) return;
@@ -49,6 +54,13 @@ export default function ConversationComposer({
     event.preventDefault();
     const content = chat.activeConversation?.draft ?? '';
     if (!content.trim() || hasUploading || busy) return;
+    if (chat.isStreaming) {
+      if (content.trim() === '승인' && pendingApproval) {
+        chat.saveDraft('');
+        await chat.approvePending();
+      }
+      return;
+    }
     if (!federation.active && chat.selectedSystem === 'hermes') await collaboration.preview(content);
     chat.saveDraft('');
     await chat.sendMessage(content, targets, federation.active ? 'federated' : 'chat');
@@ -100,6 +112,15 @@ export default function ConversationComposer({
         </div>
       )}
 
+      {pendingApproval && (
+        <div className="readonly-bar" data-testid="pending-approval">
+          <span><strong>승인 필요</strong> · {pendingApproval.summary}</span>
+          <button type="button" disabled={chat.approvingApproval} onClick={() => void chat.approvePending()}>
+            {chat.approvingApproval ? '승인 중' : '승인'}
+          </button>
+        </div>
+      )}
+
       <div className="drop-hint">
         {externalBusy ? <><LoaderCircle size={15} className="spin" /> 기존 응답을 보존하고 새 응답을 생성하고 있습니다.</>
           : hasUploading ? <><LoaderCircle size={15} className="spin" /> 파일을 업로드하고 있습니다.</>
@@ -109,16 +130,16 @@ export default function ConversationComposer({
 
       <form className="composer" onSubmit={submit}>
         <div className="composer__tools">
-          <button type="button" disabled={busy} className="icon-button" onClick={() => fileInputRef.current?.click()}><Plus size={18} /></button>
-          <button type="button" disabled={busy} className="icon-button" onClick={() => fileInputRef.current?.click()}><Paperclip size={17} /></button>
-          <button type="button" disabled={busy} className="icon-button" onClick={() => fileInputRef.current?.click()}><Image size={17} /></button>
-          <input ref={fileInputRef} type="file" multiple hidden disabled={busy} onChange={(event) => onFiles(Array.from(event.target.files ?? []))} />
+          <button type="button" disabled={attachmentBusy} className="icon-button" onClick={() => fileInputRef.current?.click()}><Plus size={18} /></button>
+          <button type="button" disabled={attachmentBusy} className="icon-button" onClick={() => fileInputRef.current?.click()}><Paperclip size={17} /></button>
+          <button type="button" disabled={attachmentBusy} className="icon-button" onClick={() => fileInputRef.current?.click()}><Image size={17} /></button>
+          <input ref={fileInputRef} type="file" multiple hidden disabled={attachmentBusy} onChange={(event) => onFiles(Array.from(event.target.files ?? []))} />
         </div>
         <textarea
           value={chat.activeConversation?.draft ?? ''}
           onChange={(event) => chat.saveDraft(event.target.value)}
           onPaste={(event) => {
-            if (busy) return;
+            if (attachmentBusy) return;
             const images = Array.from(event.clipboardData.files).filter((file) => file.type.startsWith('image/'));
             if (images.length) { event.preventDefault(); onFiles(images); }
           }}
@@ -128,14 +149,15 @@ export default function ConversationComposer({
               event.currentTarget.form?.requestSubmit();
             }
           }}
-          placeholder={federation.active ? '교차 시스템 요청… 실행 대상은 위에서 선택' : chat.selectedSystem === 'hermes' && chat.activeAgent === '[Hermes] Lucy' ? 'Lucy에게 메시지… 필요하면 @Xixi @Lynn @Gemma' : `Message ${chat.activeAgent}...`}
+          placeholder={approvalTurnEnabled ? '승인이라고 입력하거나 승인 버튼을 누르세요.' : federation.active ? '교차 시스템 요청… 실행 대상은 위에서 선택' : chat.selectedSystem === 'hermes' && chat.activeAgent === '[Hermes] Lucy' ? 'Lucy에게 메시지… 필요하면 @Xixi @Lynn @Gemma' : `Message ${chat.activeAgent}...`}
           rows={1}
           disabled={busy}
         />
         <div className="composer__send">
-          {chat.isStreaming ? <button type="button" className="stop-button" onClick={chat.stopStreaming} aria-label="응답 중단"><Square size={15} /></button>
+          {chat.isStreaming && !approvalTurnEnabled ? <button type="button" className="stop-button" onClick={chat.stopStreaming} aria-label="응답 중단"><Square size={15} /></button>
             : externalBusy ? <button type="button" className="stop-button" disabled aria-label="응답 재생성 중"><LoaderCircle size={15} className="spin" /></button>
-              : <><button type="button" className="icon-button"><Mic size={18} /></button><button type="submit" className="send-button" aria-label="전송" disabled={hasUploading}><Send size={18} /></button></>}
+              : approvalTurnEnabled ? <><button type="button" className="stop-button" onClick={chat.stopStreaming} aria-label="응답 중단"><Square size={15} /></button><button type="submit" className="send-button" aria-label="승인 전송"><Send size={18} /></button></>
+                : <><button type="button" className="icon-button"><Mic size={18} /></button><button type="submit" className="send-button" aria-label="전송" disabled={hasUploading}><Send size={18} /></button></>}
         </div>
       </form>
       <p className="composer-footnote">

@@ -144,6 +144,13 @@ export async function getConversationOperatingContext(id: string) {
   return response.operatingContext;
 }
 
+export async function approveConversation(id: string) {
+  return requestJson<{ approvalId: string; operatingContext: ConversationOperatingContext }>(
+    `/api/conversations/${id}/approval`,
+    { method: 'POST', body: '{}' },
+  );
+}
+
 export async function createConversation(input: CreateConversationInput) {
   const response = await requestJson<{ conversation: ConversationDetail }>('/api/conversations', {
     method: 'POST',

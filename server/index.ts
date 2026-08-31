@@ -277,6 +277,11 @@ export function buildApp(options?: BuildAppOptions) {
     ? createOpenClawApprovalBackendFromEnv()
     : options.approvalBackend;
   const app = Fastify({ logger: process.env.NODE_ENV !== 'test' });
+  if (approvalBackend?.start) {
+    void approvalBackend.start().catch((error) => {
+      app.log.warn({ err: error }, 'OpenClaw approval surface is not ready yet');
+    });
+  }
 
   app.register(cors, {
     origin: process.env.CHAT_ALLOWED_ORIGIN?.split(',').map((value) => value.trim()) ?? true,
@@ -301,7 +306,10 @@ export function buildApp(options?: BuildAppOptions) {
     });
   });
 
-  app.addHook('onClose', async () => db.close());
+  app.addHook('onClose', async () => {
+    await approvalBackend?.close?.();
+    db.close();
+  });
 
   app.get('/api/health', async () => ({
     ok: true,
@@ -454,6 +462,14 @@ export function buildApp(options?: BuildAppOptions) {
     const operatingIntent = classifyConversationIntent(input.content);
     const operatingContext = db.getConversationOperatingContext(id)!;
     const currentIdentity = conversationRuntimeIdentity(conversation);
+    if (conversation.systemId === 'letta' && approvalBackend?.start) {
+      try {
+        await approvalBackend.start();
+      } catch {
+        // Ordinary chat remains available. A protected action still fails closed
+        // at OpenClaw when no approval delivery surface can be established.
+      }
+    }
     if (operatingIntent === 'continuation') {
       const binding = resolveContinuation(operatingContext, currentIdentity);
       if (!binding.ok) {

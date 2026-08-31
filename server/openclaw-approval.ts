@@ -20,6 +20,8 @@ type OpenClawApprovalRecord = {
 };
 
 export interface ConversationApprovalBackend {
+  start?(): Promise<void>;
+  close?(): Promise<void>;
   listPending(context: ConversationOperatingContext): Promise<PendingApprovalBinding[]>;
   resolvePending(context: ConversationOperatingContext, approvalId: string): Promise<void>;
 }
@@ -115,7 +117,59 @@ export function mapOpenClawPendingApprovals(
 }
 
 export class OpenClawApprovalBackend implements ConversationApprovalBackend {
-  constructor(readonly config: OpenClawApprovalBackendConfig) {}
+  private readonly approvalSurface: GatewayClient;
+  private readonly approvalSurfaceReady: Promise<void>;
+
+  constructor(readonly config: OpenClawApprovalBackendConfig) {
+    let resolveSurface!: () => void;
+    let rejectSurface!: (error: Error) => void;
+    this.approvalSurfaceReady = new Promise<void>((resolve, reject) => {
+      resolveSurface = resolve;
+      rejectSurface = reject;
+    });
+    this.approvalSurface = new GatewayClient({
+      url: gatewayWebSocketUrl(this.config.gatewayUrl),
+      token: this.config.token,
+      role: 'operator',
+      scopes: ['operator.admin'],
+      // OpenClaw treats this capability as a real exec-approval delivery surface.
+      // Keeping it connected prevents a protected agent action from being
+      // discarded as `no-approval-route` before Lucy Chat can re-verify it.
+      caps: ['exec-approvals'],
+      clientName: 'gateway-client',
+      clientDisplayName: 'Lucy Chat approval surface',
+      clientVersion: '0.8.0',
+      platform: process.platform,
+      mode: 'backend',
+      requestTimeoutMs: this.config.timeoutMs,
+      onHelloOk: () => resolveSurface(),
+      onReconnectPaused: (info) => rejectSurface(
+        new Error(`OpenClaw approval surface reconnect paused (${info.code})`),
+      ),
+    });
+    this.approvalSurface.start();
+  }
+
+  async start() {
+    let timer: NodeJS.Timeout | undefined;
+    try {
+      await Promise.race([
+        this.approvalSurfaceReady,
+        new Promise<never>((_, reject) => {
+          timer = setTimeout(
+            () => reject(new Error('OpenClaw approval surface connection timed out')),
+            this.config.timeoutMs,
+          );
+        }),
+      ]);
+    } finally {
+      if (timer) clearTimeout(timer);
+    }
+  }
+
+  async close() {
+    await this.approvalSurface.stopAndWait({ timeoutMs: 1_000 }).catch(() => undefined);
+  }
 
   private async withClient<T>(run: (client: GatewayClient) => Promise<T>): Promise<T> {
     let connectedResolve!: () => void;
