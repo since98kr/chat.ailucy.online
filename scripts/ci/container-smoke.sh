@@ -26,6 +26,7 @@ log 'Running non-strict exact-image preflight.'
 docker run --rm \
   --volume "${PREFLIGHT_VOLUME}:/data" \
   --env CHAT_PREFLIGHT_MIN_FREE_BYTES=1 \
+  --env CHAT_ALLOW_MOCK_ADAPTERS=true \
   "${IMAGE}" node dist-server/preflight.js | tee preflight.json
 node -e "const j=require('./preflight.json');if(!j.ok||j.build.sha!=='${EXPECTED_SHA}')process.exit(1)"
 
