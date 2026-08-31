@@ -4,6 +4,7 @@ import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import type { FastifyInstance } from 'fastify';
 import { buildApp } from './index.js';
+import type { ConversationApprovalBackend } from './openclaw-approval.js';
 import type { StreamEvent } from '../shared/contracts.js';
 
 process.env.NODE_ENV = 'test';
@@ -226,6 +227,70 @@ describe('Chat Core API', () => {
 
     const detail = await app.inject({ method: 'GET', url: `/api/conversations/${id}` });
     expect(detail.json().conversation.messages).toHaveLength(0);
+  });
+
+  it('re-verifies one backend-owned approval and rejects replay after resolution', async () => {
+    await app.close();
+    const resolved = new Set<string>();
+    const approvalBackend: ConversationApprovalBackend = {
+      async listPending(context) {
+        const approvalId = `approval:${context.conversationId}`;
+        if (resolved.has(approvalId)) return [];
+        return [{
+          conversationId: context.conversationId,
+          backendSystem: context.backendSystem,
+          agentId: context.agentId,
+          sessionIdentity: context.sessionIdentity,
+          approvalId,
+          kind: 'exec',
+          summary: 'test protected action',
+          state: 'pending',
+          createdAt: '2026-09-01T00:00:00.000Z',
+          expiresAt: '2099-09-01T00:00:00.000Z',
+        }];
+      },
+      async resolvePending(context, approvalId) {
+        const current = await this.listPending(context);
+        if (!current.some((candidate) => candidate.approvalId === approvalId)) {
+          throw new Error('not pending');
+        }
+        resolved.add(approvalId);
+      },
+    };
+    app = buildApp({
+      databasePath: join(directory, 'chat.sqlite'),
+      artifactRoot: join(directory, 'artifacts'),
+      approvalBackend,
+    });
+    await app.ready();
+
+    const created = await app.inject({
+      method: 'POST',
+      url: '/api/conversations',
+      payload: { systemId: 'letta', agentId: '[Letta] Lucy' },
+    });
+    const id = created.json().conversation.id as string;
+
+    const pending = await app.inject({ method: 'GET', url: `/api/conversations/${id}/operating-context` });
+    expect(pending.json().operatingContext.pendingApproval).toMatchObject({
+      approvalId: `approval:${id}`,
+      state: 'pending',
+    });
+
+    const approved = await app.inject({ method: 'POST', url: `/api/conversations/${id}/approval` });
+    expect(approved.statusCode).toBe(200);
+    expect(approved.json()).toMatchObject({
+      approvalId: `approval:${id}`,
+      operatingContext: { pendingApproval: { state: 'approved' } },
+    });
+    expect(resolved.has(`approval:${id}`)).toBe(true);
+
+    const replay = await app.inject({ method: 'POST', url: `/api/conversations/${id}/approval` });
+    expect(replay.statusCode).toBe(409);
+    expect(replay.json()).toMatchObject({
+      error: 'APPROVAL_BINDING_FAILED',
+      reason: 'NO_PENDING_APPROVAL',
+    });
   });
 
   it('answers status from bound truth, preserves blocker during status, and clears it only after successful continuation', async () => {

@@ -13,7 +13,16 @@ import { registerCollaborationRoutes } from './collaboration-routes.js';
 import { runCollaborativeReply } from './collaboration-runner.js';
 import { classifyConversationIntent } from './conversation-intent.js';
 import { conversationRuntimeIdentity } from './provider-session-identity.js';
-import { resolveBareApproval, resolveContinuation } from '../shared/conversation-operating-context.js';
+import {
+  reconcilePendingApproval,
+  resolveBareApproval,
+  resolveContinuation,
+  type ConversationOperatingContext,
+} from '../shared/conversation-operating-context.js';
+import {
+  createOpenClawApprovalBackendFromEnv,
+  type ConversationApprovalBackend,
+} from './openclaw-approval.js';
 import { FederationService } from './federation.js';
 import { registerFederationRoutes } from './federation-routes.js';
 import { runFederatedWorkflow } from './federated-runner.js';
@@ -151,11 +160,122 @@ function markdownExport(
   return lines.join('\n');
 }
 
-export function buildApp(options?: { databasePath?: string; artifactRoot?: string }) {
+type BuildAppOptions = {
+  databasePath?: string;
+  artifactRoot?: string;
+  approvalBackend?: ConversationApprovalBackend | null;
+};
+
+async function synchronizePendingApproval(
+  database: ChatDatabase,
+  backend: ConversationApprovalBackend,
+  context: ConversationOperatingContext,
+) {
+  const resolution = reconcilePendingApproval(context, await backend.listPending(context));
+  const synchronized = database.saveConversationOperatingContext(context.conversationId, {
+    ...context,
+    pendingApproval: resolution.ok ? resolution.value : null,
+  })!;
+  return { context: synchronized, resolution };
+}
+
+type ApprovalActionResult =
+  | { ok: true; approvalId: string; operatingContext: ConversationOperatingContext }
+  | {
+      ok: false;
+      statusCode: 404 | 409 | 503;
+      error: string;
+      reason?: string;
+      message: string;
+    };
+
+async function resolveConversationApproval(
+  database: ChatDatabase,
+  backend: ConversationApprovalBackend | null,
+  conversationId: string,
+): Promise<ApprovalActionResult> {
+  const conversation = database.getConversation(conversationId);
+  if (!conversation) {
+    return {
+      ok: false,
+      statusCode: 404,
+      error: 'CONVERSATION_NOT_FOUND',
+      message: 'Conversation을 찾을 수 없습니다.',
+    };
+  }
+  if (!backend || conversation.systemId !== 'letta') {
+    return {
+      ok: false,
+      statusCode: 409,
+      error: 'APPROVAL_BACKEND_UNAVAILABLE',
+      message: '현재 Conversation의 실행 백엔드는 승인 재검증을 지원하지 않습니다.',
+    };
+  }
+
+  const current = database.getConversationOperatingContext(conversationId)!;
+  let synchronized: Awaited<ReturnType<typeof synchronizePendingApproval>>;
+  try {
+    synchronized = await synchronizePendingApproval(database, backend, current);
+  } catch {
+    return {
+      ok: false,
+      statusCode: 503,
+      error: 'APPROVAL_BACKEND_UNAVAILABLE',
+      message: '실행 백엔드의 현재 승인 상태를 검증할 수 없습니다.',
+    };
+  }
+
+  if (!synchronized.resolution.ok) {
+    return {
+      ok: false,
+      statusCode: 409,
+      error: 'APPROVAL_BINDING_FAILED',
+      reason: synchronized.resolution.reason,
+      message: synchronized.resolution.reason === 'AMBIGUOUS_PENDING_APPROVAL'
+        ? '현재 대화에 승인 대기가 둘 이상이라 자동으로 선택할 수 없습니다.'
+        : '현재 대화에 검증된 승인 대기가 없습니다.',
+    };
+  }
+
+  const identity = conversationRuntimeIdentity(conversation);
+  const binding = resolveBareApproval(synchronized.context, identity);
+  if (!binding.ok) {
+    return {
+      ok: false,
+      statusCode: 409,
+      error: 'APPROVAL_BINDING_FAILED',
+      reason: binding.reason,
+      message: '현재 대화의 승인 바인딩을 검증할 수 없습니다.',
+    };
+  }
+
+  try {
+    await backend.resolvePending(synchronized.context, binding.value.approvalId);
+  } catch {
+    return {
+      ok: false,
+      statusCode: 409,
+      error: 'APPROVAL_REVERIFY_FAILED',
+      message: '승인 대상이 더 이상 현재 대화의 대기 상태가 아니어서 실행하지 않았습니다.',
+    };
+  }
+
+  const pendingApproval = synchronized.context.pendingApproval;
+  const operatingContext = database.saveConversationOperatingContext(conversationId, {
+    ...synchronized.context,
+    pendingApproval: pendingApproval ? { ...pendingApproval, state: 'approved' } : null,
+  })!;
+  return { ok: true, approvalId: binding.value.approvalId, operatingContext };
+}
+
+export function buildApp(options?: BuildAppOptions) {
   if (options?.artifactRoot) process.env.CHAT_ARTIFACT_ROOT = options.artifactRoot;
   const db = new ChatDatabase(options?.databasePath);
   const collaboration = new CollaborationService(db);
   const federation = new FederationService(db);
+  const approvalBackend = options?.approvalBackend === undefined
+    ? createOpenClawApprovalBackendFromEnv()
+    : options.approvalBackend;
   const app = Fastify({ logger: process.env.NODE_ENV !== 'test' });
 
   app.register(cors, {
@@ -253,9 +373,30 @@ export function buildApp(options?: { databasePath?: string; artifactRoot?: strin
 
   app.get('/api/conversations/:id/operating-context', async (request, reply) => {
     const { id } = z.object({ id: z.string().min(1) }).parse(request.params);
-    const operatingContext = db.getConversationOperatingContext(id);
+    let operatingContext = db.getConversationOperatingContext(id);
     if (!operatingContext) return reply.status(404).send({ error: 'CONVERSATION_NOT_FOUND' });
+    if (approvalBackend && operatingContext.backendSystem === 'letta') {
+      try {
+        operatingContext = (await synchronizePendingApproval(db, approvalBackend, operatingContext)).context;
+      } catch {
+        // Status reads keep the last verified local snapshot when the backend
+        // cannot be reached. Approval execution itself always fails closed.
+      }
+    }
     return { operatingContext };
+  });
+
+  app.post('/api/conversations/:id/approval', async (request, reply) => {
+    const { id } = z.object({ id: z.string().min(1) }).parse(request.params);
+    const result = await resolveConversationApproval(db, approvalBackend, id);
+    if (!result.ok) {
+      return reply.status(result.statusCode).send({
+        error: result.error,
+        ...(result.reason ? { reason: result.reason } : {}),
+        message: result.message,
+      });
+    }
+    return { approvalId: result.approvalId, operatingContext: result.operatingContext };
   });
 
   app.post('/api/conversations/:id/branch', async (request, reply) => {
@@ -324,22 +465,26 @@ export function buildApp(options?: { databasePath?: string; artifactRoot?: strin
       }
     }
     if (operatingIntent === 'approval') {
-      const binding = resolveBareApproval(operatingContext, currentIdentity);
-      if (!binding.ok) {
+      if (!approvalBackend && !operatingContext.pendingApproval) {
         return reply.status(409).send({
           error: 'APPROVAL_BINDING_FAILED',
-          reason: binding.reason,
+          reason: 'NO_PENDING_APPROVAL',
           message: '현재 대화에 검증된 승인 대기가 없습니다.',
         });
       }
-      // A bound approval id is not execution authority. Until the selected
-      // backend exposes an explicit approval re-verification/consume contract,
-      // fail closed instead of turning natural-language approval into action.
-      return reply.status(409).send({
-        error: 'APPROVAL_BACKEND_HANDOFF_REQUIRED',
-        approvalId: binding.value.approvalId,
-        message: '승인 대상은 확인했지만 실행 백엔드의 재검증 계약이 아직 연결되지 않았습니다.',
-      });
+      const result = await resolveConversationApproval(db, approvalBackend, id);
+      if (!result.ok) {
+        return reply.status(result.statusCode).send({
+          error: result.error,
+          ...(result.reason ? { reason: result.reason } : {}),
+          message: result.message,
+        });
+      }
+      return reply
+        .header('Content-Type', 'application/x-ndjson; charset=utf-8')
+        .header('Cache-Control', 'no-cache, no-transform')
+        .header('X-Accel-Buffering', 'no')
+        .send(eventLine({ type: 'approval.resolved', approvalId: result.approvalId }));
     }
     const config = federation.getConfig(id);
     const federated = config?.mode === 'federated' || input.workflowMode === 'federated';

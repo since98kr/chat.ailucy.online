@@ -26,8 +26,8 @@ export function openClawConversationSessionIdentity(
 
 /**
  * Return the exact stable identity the selected provider transport uses for
- * this logical conversation. OpenClaw currently keys Letta continuity by its
- * `user` field; native/OpenAI adapters use the explicit session_id contract.
+ * this logical conversation. The OpenClaw adapter sends this value explicitly
+ * as `x-openclaw-session-key`; native/OpenAI adapters use session_id.
  */
 export function providerSessionIdentity(
   conversation: ConversationRecord,

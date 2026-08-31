@@ -305,7 +305,13 @@ export class OpenClawLettaAdapter implements ChatBackendAdapter {
       `${trimSlash(this.config.baseUrl)}${normalizePath(this.config.chatPath)}`,
       {
         method: 'POST',
-        headers: this.headers(),
+        headers: {
+          ...this.headers(),
+          'x-openclaw-session-key': openClawConversationSessionIdentity(
+            request.conversation.id,
+            this.config.sessionPrefix,
+          ),
+        },
         signal: request.signal,
         body: JSON.stringify(body),
       },
