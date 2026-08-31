@@ -30,6 +30,7 @@
     "@fastify/cors": "latest",
     "@fastify/multipart": "latest",
     "@fastify/static": "latest",
+    "@openclaw/gateway-client": "2026.7.2-beta.7",
     "better-sqlite3": "latest",
     "fastify": "latest",
     "jose": "latest",
