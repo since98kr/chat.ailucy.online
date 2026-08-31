@@ -279,7 +279,7 @@ export class ChatDatabase {
           authorId: item.agentId,
           content:
             item.systemId === 'letta'
-              ? '이 Conversation은 다른 아젠다와 분리되어 있지만, 저는 승인된 개인 기억을 이어갑니다.'
+              ? '이 Conversation은 다른 아젠다와 분리됩니다. 기억 사용 여부와 범위는 현재 연결된 Lucy/Letta 런타임에서 검증 가능한 상태를 따릅니다.'
               : '이 Conversation은 Hermes 작업 공간입니다. 필요할 때 subagent와 협업하되 최종 응답은 Lucy가 책임집니다.',
         });
       }
