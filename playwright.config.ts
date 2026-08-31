@@ -20,7 +20,7 @@ export default defineConfig({
   },
   webServer: {
     command:
-      "bash -lc 'rm -rf .e2e-data && mkdir -p .e2e-data/artifacts && CHAT_API_PORT=4190 CHAT_DB_PATH=.e2e-data/chat.sqlite CHAT_ARTIFACT_ROOT=.e2e-data/artifacts CHAT_WEB_ROOT=dist node dist-server/runtime.js'",
+      "bash -lc 'rm -rf .e2e-data && mkdir -p .e2e-data/artifacts && CHAT_API_PORT=4190 CHAT_DB_PATH=.e2e-data/chat.sqlite CHAT_ARTIFACT_ROOT=.e2e-data/artifacts CHAT_WEB_ROOT=dist CHAT_RATE_LIMIT_GENERAL=10000 CHAT_RATE_LIMIT_CHAT=1000 CHAT_RATE_LIMIT_UPLOAD=1000 node dist-server/runtime.js'",
     url: 'http://127.0.0.1:4190/api/health',
     reuseExistingServer: false,
     timeout: 30_000,
