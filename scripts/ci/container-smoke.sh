@@ -30,7 +30,7 @@ docker run --rm \
 node -e "const j=require('./preflight.json');if(!j.ok||j.build.sha!=='${EXPECTED_SHA}')process.exit(1)"
 
 log 'Starting primary runtime.'
-docker run --detach --name "${PRIMARY_CONTAINER}" --publish "127.0.0.1:${PRIMARY_PORT}:4174" "${IMAGE}"
+docker run --detach --name "${PRIMARY_CONTAINER}" --publish "127.0.0.1:${PRIMARY_PORT}:4174" --env CHAT_ALLOW_MOCK_ADAPTERS=true "${IMAGE}"
 for attempt in $(seq 1 30); do
   if curl --fail --silent "http://127.0.0.1:${PRIMARY_PORT}/api/health" > health.json; then break; fi
   sleep 1
@@ -61,6 +61,7 @@ docker run --detach --name "${AUTH_CONTAINER}" \
   --publish "127.0.0.1:${AUTH_PORT}:4174" \
   --env CHAT_AUTH_MODE=token \
   --env CHAT_ACCESS_TOKEN=ci-only-value \
+  --env CHAT_ALLOW_MOCK_ADAPTERS=true \
   "${IMAGE}"
 for attempt in $(seq 1 30); do
   if curl --fail --silent "http://127.0.0.1:${AUTH_PORT}/api/health" >/dev/null; then break; fi

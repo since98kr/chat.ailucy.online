@@ -137,7 +137,7 @@ export interface ConversationSearchResult {
 
 export interface AdapterHealthRecord {
   ok: boolean;
-  mode: 'mock' | 'http';
+  mode: 'mock' | 'http' | 'unavailable';
   detail: string;
   latencyMs?: number;
 }

@@ -187,6 +187,7 @@ export async function* runCollaborativeReply(input: CollaborationRunInput): Asyn
         sessionId,
         idempotencyKey,
         operatingContext: database.getConversationOperatingContext(conversation.id) ?? undefined,
+        operatingIntent: input.operatingIntent,
         retryMode: input.retryMode,
         regeneratedFromMessageId: input.regeneratedFromMessageId,
         signal,
@@ -295,7 +296,7 @@ export async function* runCollaborativeReply(input: CollaborationRunInput): Asyn
       participants = collaboration.listParticipants(conversation.id);
       yield { type: 'team.activity', activity: outputActivity };
       yield { type: 'participants.updated', participants };
-      if (agentId === conversation.agentId && !signal.aborted) {
+      if (agentId === conversation.agentId && !signal.aborted && (input.operatingIntent ?? 'ordinary') !== 'status') {
         database.recordConversationRunCompleted(conversation.id, runId);
       }
       yield { type: 'run.completed', runId, message: finalMessage, agentId };

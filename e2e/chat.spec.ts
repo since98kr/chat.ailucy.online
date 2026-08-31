@@ -124,6 +124,63 @@ test('personal Lucy binds 계속해 to the same persisted task and fails closed 
   await expect(page.locator('.error-banner')).toContainText('검증된 승인 대기가 없습니다');
 });
 
+test('personal Lucy reports verified status and preserves blocker truth until successful recovery', async ({ page }, testInfo) => {
+  test.skip(!testInfo.project.name.startsWith('desktop'));
+  await page.goto('/');
+  const create = async () => {
+    const createdResponse = page.waitForResponse((response) =>
+      response.request().method() === 'POST' && new URL(response.url()).pathname === '/api/conversations',
+    );
+    await page.locator('.conversations-title button[aria-label="새 대화"]').click();
+    const response = await createdResponse;
+    return ((await response.json()).conversation as { id: string }).id;
+  };
+
+  const id = await create();
+  const composer = page.locator('.composer textarea');
+  await composer.fill('상태 확인용 실제 작업을 이 대화에 유지해줘.');
+  await page.locator('button[aria-label="전송"]').click();
+  await expect(page.locator('.message--assistant').last()).toContainText('[Letta] Lucy');
+  const beforeStatus = (await (await page.request.get(`/api/conversations/${id}/operating-context`)).json()).operatingContext;
+
+  await composer.fill('지금 어디까지야?');
+  await page.locator('button[aria-label="전송"]').click();
+  const statusAnswer = page.locator('.message--assistant').last();
+  await expect(statusAnswer).toContainText('FACT: ACTIVE TASK');
+  await expect(statusAnswer).toContainText('상태 확인용 실제 작업');
+  await expect(statusAnswer).toContainText('UNKNOWN:');
+  const afterStatus = (await (await page.request.get(`/api/conversations/${id}/operating-context`)).json()).operatingContext;
+  expect(afterStatus.activeTask).toEqual(beforeStatus.activeTask);
+  expect(afterStatus.continuationTarget).toEqual(beforeStatus.continuationTarget);
+
+  const failureId = await create();
+  await composer.fill('TEST_BACKEND_FAILURE_MARKER');
+  await page.locator('button[aria-label="전송"]').click();
+  await expect(page.locator('.error-banner')).toContainText('Test backend failure');
+  const blocked = (await (await page.request.get(`/api/conversations/${failureId}/operating-context`)).json()).operatingContext;
+  expect(blocked.blocker.summary).toContain('Test backend failure');
+
+  await composer.fill('왜 안돼?');
+  await page.locator('button[aria-label="전송"]').click();
+  const blockerAnswer = page.locator('.message--assistant').last();
+  await expect(blockerAnswer).toContainText('BLOCKER:');
+  await expect(blockerAnswer).toContainText('Test backend failure');
+  await expect(blockerAnswer).toContainText('NEXT ACTION:');
+  const afterWhy = (await (await page.request.get(`/api/conversations/${failureId}/operating-context`)).json()).operatingContext;
+  expect(afterWhy.activeTask).toEqual(blocked.activeTask);
+  expect(afterWhy.continuationTarget).toEqual(blocked.continuationTarget);
+  expect(afterWhy.blocker).toEqual(blocked.blocker);
+
+  await composer.fill('계속해');
+  await page.locator('button[aria-label="전송"]').click();
+  await expect.poll(async () => {
+    const context = (await (await page.request.get(`/api/conversations/${failureId}/operating-context`)).json()).operatingContext;
+    return context.blocker;
+  }).toBeNull();
+  const recovered = (await (await page.request.get(`/api/conversations/${failureId}/operating-context`)).json()).operatingContext;
+  expect(recovered.activeTask).toEqual(blocked.activeTask);
+});
+
 test('mobile navigation preserves the System → Conversation hierarchy', async ({ page }, testInfo) => {
   test.skip(!testInfo.project.name.startsWith('mobile'));
   await page.goto('/');

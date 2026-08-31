@@ -1,4 +1,5 @@
 import type { ConversationOperatingContext } from '../../shared/conversation-operating-context.js';
+import type { ConversationOperatingIntent } from '../conversation-intent.js';
 import type {
   AdapterHealthRecord,
   AgentRecord,
@@ -37,6 +38,7 @@ export interface AdapterRequest {
   sessionId?: string;
   idempotencyKey?: string;
   operatingContext?: ConversationOperatingContext;
+  operatingIntent?: ConversationOperatingIntent;
   signal?: AbortSignal;
 }
 

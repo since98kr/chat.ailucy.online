@@ -1,7 +1,7 @@
 import type { AdapterHealthRecord, SystemId } from '../../shared/contracts.js';
 import type { AdapterRequest, ChatBackendAdapter } from './types.js';
 import { wrapArtifactEnvelopeFallback } from './artifact-envelope.js';
-import { MockAdapter } from './mock.js';
+import { MockAdapter, UnavailableAdapter } from './mock.js';
 import { HttpAgentAdapter, httpAdapterConfig } from './http.js';
 import { OpenClawLettaAdapter, openClawLettaConfigFromEnv } from './openclaw-letta.js';
 import { augmentNativeArtifactContext } from './native-artifacts.js';
@@ -52,6 +52,10 @@ function protocol(value: string | undefined) {
   return (value ?? '').trim().toLowerCase();
 }
 
+export function mockAdaptersAllowed(env: NodeJS.ProcessEnv = process.env) {
+  return env.NODE_ENV === 'test' || enabled(env.CHAT_ALLOW_MOCK_ADAPTERS);
+}
+
 function wrapNativeAgentMapping(
   adapter: HttpAgentAdapter,
   configuredAgentId?: string,
@@ -90,7 +94,7 @@ function createAdapter(systemId: SystemId): ChatBackendAdapter {
   }
 
   const config = httpAdapterConfig(systemId);
-  if (!config) return new MockAdapter(systemId);
+  if (!config) return mockAdaptersAllowed() ? new MockAdapter(systemId) : new UnavailableAdapter(systemId);
   const httpAdapter = new HttpAgentAdapter(systemId, config);
   const adapter = config.protocol === 'native'
     ? wrapNativeAgentMapping(httpAdapter, config.agentId, config.modelMap)

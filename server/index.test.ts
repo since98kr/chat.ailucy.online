@@ -164,6 +164,60 @@ describe('Chat Core API', () => {
     expect(detail.json().conversation.messages).toHaveLength(0);
   });
 
+  it('answers status from bound truth, preserves blocker during status, and clears it only after successful continuation', async () => {
+    process.env.CHAT_TEST_MOCK_FAILURE_PATTERN = 'TEST_BACKEND_FAILURE_MARKER';
+    try {
+      const created = await app.inject({
+        method: 'POST',
+        url: '/api/conversations',
+        payload: { systemId: 'letta', agentId: '[Letta] Lucy' },
+      });
+      const id = created.json().conversation.id as string;
+
+      const failed = await app.inject({
+        method: 'POST',
+        url: `/api/conversations/${id}/messages/stream`,
+        payload: { content: 'TEST_BACKEND_FAILURE_MARKER' },
+      });
+      expect(failed.statusCode).toBe(200);
+      expect(failed.body).toContain('run.failed');
+      const blocked = (await app.inject({ method: 'GET', url: `/api/conversations/${id}/operating-context` })).json().operatingContext;
+      expect(blocked.activeTask.label).toBe('TEST_BACKEND_FAILURE_MARKER');
+      expect(blocked.blocker).toMatchObject({
+        summary: expect.stringContaining('Test backend failure'),
+        nextAction: expect.stringContaining('Retry or continue'),
+      });
+
+      const status = await app.inject({
+        method: 'POST',
+        url: `/api/conversations/${id}/messages/stream`,
+        payload: { content: '왜 안돼?' },
+      });
+      expect(status.statusCode).toBe(200);
+      expect(status.body).toContain('BLOCKER');
+      expect(status.body).toContain('NEXT ACTION');
+      const afterStatus = (await app.inject({ method: 'GET', url: `/api/conversations/${id}/operating-context` })).json().operatingContext;
+      expect(afterStatus.activeTask).toEqual(blocked.activeTask);
+      expect(afterStatus.continuationTarget).toEqual(blocked.continuationTarget);
+      expect(afterStatus.blocker).toEqual(blocked.blocker);
+
+      const continued = await app.inject({
+        method: 'POST',
+        url: `/api/conversations/${id}/messages/stream`,
+        payload: { content: '계속해' },
+      });
+      expect(continued.statusCode).toBe(200);
+      expect(continued.body).toContain('run.completed');
+      const recovered = (await app.inject({ method: 'GET', url: `/api/conversations/${id}/operating-context` })).json().operatingContext;
+      expect(recovered.activeTask).toEqual(blocked.activeTask);
+      expect(recovered.continuationTarget).toEqual(blocked.continuationTarget);
+      expect(recovered.blocker).toBeNull();
+      expect(recovered.statusTruth.at(-1)).toMatchObject({ classification: 'FACT' });
+    } finally {
+      delete process.env.CHAT_TEST_MOCK_FAILURE_PATTERN;
+    }
+  });
+
   it('searches message content and branches a Conversation at a selected message', async () => {
     const created = await app.inject({
       method: 'POST',
