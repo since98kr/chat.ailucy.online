@@ -6,6 +6,17 @@ async function expectNoHorizontalOverflow(page: import('@playwright/test').Page)
   expect(metrics.body).toBeLessThanOrEqual(metrics.viewport + 1);
 }
 
+async function createPersonalConversation(page: import('@playwright/test').Page) {
+  const createdResponse = page.waitForResponse((response) =>
+    response.request().method() === 'POST' && new URL(response.url()).pathname === '/api/conversations',
+  );
+  await page.locator('.conversations-title button[aria-label="새 대화"]').click();
+  const response = await createdResponse;
+  const id = ((await response.json()).conversation as { id: string }).id;
+  await expect(page.locator(`[data-conversation-id="${id}"]`)).toHaveClass(/is-active/);
+  return id;
+}
+
 test('desktop Conversation workflow remains aligned and usable', async ({ page }, testInfo) => {
   test.skip(!testInfo.project.name.startsWith('desktop'));
   await page.goto('/');
@@ -93,22 +104,12 @@ test('federated Conversation approves a capsule and records a parallel workflow'
 test('personal Lucy binds 계속해 to the same persisted task and fails closed on unbound 승인', async ({ page }, testInfo) => {
   test.skip(!testInfo.project.name.startsWith('desktop'));
   await page.goto('/');
-  await page.locator('.conversations-title button[aria-label="새 대화"]').click();
+  const id = await createPersonalConversation(page);
   const composer = page.locator('.composer textarea');
   await composer.fill('첫 작업을 실제 대화 문맥으로 유지해줘.');
   await page.locator('button[aria-label="전송"]').click();
   await expect(page.getByText(/\[Letta\] Lucy의 승인된 장기기억은 이어집니다/)).toBeVisible();
 
-  const conversationId = await page.evaluate(() => {
-    const match = window.location.href.match(/conversations\/([^/?#]+)/);
-    return match?.[1] ?? null;
-  }).catch(() => null);
-  const activeId = conversationId ?? await page.locator('.conversation-row.is-active, .conversation-row--active').first().getAttribute('data-conversation-id').catch(() => null);
-  // The current UI does not encode the id in the URL on every layout, so use the
-  // API list to select the newest personal conversation if needed.
-  const list = await page.request.get('/api/conversations?systemId=letta&status=active');
-  const conversations = (await list.json()).conversations as Array<{ id: string; title: string }>;
-  const id = activeId ?? conversations.find((item) => item.title.includes('첫 작업'))?.id ?? conversations[0].id;
   const before = (await (await page.request.get(`/api/conversations/${id}/operating-context`)).json()).operatingContext;
   expect(before.activeTask.label).toContain('첫 작업');
 
@@ -127,16 +128,8 @@ test('personal Lucy binds 계속해 to the same persisted task and fails closed 
 test('personal Lucy reports verified status and preserves blocker truth until successful recovery', async ({ page }, testInfo) => {
   test.skip(!testInfo.project.name.startsWith('desktop'));
   await page.goto('/');
-  const create = async () => {
-    const createdResponse = page.waitForResponse((response) =>
-      response.request().method() === 'POST' && new URL(response.url()).pathname === '/api/conversations',
-    );
-    await page.locator('.conversations-title button[aria-label="새 대화"]').click();
-    const response = await createdResponse;
-    return ((await response.json()).conversation as { id: string }).id;
-  };
 
-  const id = await create();
+  const id = await createPersonalConversation(page);
   const composer = page.locator('.composer textarea');
   await composer.fill('상태 확인용 실제 작업을 이 대화에 유지해줘.');
   await page.locator('button[aria-label="전송"]').click();
@@ -153,7 +146,7 @@ test('personal Lucy reports verified status and preserves blocker truth until su
   expect(afterStatus.activeTask).toEqual(beforeStatus.activeTask);
   expect(afterStatus.continuationTarget).toEqual(beforeStatus.continuationTarget);
 
-  const failureId = await create();
+  const failureId = await createPersonalConversation(page);
   await composer.fill('TEST_BACKEND_FAILURE_MARKER');
   await page.locator('button[aria-label="전송"]').click();
   await expect(page.locator('.error-banner')).toContainText('Test backend failure');

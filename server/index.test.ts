@@ -95,6 +95,70 @@ describe('Chat Core API', () => {
     expect(messages[1].state).toBe('complete');
   });
 
+  it('deduplicates direct operations and rejects idempotency payload conflicts', async () => {
+    const created = await app.inject({
+      method: 'POST',
+      url: '/api/conversations',
+      payload: { systemId: 'letta', agentId: '[Letta] Lucy' },
+    });
+    const id = created.json().conversation.id as string;
+    const clientMessageId = crypto.randomUUID();
+    const idempotencyKey = `direct:${clientMessageId}`;
+    const payload = {
+      content: '중복 없이 한 번만 실행할 작업',
+      clientMessageId,
+      idempotencyKey,
+    };
+
+    const first = await app.inject({
+      method: 'POST',
+      url: `/api/conversations/${id}/messages/stream`,
+      payload,
+    });
+    expect(first.statusCode).toBe(200);
+    expect(first.headers['x-chat-idempotency']).toBe('new');
+    expect(first.body).toContain('content.delta');
+    const beforeReplay = (await app.inject({
+      method: 'GET',
+      url: `/api/conversations/${id}/operating-context`,
+    })).json().operatingContext;
+
+    const replay = await app.inject({
+      method: 'POST',
+      url: `/api/conversations/${id}/messages/stream`,
+      payload,
+    });
+    expect(replay.statusCode).toBe(200);
+    expect(replay.headers['x-chat-idempotency']).toBe('replayed');
+    const replayEvents = replay.body.trim().split('\n').map((line) => JSON.parse(line) as StreamEvent);
+    expect(replayEvents).toHaveLength(1);
+    expect(replayEvents[0]).toMatchObject({ type: 'message.accepted', message: { id: clientMessageId } });
+
+    const afterReplay = (await app.inject({
+      method: 'GET',
+      url: `/api/conversations/${id}/operating-context`,
+    })).json().operatingContext;
+    expect(afterReplay.activeTask).toEqual(beforeReplay.activeTask);
+    expect(afterReplay.continuationTarget).toEqual(beforeReplay.continuationTarget);
+
+    const conflict = await app.inject({
+      method: 'POST',
+      url: `/api/conversations/${id}/messages/stream`,
+      payload: {
+        content: '같은 키에 다른 요청을 넣으면 안 된다',
+        clientMessageId: crypto.randomUUID(),
+        idempotencyKey,
+      },
+    });
+    expect(conflict.statusCode).toBe(409);
+    expect(conflict.json()).toMatchObject({ error: 'DIRECT_MESSAGE_IDEMPOTENCY_CONFLICT' });
+
+    const detail = await app.inject({ method: 'GET', url: `/api/conversations/${id}` });
+    const messages = detail.json().conversation.messages as Array<{ role: string }>;
+    expect(messages.filter((message) => message.role === 'user')).toHaveLength(1);
+    expect(messages.filter((message) => message.role === 'assistant')).toHaveLength(1);
+  });
+
   it('persists a server-owned operating context and binds continuation without replacing the active task', async () => {
     const created = await app.inject({
       method: 'POST',

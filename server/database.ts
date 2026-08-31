@@ -65,6 +65,16 @@ type ArtifactRow = {
   created_at: string;
 };
 
+type DirectMessageRequestRow = {
+  conversation_id: string;
+  idempotency_key: string;
+  request_fingerprint: string;
+  source_message_id: string;
+  state: 'started' | 'completed' | 'failed';
+  created_at: string;
+  updated_at: string;
+};
+
 const now = () => new Date().toISOString();
 
 function mapConversation(row: ConversationRow): ConversationRecord {
@@ -179,6 +189,18 @@ export class ChatDatabase {
         conversation_id TEXT PRIMARY KEY REFERENCES conversations(id) ON DELETE CASCADE,
         context_json TEXT NOT NULL,
         updated_at TEXT NOT NULL
+      );
+
+      CREATE TABLE IF NOT EXISTS direct_message_requests (
+        conversation_id TEXT NOT NULL REFERENCES conversations(id) ON DELETE CASCADE,
+        idempotency_key TEXT NOT NULL,
+        request_fingerprint TEXT NOT NULL,
+        source_message_id TEXT NOT NULL REFERENCES messages(id) ON DELETE CASCADE,
+        state TEXT NOT NULL CHECK (state IN ('started', 'completed', 'failed')),
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL,
+        PRIMARY KEY (conversation_id, idempotency_key),
+        UNIQUE (source_message_id)
       );
 
       CREATE INDEX IF NOT EXISTS idx_conversations_system_status_updated
@@ -464,6 +486,68 @@ export class ChatDatabase {
   getMessage(id: string) {
     const row = this.db.prepare('SELECT * FROM messages WHERE id = ?').get(id) as MessageRow | undefined;
     return row ? mapMessage(row) : null;
+  }
+
+  getDirectMessageRequest(conversationId: string, idempotencyKey: string) {
+    return this.db.prepare(`
+      SELECT * FROM direct_message_requests
+      WHERE conversation_id = ? AND idempotency_key = ?
+    `).get(conversationId, idempotencyKey) as DirectMessageRequestRow | undefined;
+  }
+
+  createDirectMessageRequest(input: {
+    conversationId: string;
+    idempotencyKey: string;
+    requestFingerprint: string;
+    clientMessageId?: string;
+    content: string;
+    parentMessageId?: string | null;
+  }) {
+    const transaction = this.db.transaction(() => {
+      const existing = this.getDirectMessageRequest(input.conversationId, input.idempotencyKey);
+      if (existing) return { created: false as const, request: existing, message: this.getMessage(existing.source_message_id) };
+
+      const message = this.addMessage({
+        id: input.clientMessageId,
+        conversationId: input.conversationId,
+        role: 'user',
+        authorId: 'tei',
+        content: input.content,
+        parentMessageId: input.parentMessageId,
+      });
+      const timestamp = now();
+      this.db.prepare(`
+        INSERT INTO direct_message_requests (
+          conversation_id, idempotency_key, request_fingerprint, source_message_id,
+          state, created_at, updated_at
+        ) VALUES (?, ?, ?, ?, 'started', ?, ?)
+      `).run(
+        input.conversationId,
+        input.idempotencyKey,
+        input.requestFingerprint,
+        message.id,
+        timestamp,
+        timestamp,
+      );
+      return {
+        created: true as const,
+        request: this.getDirectMessageRequest(input.conversationId, input.idempotencyKey)!,
+        message,
+      };
+    });
+    return transaction();
+  }
+
+  setDirectMessageRequestState(
+    conversationId: string,
+    idempotencyKey: string,
+    state: 'completed' | 'failed',
+  ) {
+    return this.db.prepare(`
+      UPDATE direct_message_requests
+      SET state = ?, updated_at = ?
+      WHERE conversation_id = ? AND idempotency_key = ?
+    `).run(state, now(), conversationId, idempotencyKey).changes > 0;
   }
 
   updateMessage(id: string, input: { content?: string; state?: MessageState }) {

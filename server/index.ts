@@ -3,6 +3,7 @@ import cors from '@fastify/cors';
 import multipart from '@fastify/multipart';
 import { Readable } from 'node:stream';
 import { createReadStream } from 'node:fs';
+import { createHash, randomUUID } from 'node:crypto';
 import { z } from 'zod';
 import { ChatDatabase } from './database.js';
 import { adapterHealth } from './adapters/index.js';
@@ -61,6 +62,16 @@ const sendMessageSchema = z.object({
 
 function eventLine(event: StreamEvent) {
   return `${JSON.stringify(event)}\n`;
+}
+
+function directRequestFingerprint(input: z.infer<typeof sendMessageSchema>) {
+  return createHash('sha256').update(JSON.stringify({
+    content: input.content,
+    parentMessageId: input.parentMessageId ?? null,
+    artifactIds: [...input.artifactIds].sort(),
+    targetAgentIds: [...input.targetAgentIds].sort(),
+    workflowMode: input.workflowMode,
+  })).digest('hex');
 }
 
 function markdownExport(
@@ -336,10 +347,64 @@ export function buildApp(options?: { databasePath?: string; artifactRoot?: strin
       return reply.status(409).send({ error: 'FEDERATION_NOT_ENABLED' });
     }
 
-    const idempotencyKey = input.idempotencyKey ?? input.clientMessageId ?? crypto.randomUUID();
+    const idempotencyKey = input.idempotencyKey
+      ?? (input.clientMessageId ? `direct:${input.clientMessageId}` : randomUUID());
     const existingRun = federated ? federation.findRunByIdempotency(id, idempotencyKey) : null;
+    let directRequest = federated ? null : db.getDirectMessageRequest(id, idempotencyKey);
+    const fingerprint = federated ? null : directRequestFingerprint(input);
+
+    if (directRequest) {
+      if (directRequest.request_fingerprint !== fingerprint) {
+        return reply.status(409).send({
+          error: 'DIRECT_MESSAGE_IDEMPOTENCY_CONFLICT',
+          message: '같은 작업 식별자가 다른 요청 내용에 재사용되었습니다.',
+        });
+      }
+      const sourceMessage = db.getMessage(directRequest.source_message_id);
+      if (!sourceMessage) {
+        return reply.status(409).send({
+          error: 'DIRECT_MESSAGE_IDEMPOTENCY_BROKEN',
+          message: '기존 작업의 원본 메시지를 검증할 수 없습니다.',
+        });
+      }
+      if (directRequest.state !== 'completed') {
+        return reply.status(409).send({
+          error: 'DIRECT_MESSAGE_REPLAY_UNSAFE',
+          state: directRequest.state,
+          message: directRequest.state === 'started'
+            ? '동일 작업의 이전 실행 상태를 확정할 수 없어 중복 실행을 차단했습니다.'
+            : '동일 작업의 이전 실행이 실패했습니다. 새 요청 또는 검증된 계속하기로 복구하세요.',
+        });
+      }
+      return reply
+        .header('Content-Type', 'application/x-ndjson; charset=utf-8')
+        .header('Cache-Control', 'no-cache, no-transform')
+        .header('X-Accel-Buffering', 'no')
+        .header('X-Chat-Idempotency', 'replayed')
+        .send(eventLine({ type: 'message.accepted', message: sourceMessage }));
+    }
+
     const existingMessage = existingRun ? db.getMessage(existingRun.sourceMessageId) : null;
-    const userMessage = existingMessage ?? db.addMessage({
+    let userMessage = existingMessage;
+    if (!userMessage && !federated) {
+      const created = db.createDirectMessageRequest({
+        conversationId: id,
+        idempotencyKey,
+        requestFingerprint: fingerprint!,
+        clientMessageId: input.clientMessageId,
+        content: input.content,
+        parentMessageId: input.parentMessageId,
+      });
+      directRequest = created.request;
+      if (!created.created || !created.message) {
+        return reply.status(409).send({
+          error: 'DIRECT_MESSAGE_REPLAY_RACE',
+          message: '동일 작업이 동시에 제출되어 후속 중복 실행을 차단했습니다.',
+        });
+      }
+      userMessage = created.message;
+    }
+    userMessage ??= db.addMessage({
       id: input.clientMessageId,
       conversationId: id,
       role: 'user',
@@ -347,43 +412,63 @@ export function buildApp(options?: { databasePath?: string; artifactRoot?: strin
       content: input.content,
       parentMessageId: input.parentMessageId,
     });
+    const resolvedUserMessage = userMessage;
+
     const attachedArtifacts = existingRun
-      ? conversation.artifacts.filter((artifact) => artifact.messageId === userMessage.id)
-      : db.attachArtifacts(id, input.artifactIds, userMessage.id);
+      ? conversation.artifacts.filter((artifact) => artifact.messageId === resolvedUserMessage.id)
+      : db.attachArtifacts(id, input.artifactIds, resolvedUserMessage.id);
     const controller = new AbortController();
     reply.raw.once('close', () => controller.abort());
 
     async function* generate() {
-      const generator = federated
-        ? runFederatedWorkflow({
-            database: db,
-            collaboration,
-            federation,
-            conversation,
-            userMessage,
-            attachedArtifacts,
+      let directFailed = false;
+      try {
+        const generator = federated
+          ? runFederatedWorkflow({
+              database: db,
+              collaboration,
+              federation,
+              conversation,
+              userMessage: resolvedUserMessage,
+              attachedArtifacts,
+              idempotencyKey,
+              requestedAgentIds: input.targetAgentIds,
+              signal: controller.signal,
+              existingRun,
+            })
+          : runCollaborativeReply({
+              database: db,
+              collaboration,
+              conversation,
+              userMessage: resolvedUserMessage,
+              attachedArtifacts,
+              sendInput: input,
+              signal: controller.signal,
+              idempotencyKey,
+              operatingIntent,
+            });
+        for await (const event of generator) {
+          if (event.type === 'run.failed') directFailed = true;
+          yield eventLine(event);
+        }
+        if (!federated) {
+          db.setDirectMessageRequestState(
+            id,
             idempotencyKey,
-            requestedAgentIds: input.targetAgentIds,
-            signal: controller.signal,
-            existingRun,
-          })
-        : runCollaborativeReply({
-            database: db,
-            collaboration,
-            conversation,
-            userMessage,
-            attachedArtifacts,
-            sendInput: input,
-            signal: controller.signal,
-            operatingIntent,
-          });
-      for await (const event of generator) yield eventLine(event);
+            directFailed || controller.signal.aborted ? 'failed' : 'completed',
+          );
+        }
+      } catch (error) {
+        if (!federated) db.setDirectMessageRequestState(id, idempotencyKey, 'failed');
+        throw error;
+      }
     }
 
     reply
       .header('Content-Type', 'application/x-ndjson; charset=utf-8')
       .header('Cache-Control', 'no-cache, no-transform')
-      .header('X-Accel-Buffering', 'no');
+      .header('X-Accel-Buffering', 'no')
+      .header('X-Chat-Idempotency', federated && existingRun ? 'replayed' : 'new');
     return reply.send(Readable.from(generate()));
   });
 

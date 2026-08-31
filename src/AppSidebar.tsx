@@ -140,7 +140,12 @@ function ConversationGroup({ title, conversations, activeId, onSelect }: {
     <div className="conversation-group">
       <h3>{title}</h3>
       {conversations.map((conversation) => (
-        <button key={conversation.id} className={`conversation-row ${activeId === conversation.id ? 'is-active' : ''}`} onClick={() => onSelect(conversation.id)}>
+        <button
+          key={conversation.id}
+          data-conversation-id={conversation.id}
+          className={`conversation-row ${activeId === conversation.id ? 'is-active' : ''}`}
+          onClick={() => onSelect(conversation.id)}
+        >
           <span className="conversation-row__content">
             <strong>{conversation.title}</strong>
             <small>{conversation.agentId !== '[Hermes] Lucy' && conversation.systemId === 'hermes' ? `${conversation.agentId} · ` : ''}{conversation.preview || '아직 메시지가 없습니다.'}</small>

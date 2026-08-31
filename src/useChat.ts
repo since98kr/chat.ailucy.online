@@ -434,7 +434,9 @@ export function useChat() {
           artifactIds: pendingArtifactIds,
           targetAgentIds,
           workflowMode,
-          idempotencyKey: workflowMode === 'federated' ? `federated:${clientMessageId}` : undefined,
+          idempotencyKey: workflowMode === 'federated'
+            ? `federated:${clientMessageId}`
+            : `direct:${clientMessageId}`,
         },
         handleStreamEvent,
         controller.signal,
