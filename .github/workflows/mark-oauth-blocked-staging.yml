@@ -1,0 +1,35 @@
+name: Mark OAuth-blocked staging
+
+on:
+  push:
+    branches:
+      - ops/cancel-oauth-blocked-staging-177
+
+permissions:
+  statuses: write
+  contents: write
+
+jobs:
+  mark:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Publish explicit external blocker status
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TARGET_SHA: '68c4c4978e263dc82284950da8ccc744edee3fb0'
+        run: |
+          set -euo pipefail
+          gh api --method POST "repos/${GITHUB_REPOSITORY}/statuses/${TARGET_SHA}" \
+            -f state=error \
+            -f context='chat-v2/staging' \
+            -f description='AUTH/USAGE BLOCKED: OAuth exhausted; model QA deferred' \
+            -f target_url='https://github.com/since98kr/chat.ailucy.online/issues/199'
+      - name: Remove one-off status workflow
+        run: |
+          set -euo pipefail
+          git rm .github/workflows/mark-oauth-blocked-staging.yml
+          git config user.name since98kr
+          git config user.email since98kr@gmail.com
+          git commit -m 'chore: remove one-off staging status worker'
+          git push origin HEAD:ops/cancel-oauth-blocked-staging-177
