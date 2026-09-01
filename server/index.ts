@@ -273,12 +273,29 @@ async function resolveConversationApproval(
     };
   }
 
-  const pendingApproval = synchronized.context.pendingApproval;
-  const operatingContext = database.saveConversationOperatingContext(conversationId, {
-    ...synchronized.context,
-    pendingApproval: pendingApproval ? { ...pendingApproval, state: 'approved' } : null,
-  })!;
-  return { ok: true, approvalId: binding.value.approvalId, operatingContext };
+  const approvedId = binding.value.approvalId;
+  const approvedSnapshot = synchronized.context.pendingApproval;
+  const operatingContext = database.updateConversationOperatingContext(conversationId, (latest) => {
+    if (!sameConversationRuntimeIdentity(latest, synchronized.context)) {
+      throw new Error('Conversation runtime identity changed during approval resolution');
+    }
+    const latestApproval = latest.pendingApproval;
+    const pendingApproval = latestApproval?.approvalId === approvedId
+      ? { ...latestApproval, state: 'approved' as const }
+      : latestApproval === null && approvedSnapshot?.approvalId === approvedId
+        ? { ...approvedSnapshot, state: 'approved' as const }
+        : latestApproval;
+    return { ...latest, pendingApproval };
+  });
+  if (!operatingContext) {
+    return {
+      ok: false,
+      statusCode: 404,
+      error: 'CONVERSATION_NOT_FOUND',
+      message: 'Conversation을 찾을 수 없습니다.',
+    };
+  }
+  return { ok: true, approvalId: approvedId, operatingContext };
 }
 
 export function buildApp(options?: BuildAppOptions) {

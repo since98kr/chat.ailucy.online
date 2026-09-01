@@ -348,6 +348,81 @@ describe('Chat Core API', () => {
     }
   });
 
+  it('preserves newer operating state while approval resolution awaits the backend', async () => {
+    await app.close();
+    let releaseResolve!: () => void;
+    let markResolveStarted!: () => void;
+    let resolved = false;
+    const resolveStarted = new Promise<void>((resolve) => { markResolveStarted = resolve; });
+    const resolveGate = new Promise<void>((resolve) => { releaseResolve = resolve; });
+    const approvalBackend: ConversationApprovalBackend = {
+      async listPending(context) {
+        if (resolved) return [];
+        return [{
+          conversationId: context.conversationId,
+          backendSystem: context.backendSystem,
+          agentId: context.agentId,
+          sessionIdentity: context.sessionIdentity,
+          approvalId: `approval:${context.conversationId}`,
+          kind: 'exec',
+          summary: 'test protected action',
+          state: 'pending',
+          createdAt: '2026-09-01T00:00:00.000Z',
+          expiresAt: '2099-09-01T00:00:00.000Z',
+        }];
+      },
+      async resolvePending() {
+        markResolveStarted();
+        await resolveGate;
+        resolved = true;
+      },
+    };
+    app = buildApp({
+      databasePath: join(directory, 'chat.sqlite'),
+      artifactRoot: join(directory, 'artifacts'),
+      approvalBackend,
+    });
+    await app.ready();
+
+    process.env.CHAT_TEST_MOCK_FAILURE_PATTERN = 'TEST_BACKEND_FAILURE_MARKER';
+    try {
+      const created = await app.inject({
+        method: 'POST',
+        url: '/api/conversations',
+        payload: { systemId: 'letta', agentId: '[Letta] Lucy' },
+      });
+      const id = created.json().conversation.id as string;
+      const approval = app.inject({ method: 'POST', url: `/api/conversations/${id}/approval` });
+      await resolveStarted;
+      const failed = await app.inject({
+        method: 'POST',
+        url: `/api/conversations/${id}/messages/stream`,
+        payload: { content: 'TEST_BACKEND_FAILURE_MARKER' },
+      });
+      expect(failed.statusCode).toBe(200);
+      expect(failed.body).toContain('run.failed');
+      const during = (await app.inject({ method: 'GET', url: `/api/conversations/${id}/operating-context` })).json().operatingContext;
+      expect(during.activeTask.label).toBe('TEST_BACKEND_FAILURE_MARKER');
+      expect(during.blocker).toMatchObject({ summary: expect.stringContaining('Test backend failure') });
+      releaseResolve();
+      const approved = await approval;
+      expect(approved.statusCode).toBe(200);
+      expect(approved.json().operatingContext).toMatchObject({
+        activeTask: during.activeTask,
+        blocker: during.blocker,
+        pendingApproval: { approvalId: `approval:${id}`, state: 'approved' },
+      });
+      const after = (await app.inject({ method: 'GET', url: `/api/conversations/${id}/operating-context` })).json().operatingContext;
+      expect(after.activeTask).toEqual(during.activeTask);
+      expect(after.blocker).toEqual(during.blocker);
+      expect(after.statusTruth).toEqual(during.statusTruth);
+      expect(after.pendingApproval).toBeNull();
+    } finally {
+      releaseResolve();
+      delete process.env.CHAT_TEST_MOCK_FAILURE_PATTERN;
+    }
+  });
+
   it('answers status from bound truth, preserves blocker during status, and clears it only after successful continuation', async () => {
     process.env.CHAT_TEST_MOCK_FAILURE_PATTERN = 'TEST_BACKEND_FAILURE_MARKER';
     try {
