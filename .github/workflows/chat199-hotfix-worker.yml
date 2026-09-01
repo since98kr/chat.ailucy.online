@@ -1,0 +1,192 @@
+name: Chat199 Hotfix Worker
+
+on:
+  push:
+    branches:
+      - lucy/chat-stream-refresh-race-199
+
+permissions:
+  contents: write
+
+jobs:
+  hotfix:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Apply stream/navigation lifecycle fix
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+          p=Path('src/useChat.ts')
+          s=p.read_text()
+          def rep(old,new):
+              global s
+              if s.count(old)!=1:
+                  raise SystemExit(f'anchor count {s.count(old)} for {old[:80]!r}')
+              s=s.replace(old,new,1)
+          rep("  const suppressNextSelectionRefreshRef = useRef(false);\n\n  useEffect(() => {", "  const suppressNextSelectionRefreshRef = useRef(false);\n\n  const cancelActiveStreamForNavigation = useCallback(() => {\n    const controller = abortRef.current;\n    if (!controller) return;\n    controller.abort();\n    abortRef.current = null;\n    setIsStreaming(false);\n    setRunStatus(null);\n  }, []);\n\n  useEffect(() => {")
+          rep("  const switchSystem = useCallback((systemId: SystemId, agentId = defaultAgent[systemId]) => {\n    abortRef.current?.abort();", "  const switchSystem = useCallback((systemId: SystemId, agentId = defaultAgent[systemId]) => {\n    cancelActiveStreamForNavigation();")
+          rep("  }, []);\n\n  const switchStatus = useCallback((status: ConversationStatus) => {\n    abortRef.current?.abort();", "  }, [cancelActiveStreamForNavigation]);\n\n  const switchStatus = useCallback((status: ConversationStatus) => {\n    cancelActiveStreamForNavigation();")
+          rep("  }, []);\n\n  const selectConversation = useCallback(async (id: string) => {\n    abortRef.current?.abort();", "  }, [cancelActiveStreamForNavigation]);\n\n  const selectConversation = useCallback(async (id: string) => {\n    cancelActiveStreamForNavigation();")
+          rep("  }, [loadConversation]);\n\n  const createConversation = useCallback(async (agentId = activeAgent || defaultAgent[selectedSystem], title?: string) => {\n    setError(null);", "  }, [cancelActiveStreamForNavigation, loadConversation]);\n\n  const createConversation = useCallback(async (agentId = activeAgent || defaultAgent[selectedSystem], title?: string) => {\n    cancelActiveStreamForNavigation();\n    setError(null);")
+          rep("  }, [activeAgent, applyDetail, selectedSystem]);\n\n  const createFederatedConversation = useCallback(async () => {\n    abortRef.current?.abort();", "  }, [activeAgent, applyDetail, cancelActiveStreamForNavigation, selectedSystem]);\n\n  const createFederatedConversation = useCallback(async () => {\n    cancelActiveStreamForNavigation();")
+          rep("  }, [applyDetail, selectedStatus, selectedSystem]);\n\n  const openAgentConversation = useCallback(async (systemId: SystemId, agentId: string) => {\n    abortRef.current?.abort();", "  }, [applyDetail, cancelActiveStreamForNavigation, selectedStatus, selectedSystem]);\n\n  const openAgentConversation = useCallback(async (systemId: SystemId, agentId: string) => {\n    cancelActiveStreamForNavigation();")
+          rep("  }, [applyDetail, loadConversation, selectedStatus, selectedSystem]);\n\n  const branchConversation = useCallback(async (fromMessageId?: string | null) => {\n    if (!activeIdRef.current) return null;\n    const detail = await branchConversationApi(activeIdRef.current, { fromMessageId });", "  }, [applyDetail, cancelActiveStreamForNavigation, loadConversation, selectedStatus, selectedSystem]);\n\n  const branchConversation = useCallback(async (fromMessageId?: string | null) => {\n    const sourceId = activeIdRef.current;\n    if (!sourceId) return null;\n    cancelActiveStreamForNavigation();\n    const detail = await branchConversationApi(sourceId, { fromMessageId });")
+          rep("  }, [applyDetail]);\n\n  const patchConversation", "  }, [applyDetail, cancelActiveStreamForNavigation]);\n\n  const patchConversation")
+          old="""    const controller = new AbortController();
+              abortRef.current = controller;
+              try {
+                await streamMessage(
+                  conversation.id,
+                  {
+                    content: trimmed,
+                    clientMessageId,
+                    parentMessageId: optimistic.parentMessageId,
+                    artifactIds: pendingArtifactIds,
+                    targetAgentIds,
+                    workflowMode,
+                    idempotencyKey: workflowMode === 'federated'
+                      ? `federated:${clientMessageId}`
+                      : `direct:${clientMessageId}`,
+                  },
+                  handleStreamEvent,
+                  controller.signal,
+                );
+              } catch (reason) {
+                if (!controller.signal.aborted) {
+                  setError(reason instanceof Error ? reason.message : '응답 스트림이 중단됐습니다.');
+                }
+              } finally {
+                setIsStreaming(false);
+                setRunStatus(null);
+                abortRef.current = null;
+                try {
+                  await refreshList(selectedSystem, 'active', conversation.id);
+                } catch {
+                  // Keep the optimistic transcript visible when a refresh fails.
+                }
+              }
+          """
+          old=old.replace('    ', '', 1) if False else old
+          # exact block without Python source indentation
+          old = """    const controller = new AbortController();
+    abortRef.current = controller;
+    try {
+      await streamMessage(
+        conversation.id,
+        {
+          content: trimmed,
+          clientMessageId,
+          parentMessageId: optimistic.parentMessageId,
+          artifactIds: pendingArtifactIds,
+          targetAgentIds,
+          workflowMode,
+          idempotencyKey: workflowMode === 'federated'
+            ? `federated:${clientMessageId}`
+            : `direct:${clientMessageId}`,
+        },
+        handleStreamEvent,
+        controller.signal,
+      );
+    } catch (reason) {
+      if (!controller.signal.aborted) {
+        setError(reason instanceof Error ? reason.message : '응답 스트림이 중단됐습니다.');
+      }
+    } finally {
+      setIsStreaming(false);
+      setRunStatus(null);
+      abortRef.current = null;
+      try {
+        await refreshList(selectedSystem, 'active', conversation.id);
+      } catch {
+        // Keep the optimistic transcript visible when a refresh fails.
+      }
+    }
+"""
+          new = """    const controller = new AbortController();
+    abortRef.current = controller;
+    const ingestCurrentStreamEvent = (event: StreamEvent) => {
+      if (abortRef.current !== controller || activeIdRef.current !== conversation.id) return;
+      handleStreamEvent(event);
+    };
+    try {
+      await streamMessage(
+        conversation.id,
+        {
+          content: trimmed,
+          clientMessageId,
+          parentMessageId: optimistic.parentMessageId,
+          artifactIds: pendingArtifactIds,
+          targetAgentIds,
+          workflowMode,
+          idempotencyKey: workflowMode === 'federated'
+            ? `federated:${clientMessageId}`
+            : `direct:${clientMessageId}`,
+        },
+        ingestCurrentStreamEvent,
+        controller.signal,
+      );
+    } catch (reason) {
+      if (!controller.signal.aborted && abortRef.current === controller) {
+        setError(reason instanceof Error ? reason.message : '응답 스트림이 중단됐습니다.');
+      }
+    } finally {
+      try {
+        const [detail, context] = await Promise.all([
+          getConversation(conversation.id),
+          getConversationOperatingContext(conversation.id),
+        ]);
+        if (abortRef.current === controller && activeIdRef.current === conversation.id) {
+          setOperatingContext(context);
+          applyDetail(detail);
+          setConversations((current) => current.map((item) => item.id === detail.id ? detail : item));
+        }
+      } catch {
+        // Keep the optimistic transcript visible when the refresh fails.
+      } finally {
+        if (abortRef.current === controller) {
+          abortRef.current = null;
+          setIsStreaming(false);
+          setRunStatus(null);
+        }
+      }
+    }
+"""
+          if old not in s: raise SystemExit('send lifecycle block not found')
+          s=s.replace(old,new,1)
+          rep("  }, [activeConversation, approvePending, createConversation, createFederatedConversation, handleStreamEvent, isStreaming, operatingContext, pendingArtifactIds, refreshList, selectedStatus, selectedSystem]);", "  }, [activeConversation, applyDetail, approvePending, createConversation, createFederatedConversation, handleStreamEvent, isStreaming, operatingContext, pendingArtifactIds, selectedStatus, selectedSystem]);")
+          rep("  const stopStreaming = useCallback(() => {\n    abortRef.current?.abort();\n    setIsStreaming(false);\n    setRunStatus(null);\n  }, []);", "  const stopStreaming = useCallback(() => {\n    cancelActiveStreamForNavigation();\n  }, [cancelActiveStreamForNavigation]);")
+          p.write_text(s)
+          PY
+          git diff --check
+      - name: Install dependencies
+        run: npm install --no-audit --no-fund
+      - name: Typecheck
+        run: npm run typecheck
+      - name: Unit and contract tests
+        run: npm test
+      - name: Build
+        run: npm run build
+      - name: Install Chromium
+        run: npx playwright install --with-deps chromium
+      - name: Repeat personal Lucy browser scenarios three times
+        run: npx playwright test e2e/chat.spec.ts --project=desktop-chromium --grep 'personal Lucy' --retries=0 --repeat-each=3
+      - name: Commit verified hotfix and remove one-off worker
+        shell: bash
+        run: |
+          set -euo pipefail
+          git rm .github/workflows/chat199-hotfix-worker.yml
+          git diff --check
+          git config user.name since98kr
+          git config user.email since98kr@gmail.com
+          git add src/useChat.ts
+          git commit -m 'fix(chat): isolate stream lifecycle across navigation'
+          git push origin HEAD:lucy/chat-stream-refresh-race-199
