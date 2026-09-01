@@ -75,6 +75,15 @@ export function useChat() {
   const activeIdRef = useRef<string | null>(null);
   const suppressNextSelectionRefreshRef = useRef(false);
 
+  const cancelActiveStreamForNavigation = useCallback(() => {
+    const controller = abortRef.current;
+    if (!controller) return;
+    controller.abort();
+    abortRef.current = null;
+    setIsStreaming(false);
+    setRunStatus(null);
+  }, []);
+
   useEffect(() => {
     activeIdRef.current = activeConversation?.id ?? null;
   }, [activeConversation?.id]);
@@ -190,19 +199,19 @@ export function useChat() {
   }, [applyDetail, selectedStatus, selectedSystem]);
 
   const switchSystem = useCallback((systemId: SystemId, agentId = defaultAgent[systemId]) => {
-    abortRef.current?.abort();
+    cancelActiveStreamForNavigation();
     setSelectedStatus('active');
     setSelectedSystem(systemId);
     setActiveAgent(agentId);
-  }, []);
+  }, [cancelActiveStreamForNavigation]);
 
   const switchStatus = useCallback((status: ConversationStatus) => {
-    abortRef.current?.abort();
+    cancelActiveStreamForNavigation();
     setSelectedStatus(status);
-  }, []);
+  }, [cancelActiveStreamForNavigation]);
 
   const selectConversation = useCallback(async (id: string) => {
-    abortRef.current?.abort();
+    cancelActiveStreamForNavigation();
     setLoading(true);
     setError(null);
     try {
@@ -212,19 +221,20 @@ export function useChat() {
     } finally {
       setLoading(false);
     }
-  }, [loadConversation]);
+  }, [cancelActiveStreamForNavigation, loadConversation]);
 
   const createConversation = useCallback(async (agentId = activeAgent || defaultAgent[selectedSystem], title?: string) => {
+    cancelActiveStreamForNavigation();
     setError(null);
     setSelectedStatus('active');
     const detail = await createConversationApi({ systemId: selectedSystem, agentId, title });
     setConversations((current) => [detail, ...current]);
     applyDetail(detail);
     return detail;
-  }, [activeAgent, applyDetail, selectedSystem]);
+  }, [activeAgent, applyDetail, cancelActiveStreamForNavigation, selectedSystem]);
 
   const createFederatedConversation = useCallback(async () => {
-    abortRef.current?.abort();
+    cancelActiveStreamForNavigation();
     setError(null);
     if (selectedSystem !== 'hermes' || selectedStatus !== 'active') {
       suppressNextSelectionRefreshRef.current = true;
@@ -240,10 +250,10 @@ export function useChat() {
     });
     setConversations((current) => [detail, ...current]);
     return applyDetail(detail);
-  }, [applyDetail, selectedStatus, selectedSystem]);
+  }, [applyDetail, cancelActiveStreamForNavigation, selectedStatus, selectedSystem]);
 
   const openAgentConversation = useCallback(async (systemId: SystemId, agentId: string) => {
-    abortRef.current?.abort();
+    cancelActiveStreamForNavigation();
     setLoading(true);
     setError(null);
     if (selectedSystem !== systemId || selectedStatus !== 'active') {
@@ -270,17 +280,19 @@ export function useChat() {
     } finally {
       setLoading(false);
     }
-  }, [applyDetail, loadConversation, selectedStatus, selectedSystem]);
+  }, [applyDetail, cancelActiveStreamForNavigation, loadConversation, selectedStatus, selectedSystem]);
 
   const branchConversation = useCallback(async (fromMessageId?: string | null) => {
-    if (!activeIdRef.current) return null;
-    const detail = await branchConversationApi(activeIdRef.current, { fromMessageId });
+    const sourceId = activeIdRef.current;
+    if (!sourceId) return null;
+    cancelActiveStreamForNavigation();
+    const detail = await branchConversationApi(sourceId, { fromMessageId });
     setSelectedSystem(detail.systemId);
     setSelectedStatus('active');
     setConversations((current) => [detail, ...current.filter((item) => item.id !== detail.id)]);
     applyDetail(detail);
     return detail;
-  }, [applyDetail]);
+  }, [applyDetail, cancelActiveStreamForNavigation]);
 
   const patchConversation = useCallback(async (input: UpdateConversationInput) => {
     if (!activeIdRef.current) return null;
@@ -483,6 +495,10 @@ export function useChat() {
     setError(null);
     const controller = new AbortController();
     abortRef.current = controller;
+    const ingestCurrentStreamEvent = (event: StreamEvent) => {
+      if (abortRef.current !== controller || activeIdRef.current !== conversation.id) return;
+      handleStreamEvent(event);
+    };
     try {
       await streamMessage(
         conversation.id,
@@ -497,30 +513,39 @@ export function useChat() {
             ? `federated:${clientMessageId}`
             : `direct:${clientMessageId}`,
         },
-        handleStreamEvent,
+        ingestCurrentStreamEvent,
         controller.signal,
       );
     } catch (reason) {
-      if (!controller.signal.aborted) {
+      if (!controller.signal.aborted && abortRef.current === controller) {
         setError(reason instanceof Error ? reason.message : '응답 스트림이 중단됐습니다.');
       }
     } finally {
-      setIsStreaming(false);
-      setRunStatus(null);
-      abortRef.current = null;
       try {
-        await refreshList(selectedSystem, 'active', conversation.id);
+        const [detail, context] = await Promise.all([
+          getConversation(conversation.id),
+          getConversationOperatingContext(conversation.id),
+        ]);
+        if (abortRef.current === controller && activeIdRef.current === conversation.id) {
+          setOperatingContext(context);
+          applyDetail(detail);
+          setConversations((current) => current.map((item) => item.id === detail.id ? detail : item));
+        }
       } catch {
-        // Keep the optimistic transcript visible when a refresh fails.
+        // Keep the optimistic transcript visible when the refresh fails.
+      } finally {
+        if (abortRef.current === controller) {
+          abortRef.current = null;
+          setIsStreaming(false);
+          setRunStatus(null);
+        }
       }
     }
-  }, [activeConversation, approvePending, createConversation, createFederatedConversation, handleStreamEvent, isStreaming, operatingContext, pendingArtifactIds, refreshList, selectedStatus, selectedSystem]);
+  }, [activeConversation, applyDetail, approvePending, createConversation, createFederatedConversation, handleStreamEvent, isStreaming, operatingContext, pendingArtifactIds, selectedStatus, selectedSystem]);
 
   const stopStreaming = useCallback(() => {
-    abortRef.current?.abort();
-    setIsStreaming(false);
-    setRunStatus(null);
-  }, []);
+    cancelActiveStreamForNavigation();
+  }, [cancelActiveStreamForNavigation]);
 
   const uploadFiles = useCallback(async (files: File[]) => {
     if (files.length === 0) return [];
