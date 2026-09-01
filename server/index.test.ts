@@ -293,6 +293,61 @@ describe('Chat Core API', () => {
     });
   });
 
+  it('preserves a newer blocker while an approval refresh is awaiting the backend', async () => {
+    await app.close();
+    let releasePending!: () => void;
+    let markStarted!: () => void;
+    const pendingStarted = new Promise<void>((resolve) => { markStarted = resolve; });
+    const pendingGate = new Promise<void>((resolve) => { releasePending = resolve; });
+    const approvalBackend: ConversationApprovalBackend = {
+      async listPending() {
+        markStarted();
+        await pendingGate;
+        return [];
+      },
+      async resolvePending() {
+        throw new Error('not used');
+      },
+    };
+    app = buildApp({
+      databasePath: join(directory, 'chat.sqlite'),
+      artifactRoot: join(directory, 'artifacts'),
+      approvalBackend,
+    });
+    await app.ready();
+
+    process.env.CHAT_TEST_MOCK_FAILURE_PATTERN = 'TEST_BACKEND_FAILURE_MARKER';
+    try {
+      const created = await app.inject({
+        method: 'POST',
+        url: '/api/conversations',
+        payload: { systemId: 'letta', agentId: '[Letta] Lucy' },
+      });
+      const id = created.json().conversation.id as string;
+
+      const staleRefresh = app.inject({ method: 'GET', url: `/api/conversations/${id}/operating-context` });
+      await pendingStarted;
+
+      const failed = await app.inject({
+        method: 'POST',
+        url: `/api/conversations/${id}/messages/stream`,
+        payload: { content: 'TEST_BACKEND_FAILURE_MARKER' },
+      });
+      expect(failed.statusCode).toBe(200);
+      expect(failed.body).toContain('run.failed');
+
+      releasePending();
+      expect((await staleRefresh).statusCode).toBe(200);
+      const after = (await app.inject({ method: 'GET', url: `/api/conversations/${id}/operating-context` })).json().operatingContext;
+      expect(after.blocker).toMatchObject({
+        summary: expect.stringContaining('Test backend failure'),
+      });
+    } finally {
+      releasePending();
+      delete process.env.CHAT_TEST_MOCK_FAILURE_PATTERN;
+    }
+  });
+
   it('answers status from bound truth, preserves blocker during status, and clears it only after successful continuation', async () => {
     process.env.CHAT_TEST_MOCK_FAILURE_PATTERN = 'TEST_BACKEND_FAILURE_MARKER';
     try {

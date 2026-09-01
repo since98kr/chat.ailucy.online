@@ -17,6 +17,7 @@ import {
   reconcilePendingApproval,
   resolveBareApproval,
   resolveContinuation,
+  sameConversationRuntimeIdentity,
   type ConversationOperatingContext,
 } from '../shared/conversation-operating-context.js';
 import {
@@ -171,11 +172,23 @@ async function synchronizePendingApproval(
   backend: ConversationApprovalBackend,
   context: ConversationOperatingContext,
 ) {
-  const resolution = reconcilePendingApproval(context, await backend.listPending(context));
-  const synchronized = database.saveConversationOperatingContext(context.conversationId, {
-    ...context,
-    pendingApproval: resolution.ok ? resolution.value : null,
-  })!;
+  const candidates = await backend.listPending(context);
+  const state: { resolution?: ReturnType<typeof reconcilePendingApproval> } = {};
+  const synchronized = database.updateConversationOperatingContext(context.conversationId, (latest) => {
+    if (!sameConversationRuntimeIdentity(latest, context)) {
+      throw new Error('Conversation runtime identity changed during approval synchronization');
+    }
+    const resolution = reconcilePendingApproval(latest, candidates);
+    state.resolution = resolution;
+    return {
+      ...latest,
+      pendingApproval: resolution.ok ? resolution.value : null,
+    };
+  });
+  const resolution = state.resolution;
+  if (!synchronized || !resolution) {
+    throw new Error('Conversation disappeared during approval synchronization');
+  }
   return { context: synchronized, resolution };
 }
 
