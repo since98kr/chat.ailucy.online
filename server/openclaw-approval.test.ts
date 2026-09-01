@@ -43,6 +43,8 @@ describe('OpenClaw approval contract', () => {
       }),
     ]);
     expect(mapOpenClawPendingApprovals(context, records, 'other')).toEqual([]);
+    expect(mapOpenClawPendingApprovals(context, records)).toEqual([]);
+    expect(mapOpenClawPendingApprovals(context, records, '   ')).toEqual([]);
   });
 
   it('normalizes gateway urls and agent aliases without inventing an agent id', () => {
