@@ -3,6 +3,7 @@ import cors from '@fastify/cors';
 import multipart from '@fastify/multipart';
 import { Readable } from 'node:stream';
 import { createReadStream } from 'node:fs';
+import { createHash, randomUUID } from 'node:crypto';
 import { z } from 'zod';
 import { ChatDatabase } from './database.js';
 import { adapterHealth } from './adapters/index.js';
@@ -10,6 +11,19 @@ import { storeArtifact } from './artifacts.js';
 import { CollaborationService } from './collaboration.js';
 import { registerCollaborationRoutes } from './collaboration-routes.js';
 import { runCollaborativeReply } from './collaboration-runner.js';
+import { classifyConversationIntent } from './conversation-intent.js';
+import { conversationRuntimeIdentity } from './provider-session-identity.js';
+import {
+  reconcilePendingApproval,
+  resolveBareApproval,
+  resolveContinuation,
+  sameConversationRuntimeIdentity,
+  type ConversationOperatingContext,
+} from '../shared/conversation-operating-context.js';
+import {
+  createOpenClawApprovalBackendFromEnv,
+  type ConversationApprovalBackend,
+} from './openclaw-approval.js';
 import { FederationService } from './federation.js';
 import { registerFederationRoutes } from './federation-routes.js';
 import { runFederatedWorkflow } from './federated-runner.js';
@@ -58,6 +72,16 @@ const sendMessageSchema = z.object({
 
 function eventLine(event: StreamEvent) {
   return `${JSON.stringify(event)}\n`;
+}
+
+function directRequestFingerprint(input: z.infer<typeof sendMessageSchema>) {
+  return createHash('sha256').update(JSON.stringify({
+    content: input.content,
+    parentMessageId: input.parentMessageId ?? null,
+    artifactIds: [...input.artifactIds].sort(),
+    targetAgentIds: [...input.targetAgentIds].sort(),
+    workflowMode: input.workflowMode,
+  })).digest('hex');
 }
 
 function markdownExport(
@@ -137,12 +161,157 @@ function markdownExport(
   return lines.join('\n');
 }
 
-export function buildApp(options?: { databasePath?: string; artifactRoot?: string }) {
+type BuildAppOptions = {
+  databasePath?: string;
+  artifactRoot?: string;
+  approvalBackend?: ConversationApprovalBackend | null;
+};
+
+async function synchronizePendingApproval(
+  database: ChatDatabase,
+  backend: ConversationApprovalBackend,
+  context: ConversationOperatingContext,
+) {
+  const candidates = await backend.listPending(context);
+  const state: { resolution?: ReturnType<typeof reconcilePendingApproval> } = {};
+  const synchronized = database.updateConversationOperatingContext(context.conversationId, (latest) => {
+    if (!sameConversationRuntimeIdentity(latest, context)) {
+      throw new Error('Conversation runtime identity changed during approval synchronization');
+    }
+    const resolution = reconcilePendingApproval(latest, candidates);
+    state.resolution = resolution;
+    return {
+      ...latest,
+      pendingApproval: resolution.ok ? resolution.value : null,
+    };
+  });
+  const resolution = state.resolution;
+  if (!synchronized || !resolution) {
+    throw new Error('Conversation disappeared during approval synchronization');
+  }
+  return { context: synchronized, resolution };
+}
+
+type ApprovalActionResult =
+  | { ok: true; approvalId: string; operatingContext: ConversationOperatingContext }
+  | {
+      ok: false;
+      statusCode: 404 | 409 | 503;
+      error: string;
+      reason?: string;
+      message: string;
+    };
+
+async function resolveConversationApproval(
+  database: ChatDatabase,
+  backend: ConversationApprovalBackend | null,
+  conversationId: string,
+): Promise<ApprovalActionResult> {
+  const conversation = database.getConversation(conversationId);
+  if (!conversation) {
+    return {
+      ok: false,
+      statusCode: 404,
+      error: 'CONVERSATION_NOT_FOUND',
+      message: 'Conversation을 찾을 수 없습니다.',
+    };
+  }
+  if (!backend || conversation.systemId !== 'letta') {
+    return {
+      ok: false,
+      statusCode: 409,
+      error: 'APPROVAL_BACKEND_UNAVAILABLE',
+      message: '현재 Conversation의 실행 백엔드는 승인 재검증을 지원하지 않습니다.',
+    };
+  }
+
+  const current = database.getConversationOperatingContext(conversationId)!;
+  let synchronized: Awaited<ReturnType<typeof synchronizePendingApproval>>;
+  try {
+    synchronized = await synchronizePendingApproval(database, backend, current);
+  } catch {
+    return {
+      ok: false,
+      statusCode: 503,
+      error: 'APPROVAL_BACKEND_UNAVAILABLE',
+      message: '실행 백엔드의 현재 승인 상태를 검증할 수 없습니다.',
+    };
+  }
+
+  if (!synchronized.resolution.ok) {
+    return {
+      ok: false,
+      statusCode: 409,
+      error: 'APPROVAL_BINDING_FAILED',
+      reason: synchronized.resolution.reason,
+      message: synchronized.resolution.reason === 'AMBIGUOUS_PENDING_APPROVAL'
+        ? '현재 대화에 승인 대기가 둘 이상이라 자동으로 선택할 수 없습니다.'
+        : '현재 대화에 검증된 승인 대기가 없습니다.',
+    };
+  }
+
+  const identity = conversationRuntimeIdentity(conversation);
+  const binding = resolveBareApproval(synchronized.context, identity);
+  if (!binding.ok) {
+    return {
+      ok: false,
+      statusCode: 409,
+      error: 'APPROVAL_BINDING_FAILED',
+      reason: binding.reason,
+      message: '현재 대화의 승인 바인딩을 검증할 수 없습니다.',
+    };
+  }
+
+  try {
+    await backend.resolvePending(synchronized.context, binding.value.approvalId);
+  } catch {
+    return {
+      ok: false,
+      statusCode: 409,
+      error: 'APPROVAL_REVERIFY_FAILED',
+      message: '승인 대상이 더 이상 현재 대화의 대기 상태가 아니어서 실행하지 않았습니다.',
+    };
+  }
+
+  const approvedId = binding.value.approvalId;
+  const approvedSnapshot = synchronized.context.pendingApproval;
+  const operatingContext = database.updateConversationOperatingContext(conversationId, (latest) => {
+    if (!sameConversationRuntimeIdentity(latest, synchronized.context)) {
+      throw new Error('Conversation runtime identity changed during approval resolution');
+    }
+    const latestApproval = latest.pendingApproval;
+    const pendingApproval = latestApproval?.approvalId === approvedId
+      ? { ...latestApproval, state: 'approved' as const }
+      : latestApproval === null && approvedSnapshot?.approvalId === approvedId
+        ? { ...approvedSnapshot, state: 'approved' as const }
+        : latestApproval;
+    return { ...latest, pendingApproval };
+  });
+  if (!operatingContext) {
+    return {
+      ok: false,
+      statusCode: 404,
+      error: 'CONVERSATION_NOT_FOUND',
+      message: 'Conversation을 찾을 수 없습니다.',
+    };
+  }
+  return { ok: true, approvalId: approvedId, operatingContext };
+}
+
+export function buildApp(options?: BuildAppOptions) {
   if (options?.artifactRoot) process.env.CHAT_ARTIFACT_ROOT = options.artifactRoot;
   const db = new ChatDatabase(options?.databasePath);
   const collaboration = new CollaborationService(db);
   const federation = new FederationService(db);
+  const approvalBackend = options?.approvalBackend === undefined
+    ? createOpenClawApprovalBackendFromEnv()
+    : options.approvalBackend;
   const app = Fastify({ logger: process.env.NODE_ENV !== 'test' });
+  if (approvalBackend?.start) {
+    void approvalBackend.start().catch((error) => {
+      app.log.warn({ err: error }, 'OpenClaw approval surface is not ready yet');
+    });
+  }
 
   app.register(cors, {
     origin: process.env.CHAT_ALLOWED_ORIGIN?.split(',').map((value) => value.trim()) ?? true,
@@ -167,7 +336,10 @@ export function buildApp(options?: { databasePath?: string; artifactRoot?: strin
     });
   });
 
-  app.addHook('onClose', async () => db.close());
+  app.addHook('onClose', async () => {
+    await approvalBackend?.close?.();
+    db.close();
+  });
 
   app.get('/api/health', async () => ({
     ok: true,
@@ -237,6 +409,34 @@ export function buildApp(options?: { databasePath?: string; artifactRoot?: strin
     });
   });
 
+  app.get('/api/conversations/:id/operating-context', async (request, reply) => {
+    const { id } = z.object({ id: z.string().min(1) }).parse(request.params);
+    let operatingContext = db.getConversationOperatingContext(id);
+    if (!operatingContext) return reply.status(404).send({ error: 'CONVERSATION_NOT_FOUND' });
+    if (approvalBackend && operatingContext.backendSystem === 'letta') {
+      try {
+        operatingContext = (await synchronizePendingApproval(db, approvalBackend, operatingContext)).context;
+      } catch {
+        // Status reads keep the last verified local snapshot when the backend
+        // cannot be reached. Approval execution itself always fails closed.
+      }
+    }
+    return { operatingContext };
+  });
+
+  app.post('/api/conversations/:id/approval', async (request, reply) => {
+    const { id } = z.object({ id: z.string().min(1) }).parse(request.params);
+    const result = await resolveConversationApproval(db, approvalBackend, id);
+    if (!result.ok) {
+      return reply.status(result.statusCode).send({
+        error: result.error,
+        ...(result.reason ? { reason: result.reason } : {}),
+        message: result.message,
+      });
+    }
+    return { approvalId: result.approvalId, operatingContext: result.operatingContext };
+  });
+
   app.post('/api/conversations/:id/branch', async (request, reply) => {
     const { id } = z.object({ id: z.string().min(1) }).parse(request.params);
     const input = branchConversationSchema.parse(request.body ?? {});
@@ -289,16 +489,113 @@ export function buildApp(options?: { databasePath?: string; artifactRoot?: strin
     const found = db.getConversation(id);
     if (!found) return reply.status(404).send({ error: 'CONVERSATION_NOT_FOUND' });
     const conversation = found;
+    const operatingIntent = classifyConversationIntent(input.content);
+    const operatingContext = db.getConversationOperatingContext(id)!;
+    const currentIdentity = conversationRuntimeIdentity(conversation);
+    if (conversation.systemId === 'letta' && approvalBackend?.start) {
+      try {
+        await approvalBackend.start();
+      } catch {
+        // Ordinary chat remains available. A protected action still fails closed
+        // at OpenClaw when no approval delivery surface can be established.
+      }
+    }
+    if (operatingIntent === 'continuation') {
+      const binding = resolveContinuation(operatingContext, currentIdentity);
+      if (!binding.ok) {
+        return reply.status(409).send({
+          error: 'CONTINUATION_BINDING_FAILED',
+          reason: binding.reason,
+          message: '현재 대화에 검증된 계속하기 대상이 없습니다.',
+        });
+      }
+    }
+    if (operatingIntent === 'approval') {
+      if (!approvalBackend && !operatingContext.pendingApproval) {
+        return reply.status(409).send({
+          error: 'APPROVAL_BINDING_FAILED',
+          reason: 'NO_PENDING_APPROVAL',
+          message: '현재 대화에 검증된 승인 대기가 없습니다.',
+        });
+      }
+      const result = await resolveConversationApproval(db, approvalBackend, id);
+      if (!result.ok) {
+        return reply.status(result.statusCode).send({
+          error: result.error,
+          ...(result.reason ? { reason: result.reason } : {}),
+          message: result.message,
+        });
+      }
+      return reply
+        .header('Content-Type', 'application/x-ndjson; charset=utf-8')
+        .header('Cache-Control', 'no-cache, no-transform')
+        .header('X-Accel-Buffering', 'no')
+        .send(eventLine({ type: 'approval.resolved', approvalId: result.approvalId }));
+    }
     const config = federation.getConfig(id);
     const federated = config?.mode === 'federated' || input.workflowMode === 'federated';
     if (federated && config?.mode !== 'federated') {
       return reply.status(409).send({ error: 'FEDERATION_NOT_ENABLED' });
     }
 
-    const idempotencyKey = input.idempotencyKey ?? input.clientMessageId ?? crypto.randomUUID();
+    const idempotencyKey = input.idempotencyKey
+      ?? (input.clientMessageId ? `direct:${input.clientMessageId}` : randomUUID());
     const existingRun = federated ? federation.findRunByIdempotency(id, idempotencyKey) : null;
+    let directRequest = federated ? null : db.getDirectMessageRequest(id, idempotencyKey);
+    const fingerprint = federated ? null : directRequestFingerprint(input);
+
+    if (directRequest) {
+      if (directRequest.request_fingerprint !== fingerprint) {
+        return reply.status(409).send({
+          error: 'DIRECT_MESSAGE_IDEMPOTENCY_CONFLICT',
+          message: '같은 작업 식별자가 다른 요청 내용에 재사용되었습니다.',
+        });
+      }
+      const sourceMessage = db.getMessage(directRequest.source_message_id);
+      if (!sourceMessage) {
+        return reply.status(409).send({
+          error: 'DIRECT_MESSAGE_IDEMPOTENCY_BROKEN',
+          message: '기존 작업의 원본 메시지를 검증할 수 없습니다.',
+        });
+      }
+      if (directRequest.state !== 'completed') {
+        return reply.status(409).send({
+          error: 'DIRECT_MESSAGE_REPLAY_UNSAFE',
+          state: directRequest.state,
+          message: directRequest.state === 'started'
+            ? '동일 작업의 이전 실행 상태를 확정할 수 없어 중복 실행을 차단했습니다.'
+            : '동일 작업의 이전 실행이 실패했습니다. 새 요청 또는 검증된 계속하기로 복구하세요.',
+        });
+      }
+      return reply
+        .header('Content-Type', 'application/x-ndjson; charset=utf-8')
+        .header('Cache-Control', 'no-cache, no-transform')
+        .header('X-Accel-Buffering', 'no')
+        .header('X-Chat-Idempotency', 'replayed')
+        .send(eventLine({ type: 'message.accepted', message: sourceMessage }));
+    }
+
     const existingMessage = existingRun ? db.getMessage(existingRun.sourceMessageId) : null;
-    const userMessage = existingMessage ?? db.addMessage({
+    let userMessage = existingMessage;
+    if (!userMessage && !federated) {
+      const created = db.createDirectMessageRequest({
+        conversationId: id,
+        idempotencyKey,
+        requestFingerprint: fingerprint!,
+        clientMessageId: input.clientMessageId,
+        content: input.content,
+        parentMessageId: input.parentMessageId,
+      });
+      directRequest = created.request;
+      if (!created.created || !created.message) {
+        return reply.status(409).send({
+          error: 'DIRECT_MESSAGE_REPLAY_RACE',
+          message: '동일 작업이 동시에 제출되어 후속 중복 실행을 차단했습니다.',
+        });
+      }
+      userMessage = created.message;
+    }
+    userMessage ??= db.addMessage({
       id: input.clientMessageId,
       conversationId: id,
       role: 'user',
@@ -306,42 +603,63 @@ export function buildApp(options?: { databasePath?: string; artifactRoot?: strin
       content: input.content,
       parentMessageId: input.parentMessageId,
     });
+    const resolvedUserMessage = userMessage;
+
     const attachedArtifacts = existingRun
-      ? conversation.artifacts.filter((artifact) => artifact.messageId === userMessage.id)
-      : db.attachArtifacts(id, input.artifactIds, userMessage.id);
+      ? conversation.artifacts.filter((artifact) => artifact.messageId === resolvedUserMessage.id)
+      : db.attachArtifacts(id, input.artifactIds, resolvedUserMessage.id);
     const controller = new AbortController();
     reply.raw.once('close', () => controller.abort());
 
     async function* generate() {
-      const generator = federated
-        ? runFederatedWorkflow({
-            database: db,
-            collaboration,
-            federation,
-            conversation,
-            userMessage,
-            attachedArtifacts,
+      let directFailed = false;
+      try {
+        const generator = federated
+          ? runFederatedWorkflow({
+              database: db,
+              collaboration,
+              federation,
+              conversation,
+              userMessage: resolvedUserMessage,
+              attachedArtifacts,
+              idempotencyKey,
+              requestedAgentIds: input.targetAgentIds,
+              signal: controller.signal,
+              existingRun,
+            })
+          : runCollaborativeReply({
+              database: db,
+              collaboration,
+              conversation,
+              userMessage: resolvedUserMessage,
+              attachedArtifacts,
+              sendInput: input,
+              signal: controller.signal,
+              idempotencyKey,
+              operatingIntent,
+            });
+        for await (const event of generator) {
+          if (event.type === 'run.failed') directFailed = true;
+          yield eventLine(event);
+        }
+        if (!federated) {
+          db.setDirectMessageRequestState(
+            id,
             idempotencyKey,
-            requestedAgentIds: input.targetAgentIds,
-            signal: controller.signal,
-            existingRun,
-          })
-        : runCollaborativeReply({
-            database: db,
-            collaboration,
-            conversation,
-            userMessage,
-            attachedArtifacts,
-            sendInput: input,
-            signal: controller.signal,
-          });
-      for await (const event of generator) yield eventLine(event);
+            directFailed || controller.signal.aborted ? 'failed' : 'completed',
+          );
+        }
+      } catch (error) {
+        if (!federated) db.setDirectMessageRequestState(id, idempotencyKey, 'failed');
+        throw error;
+      }
     }
 
     reply
       .header('Content-Type', 'application/x-ndjson; charset=utf-8')
       .header('Cache-Control', 'no-cache, no-transform')
-      .header('X-Accel-Buffering', 'no');
+      .header('X-Accel-Buffering', 'no')
+      .header('X-Chat-Idempotency', federated && existingRun ? 'replayed' : 'new');
     return reply.send(Readable.from(generate()));
   });
 

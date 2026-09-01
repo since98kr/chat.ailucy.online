@@ -1,6 +1,15 @@
 import { describe, expect, it } from 'vitest';
 import { resolveNativeExecution, resolveNativeTargetAgentId } from './index.js';
 
+describe('mockAdaptersAllowed', () => {
+  it('fails closed outside test mode unless the mock flag is explicit', async () => {
+    const { mockAdaptersAllowed } = await import('./index.js');
+    expect(mockAdaptersAllowed({ NODE_ENV: 'production' } as NodeJS.ProcessEnv)).toBe(false);
+    expect(mockAdaptersAllowed({ NODE_ENV: 'production', CHAT_ALLOW_MOCK_ADAPTERS: 'true' } as NodeJS.ProcessEnv)).toBe(true);
+    expect(mockAdaptersAllowed({ NODE_ENV: 'test' } as NodeJS.ProcessEnv)).toBe(true);
+  });
+});
+
 describe('resolveNativeTargetAgentId', () => {
   it('uses an explicit model map when one is configured', () => {
     expect(resolveNativeTargetAgentId(

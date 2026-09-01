@@ -110,8 +110,9 @@ describe('Hermes artifact envelope roundtrip', () => {
     expect(visibleText).not.toContain('hermes.tool.progress');
 
     const messages = receivedBody.messages as Array<{ role: string; content: string }>;
-    expect(messages[0]).toMatchObject({ role: 'system' });
-    expect(messages[0].content).toContain('<CHAT_V2_ARTIFACT>');
+    const systemMessages = messages.filter((message) => message.role === 'system');
+    expect(systemMessages.some((message) => message.content.includes('<CHAT_V2_ARTIFACT>'))).toBe(true);
+    expect(systemMessages.some((message) => message.content.includes('Verified Lucy Chat operating context follows.'))).toBe(true);
     expect(receivedBody.tools).toEqual(expect.any(Array));
 
     const detail = await app.inject({ method: 'GET', url: `/api/conversations/${conversationId}` });

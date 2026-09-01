@@ -24,7 +24,28 @@ function hermesReply(request: AdapterRequest) {
   return `Tei님, [Hermes] Lucy가 이 Conversation의 책임자로 “${latest}”를 직접 처리합니다. 필요한 에이전트는 명시적 멘션이나 참여자 설정으로만 호출됩니다.`;
 }
 
+function statusReply(request: AdapterRequest) {
+  const context = request.operatingContext;
+  if (!context) return 'UNKNOWN: 검증된 Lucy Chat operating context가 없습니다.';
+  const lines: string[] = [];
+  if (context.activeTask) lines.push(`FACT: ACTIVE TASK · ${context.activeTask.label}`);
+  const truth = context.statusTruth.slice(-5);
+  for (const item of truth) lines.push(`${item.classification}: ${item.summary}`);
+  if (!context.activeTask && truth.length === 0) {
+    lines.push('UNKNOWN: 검증된 활성 작업 또는 실행 상태가 없습니다.');
+  }
+  if (context.blocker) {
+    lines.push(`BLOCKER: ${context.blocker.summary}`);
+    lines.push(`NEXT ACTION: ${context.blocker.nextAction}`);
+  } else {
+    lines.push('UNKNOWN: 현재 operating context에는 검증된 blocker가 없습니다.');
+    if (context.nextAction) lines.push(`NEXT ACTION: ${context.nextAction}`);
+  }
+  return lines.join('\n');
+}
+
 function buildReply(systemId: SystemId, request: AdapterRequest) {
+  if (request.operatingIntent === 'status') return statusReply(request);
   const latest = request.userMessage.content;
   if (systemId === 'letta') {
     return `Tei님, 이 Conversation은 다른 아젠다와 분리해서 유지하겠습니다. 다만 [Letta] Lucy의 승인된 장기기억은 이어집니다. 방금 요청하신 “${latest.slice(0, 80)}”를 현재 Conversation의 중심 아젠다로 잡았습니다.`;
@@ -36,12 +57,16 @@ export class MockAdapter implements ChatBackendAdapter {
   constructor(readonly systemId: SystemId) {}
 
   async health(): Promise<AdapterHealthRecord> {
-    return { ok: true, mode: 'mock', detail: `${this.systemId} mock adapter ready` };
+    return { ok: true, mode: 'mock', detail: `${this.systemId} explicit test mock adapter ready` };
   }
 
   async *streamReply(request: AdapterRequest): AsyncGenerator<AdapterStreamItem> {
+    const failureMarker = process.env.CHAT_TEST_MOCK_FAILURE_PATTERN?.trim();
+    if (failureMarker && request.userMessage.content.includes(failureMarker)) {
+      throw new Error(`Test backend failure: ${failureMarker}`);
+    }
     const status = this.systemId === 'letta'
-      ? '기억을 확인하는 중'
+      ? request.operatingIntent === 'status' ? '검증된 대화 상태를 확인하는 중' : '기억을 확인하는 중'
       : request.targetAgentId === '[Hermes] Lucy'
         ? request.routingMode === 'team' ? '팀 결과를 종합하는 중' : '요청을 분석하는 중'
         : `${request.targetAgentId} 작업 중`;
@@ -55,5 +80,21 @@ export class MockAdapter implements ChatBackendAdapter {
       yield { type: 'delta', delta };
       await sleep(18);
     }
+  }
+}
+
+export class UnavailableAdapter implements ChatBackendAdapter {
+  constructor(readonly systemId: SystemId) {}
+
+  async health(): Promise<AdapterHealthRecord> {
+    return {
+      ok: false,
+      mode: 'unavailable',
+      detail: `${this.systemId} real backend is not configured`,
+    };
+  }
+
+  async *streamReply(_request: AdapterRequest): AsyncGenerator<AdapterStreamItem> {
+    throw new Error(`${this.systemId} real backend is not configured`);
   }
 }

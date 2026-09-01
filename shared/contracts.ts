@@ -137,7 +137,7 @@ export interface ConversationSearchResult {
 
 export interface AdapterHealthRecord {
   ok: boolean;
-  mode: 'mock' | 'http';
+  mode: 'mock' | 'http' | 'unavailable';
   detail: string;
   latencyMs?: number;
 }
@@ -234,7 +234,8 @@ export type StreamEvent =
   | { type: 'content.delta'; runId: string; messageId: string; delta: string; authorId?: string }
   | { type: 'artifact.created'; runId: string; artifact: ArtifactRecord }
   | { type: 'run.completed'; runId: string; message: MessageRecord; agentId?: string }
-  | { type: 'run.failed'; runId: string; error: string; agentId?: string };
+  | { type: 'run.failed'; runId: string; error: string; agentId?: string }
+  | { type: 'approval.resolved'; approvalId: string };
 
 export interface CreateConversationInput {
   systemId: SystemId;

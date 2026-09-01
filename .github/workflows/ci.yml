@@ -190,6 +190,9 @@ jobs:
           CHAT_STAGING_PORT: '4199'
           CHAT_PREFLIGHT_STRICT: 'false'
           CHAT_PREFLIGHT_MIN_FREE_BYTES: '1'
+          # This is a wrapper/mechanics smoke, not backend acceptance. Production
+          # and strict staging continue to fail closed without real adapters.
+          CHAT_ALLOW_MOCK_ADAPTERS: 'true'
         run: |
           set -o pipefail
           bash scripts/ops/staging-preflight.sh chat-ailucy-v2:ci ci-sha 2>&1 | tee staging-preflight.log

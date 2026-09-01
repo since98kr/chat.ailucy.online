@@ -6,6 +6,7 @@ export default defineConfig({
   timeout: 45_000,
   expect: { timeout: 10_000 },
   fullyParallel: false,
+  workers: 1,
   forbidOnly: Boolean(process.env.CI),
   retries: process.env.CI ? 1 : 0,
   reporter: [
@@ -20,7 +21,7 @@ export default defineConfig({
   },
   webServer: {
     command:
-      "bash -lc 'rm -rf .e2e-data && mkdir -p .e2e-data/artifacts && CHAT_API_PORT=4190 CHAT_DB_PATH=.e2e-data/chat.sqlite CHAT_ARTIFACT_ROOT=.e2e-data/artifacts CHAT_WEB_ROOT=dist node dist-server/runtime.js'",
+      "bash -lc 'rm -rf .e2e-data && mkdir -p .e2e-data/artifacts && CHAT_API_PORT=4190 CHAT_DB_PATH=.e2e-data/chat.sqlite CHAT_ARTIFACT_ROOT=.e2e-data/artifacts CHAT_WEB_ROOT=dist CHAT_RATE_LIMIT_GENERAL=10000 CHAT_RATE_LIMIT_CHAT=1000 CHAT_RATE_LIMIT_UPLOAD=1000 CHAT_ALLOW_MOCK_ADAPTERS=true CHAT_TEST_MOCK_FAILURE_PATTERN=TEST_BACKEND_FAILURE_MARKER node dist-server/runtime.js'",
     url: 'http://127.0.0.1:4190/api/health',
     reuseExistingServer: false,
     timeout: 30_000,
