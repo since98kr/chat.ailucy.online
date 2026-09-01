@@ -77,6 +77,11 @@ export function mapOpenClawPendingApprovals(
   records: readonly unknown[],
   expectedAgentId?: string,
 ): PendingApprovalBinding[] {
+  // Approval correlation must include the exact runtime agent. If the current
+  // OpenClaw target cannot be resolved to an agent id, fail closed instead of
+  // accepting any agent that happens to share the same session key.
+  const normalizedExpectedAgentId = expectedAgentId?.trim();
+  if (!normalizedExpectedAgentId) return [];
   const mapped: PendingApprovalBinding[] = [];
   for (const raw of records) {
     if (!raw || typeof raw !== 'object' || Array.isArray(raw)) continue;
@@ -93,7 +98,7 @@ export function mapOpenClawPendingApprovals(
       : '';
     const createdAtMs = asTimestamp(record.createdAtMs);
     if (!id || !sessionKey || sessionKey !== context.sessionIdentity || createdAtMs === null) continue;
-    if (expectedAgentId && agentId !== expectedAgentId) continue;
+    if (agentId !== normalizedExpectedAgentId) continue;
     const expiresAtMs = asTimestamp(record.expiresAtMs);
     const kind = boundedText(record.approvalKind, 'exec', 80);
     const summary = boundedText(
