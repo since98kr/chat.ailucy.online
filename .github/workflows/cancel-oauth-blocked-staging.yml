@@ -1,0 +1,32 @@
+name: Cancel OAuth-blocked staging
+
+on:
+  push:
+    branches:
+      - ops/cancel-oauth-blocked-staging-177
+
+permissions:
+  actions: write
+  contents: write
+
+jobs:
+  cancel:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Cancel model-dependent staging run
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TARGET_RUN_ID: '33518188867'
+        run: |
+          set -euo pipefail
+          gh api --method POST "repos/${GITHUB_REPOSITORY}/actions/runs/${TARGET_RUN_ID}/cancel"
+          echo "Cancelled staging run ${TARGET_RUN_ID} because provider OAuth usage is externally exhausted."
+      - name: Remove one-off cancellation workflow
+        run: |
+          set -euo pipefail
+          git rm .github/workflows/cancel-oauth-blocked-staging.yml
+          git config user.name since98kr
+          git config user.email since98kr@gmail.com
+          git commit -m 'chore: remove one-off staging cancellation worker'
+          git push origin HEAD:ops/cancel-oauth-blocked-staging-177
