@@ -8,7 +8,7 @@ type OpsStatus = {
   ok: boolean;
   build: { sha: string; version: string; builtAt: string; environment: string };
   auth: { mode: AuthMode; allowedEmailCount: number; allowedOriginCount: number };
-  adapters: { letta: AdapterStatus; hermes: AdapterStatus };
+  adapters: { letta: AdapterStatus; hermes: AdapterStatus; claude: AdapterStatus };
   runtime: { node: string; uptimeSeconds: number; pid: number };
   timestamp: string;
 };
@@ -213,6 +213,7 @@ function RuntimePanel({ session, onClose, onLogout }: { session: AuthSession; on
               <h3><Bot size={15} /> AI Systems</h3>
               <AdapterRow name="[Letta] Lucy" status={status.adapters.letta} />
               <AdapterRow name="[Hermes] Lucy" status={status.adapters.hermes} />
+              <AdapterRow name="[Claude] 테이아" status={status.adapters.claude} />
             </section>
           </div>
         )}

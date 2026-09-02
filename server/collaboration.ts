@@ -119,6 +119,19 @@ const seedAgents: Array<Omit<AgentRecord, 'createdAt' | 'updatedAt'>> = [
     isLead: false,
     sortOrder: 40,
   },
+  {
+    id: '[Claude] 테이아',
+    systemId: 'claude',
+    displayName: '[Claude] 테이아',
+    shortName: '테이아',
+    role: 'Independent External Reviewer',
+    description: 'Large-context outside-the-loop reasoning; independent verification via live GitHub read access.',
+    capabilities: ['independent-review', 'large-context-reasoning', 'github-verification', 'critique'],
+    enabled: true,
+    directChatEnabled: true,
+    isLead: true,
+    sortOrder: 15,
+  },
 ];
 
 function mapAgent(row: AgentRow): AgentRecord {
@@ -182,7 +195,7 @@ export class CollaborationService {
     this.db.exec(`
       CREATE TABLE IF NOT EXISTS agents (
         id TEXT PRIMARY KEY,
-        system_id TEXT NOT NULL CHECK (system_id IN ('letta', 'hermes')),
+        system_id TEXT NOT NULL CHECK (system_id IN ('letta', 'hermes', 'claude')),
         display_name TEXT NOT NULL,
         short_name TEXT NOT NULL,
         role TEXT NOT NULL,

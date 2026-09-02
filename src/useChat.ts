@@ -33,6 +33,7 @@ import { emptyTranscriptState, reduceTranscript } from './run-transcript';
 const defaultAgent: Record<SystemId, string> = {
   letta: '[Letta] Lucy',
   hermes: '[Hermes] Lucy',
+  claude: '[Claude] 테이아',
 };
 
 function upsertMessage(messages: MessageRecord[], next: MessageRecord) {
