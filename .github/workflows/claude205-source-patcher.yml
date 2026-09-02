@@ -1,0 +1,95 @@
+name: Claude 205 source patcher
+
+on:
+  push:
+    branches:
+      - claude/add-theia-agent-relay-participant-20260902
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    if: ${{ !contains(github.event.head_commit.message, '[claude205-wired]') }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Wire migration helper and mobile scroll
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+
+          def replace_once(path, old, new, marker):
+              p = Path(path)
+              text = p.read_text()
+              if marker in text:
+                  return
+              if old not in text:
+                  raise SystemExit(f'{path}: anchor missing')
+              p.write_text(text.replace(old, new, 1))
+
+          replace_once(
+              'server/database.ts',
+              "import { conversationRuntimeIdentity } from './provider-session-identity.js';\n",
+              "import { conversationRuntimeIdentity } from './provider-session-identity.js';\nimport { widenSystemIdCheckConstraints } from './sqlite-system-id-migration.js';\n",
+              "./sqlite-system-id-migration.js",
+          )
+          replace_once(
+              'server/database.ts',
+              "    if (!this.hasColumn('conversations', 'branched_from_message_id')) {\n      this.db.exec('ALTER TABLE conversations ADD COLUMN branched_from_message_id TEXT');\n    }\n",
+              "    if (!this.hasColumn('conversations', 'branched_from_message_id')) {\n      this.db.exec('ALTER TABLE conversations ADD COLUMN branched_from_message_id TEXT');\n    }\n\n    widenSystemIdCheckConstraints(this.db, 'conversations');\n",
+              "widenSystemIdCheckConstraints(this.db, 'conversations')",
+          )
+          replace_once(
+              'server/collaboration.ts',
+              "import type { ChatDatabase } from './database.js';\n",
+              "import type { ChatDatabase } from './database.js';\nimport { widenSystemIdCheckConstraints } from './sqlite-system-id-migration.js';\n",
+              "./sqlite-system-id-migration.js",
+          )
+          replace_once(
+              'server/collaboration.ts',
+              "      CREATE INDEX IF NOT EXISTS idx_team_activities_conversation ON team_activities(conversation_id, created_at DESC);\n    `);\n",
+              "      CREATE INDEX IF NOT EXISTS idx_team_activities_conversation ON team_activities(conversation_id, created_at DESC);\n    `);\n    widenSystemIdCheckConstraints(this.db, 'agents');\n",
+              "widenSystemIdCheckConstraints(this.db, 'agents')",
+          )
+          replace_once(
+              'server/federation.ts',
+              "import type { ChatDatabase } from './database.js';\n",
+              "import type { ChatDatabase } from './database.js';\nimport { widenSystemIdCheckConstraints } from './sqlite-system-id-migration.js';\n",
+              "./sqlite-system-id-migration.js",
+          )
+          replace_once(
+              'server/federation.ts',
+              "      CREATE INDEX IF NOT EXISTS idx_workflow_events_run_sequence ON workflow_events(run_id, sequence);\n    `);\n",
+              "      CREATE INDEX IF NOT EXISTS idx_workflow_events_run_sequence ON workflow_events(run_id, sequence);\n    `);\n    widenSystemIdCheckConstraints(this.db, 'memory_capsules');\n    widenSystemIdCheckConstraints(this.db, 'workflow_steps');\n    this.db.prepare(`\n      UPDATE conversation_federation\n      SET allowed_system_ids_json = ?\n      WHERE allowed_system_ids_json = ?\n    `).run(JSON.stringify(['letta', 'hermes', 'claude']), JSON.stringify(['letta', 'hermes']));\n",
+              "widenSystemIdCheckConstraints(this.db, 'memory_capsules')",
+          )
+          replace_once(
+              'src/styles.css',
+              ".conversations-section { min-height: 0; display: flex; flex: 1; flex-direction: column; padding-bottom: 8px; }",
+              ".conversations-section { min-height: 0; display: flex; flex: 1; flex-direction: column; overflow-y: auto; overscroll-behavior: contain; padding-bottom: 8px; }",
+              "overscroll-behavior: contain; padding-bottom: 8px; }",
+          )
+          PY
+          git diff --check
+      - name: Verify source and affected mobile paths
+        run: |
+          npm install --no-audit --no-fund
+          npm run typecheck
+          npm test
+          npm run build
+          npx playwright install --with-deps chromium
+          npx playwright test e2e/artifact-lifecycle.spec.ts e2e/retry.spec.ts --project=mobile-chromium
+      - name: Commit source wiring
+        run: |
+          git config user.name since98kr
+          git config user.email since98kr@gmail.com
+          git add server/database.ts server/collaboration.ts server/federation.ts src/styles.css
+          git commit -m 'fix(chat): wire Claude schema migration and mobile sidebar [claude205-wired]'
+          git push origin HEAD:claude/add-theia-agent-relay-participant-20260902
