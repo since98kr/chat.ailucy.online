@@ -6,7 +6,7 @@ on:
       - lucy/staging-provider-usage-gate-199
 
 permissions:
-  contents: write
+  contents: read
 
 jobs:
   build:
@@ -60,14 +60,20 @@ jobs:
         run: npm test
       - name: Production build
         run: npm run build
-      - name: Commit verified provider gate and remove worker
+      - name: Stage verified source bundle
         run: |
           set -euo pipefail
-          git rm .github/workflows/staging-provider-usage-worker-v2.yml .github/staging-provider-usage-worker-v2.py
-          rm -f provider-gate-worker.log
-          git diff --check
-          git config user.name since98kr
-          git config user.email since98kr@gmail.com
-          git add .github/workflows/deploy-staging.yml package.json ops/staging-provider-usage-block.json scripts/ops/staging-provider-usage-gate.mjs scripts/ops/staging-provider-usage-gate.nodecheck.mjs docs/E2E_STAGING_QA_GATES.md
-          git commit -m 'ci(staging): fail closed before provider calls when usage is exhausted'
-          git push origin HEAD:lucy/staging-provider-usage-gate-199
+          mkdir -p verified-provider-gate/.github/workflows verified-provider-gate/ops verified-provider-gate/scripts/ops verified-provider-gate/docs
+          cp .github/workflows/deploy-staging.yml verified-provider-gate/.github/workflows/deploy-staging.yml
+          cp package.json verified-provider-gate/package.json
+          cp ops/staging-provider-usage-block.json verified-provider-gate/ops/staging-provider-usage-block.json
+          cp scripts/ops/staging-provider-usage-gate.mjs verified-provider-gate/scripts/ops/staging-provider-usage-gate.mjs
+          cp scripts/ops/staging-provider-usage-gate.nodecheck.mjs verified-provider-gate/scripts/ops/staging-provider-usage-gate.nodecheck.mjs
+          cp docs/E2E_STAGING_QA_GATES.md verified-provider-gate/docs/E2E_STAGING_QA_GATES.md
+      - name: Upload verified provider gate source
+        uses: actions/upload-artifact@v4
+        with:
+          name: verified-provider-gate-${{ github.run_id }}
+          path: verified-provider-gate
+          if-no-files-found: error
+          retention-days: 1
