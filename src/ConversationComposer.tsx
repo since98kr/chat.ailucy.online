@@ -1,3 +1,4 @@
+import { useEffect, useRef } from 'react';
 import { FileText, Image, LoaderCircle, Mic, Paperclip, Plus, Send, Square, Upload } from 'lucide-react';
 import type { AgentRecord, ArtifactRecord } from '../shared/contracts';
 import type { useChat } from './useChat';
@@ -37,6 +38,15 @@ export default function ConversationComposer({
   const approvalTurnEnabled = Boolean(chat.isStreaming && pendingApproval && !externalBusy);
   const busy = externalBusy || chat.approvingApproval || (chat.isStreaming && !approvalTurnEnabled);
   const attachmentBusy = externalBusy || chat.approvingApproval || chat.isStreaming;
+  const textareaRef = useRef<HTMLTextAreaElement>(null);
+
+  useEffect(() => {
+    textareaRef.current?.focus();
+  }, [chat.activeConversation?.id]);
+
+  useEffect(() => {
+    if (!busy) textareaRef.current?.focus();
+  }, [busy]);
 
   const toggleFederatedTarget = (agent: AgentRecord) => {
     if (busy) return;
@@ -136,6 +146,7 @@ export default function ConversationComposer({
           <input ref={fileInputRef} type="file" multiple hidden disabled={attachmentBusy} onChange={(event) => onFiles(Array.from(event.target.files ?? []))} />
         </div>
         <textarea
+          ref={textareaRef}
           value={chat.activeConversation?.draft ?? ''}
           onChange={(event) => chat.saveDraft(event.target.value)}
           onPaste={(event) => {
