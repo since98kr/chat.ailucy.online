@@ -16,7 +16,7 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: "22"
-      - name: Read main-session runtime metadata only
+      - name: Inspect filtered Gateway latency logs
         env:
           OPENCLAW_GATEWAY_TOKEN: ${{ secrets.OPENCLAW_GATEWAY_TOKEN }}
         run: |
@@ -28,21 +28,34 @@ jobs:
           const timer=setTimeout(()=>finish(false,'timeout'),15000);
           function send(id,method,params){ws.send(JSON.stringify({type:'req',id,method,params}));}
           function finish(ok,reason){if(done)return;done=true;clearTimeout(timer);console.log(`finish=${reason}`);try{ws.close()}catch{};setTimeout(()=>process.exit(ok?0:1),100);}
-          function pick(s){if(!s||typeof s!=='object')return null;const keys=['key','sessionId','status','startedAt','endedAt','runtimeMs','modelProvider','model','agentRuntime','contextTokens','totalTokensFresh','effectiveFastMode','effectiveFastModeSource','fastAutoOnSeconds','hasActiveRun','abortedLastRun','thinkingLevel','unread','updatedAt'];const out={};for(const k of keys)out[k]=s[k]??null;out.activeRunCount=Array.isArray(s.activeRunIds)?s.activeRunIds.length:null;out.effectiveResponseUsage=s.effectiveResponseUsage??null;return out;}
+          function safe(line){
+            let s=String(line??'');
+            if(!/letta-harness|embedded run|lane task|tpm pace|provider failure|fail-closed|stream timeout|runtime_start|queue|rate limit|usage limit/i.test(s)) return null;
+            if(!/2026-09-02T00:(5[0-9]|0[0-5])|Sep 02 00:(5[0-9]|0[0-5])|08:5[0-9]|09:0[0-5]/.test(s) && !/tpm pace|provider failure|fail-closed|stream timeout/i.test(s)) return null;
+            s=s.replace(/Bearer\s+\S+/gi,'Bearer [REDACTED]').replace(/sk-[A-Za-z0-9_-]+/g,'[REDACTED_KEY]');
+            s=s.replace(/detail=Letta run failed:.*/,'detail=[REDACTED_FAILURE_DETAIL]');
+            return s.slice(0,1200);
+          }
           ws.addEventListener('message',(e)=>{
             let f;try{f=JSON.parse(String(e.data))}catch{return finish(false,'invalid-json')}
             if(f.type==='event'&&f.event==='connect.challenge'){
-              send('connect','connect',{minProtocol:4,maxProtocol:4,client:{id:'gateway-client',version:'2026.7.1-2',platform:'linux',mode:'backend'},role:'operator',scopes:['operator.read'],caps:[],commands:[],permissions:{},auth:{token},locale:'en-US',userAgent:'lucy-runtime-diag/1'});return;
+              send('connect','connect',{minProtocol:4,maxProtocol:4,client:{id:'gateway-client',version:'2026.7.1-2',platform:'linux',mode:'backend'},role:'operator',scopes:['operator.read'],caps:[],commands:[],permissions:{},auth:{token},locale:'en-US',userAgent:'lucy-log-diag/1'});return;
             }
             if(f.type==='res'&&f.id==='connect'){
               if(!f.ok)return finish(false,'connect-failed');
-              send('history','chat.history',{sessionKey:'agent:main:main',limit:2});return;
+              send('logs','logs.tail',{limit:5000,maxBytes:2000000});return;
             }
-            if(f.type==='res'&&f.id==='history'){
-              if(!f.ok)return finish(false,'history-failed');
+            if(f.type==='res'&&f.id==='logs'){
+              if(!f.ok){console.log(`logs_error=${f.error?.code||'unknown'}`);return finish(false,'logs-failed')}
               const p=f.payload||{};
-              console.log(JSON.stringify({thinkingLevel:p.thinkingLevel??null,sessionInfo:pick(p.sessionInfo),defaults:{modelProvider:p.defaults?.modelProvider??null,model:p.defaults?.model??null,contextTokens:p.defaults?.contextTokens??null,agentRuntime:p.defaults?.agentRuntime??null,thinkingDefault:p.defaults?.thinkingDefault??null}},null,2));
-              return finish(true,'history-ok');
+              const candidates=[];
+              if(Array.isArray(p.lines))candidates.push(...p.lines);
+              if(Array.isArray(p.entries))candidates.push(...p.entries);
+              if(typeof p.text==='string')candidates.push(...p.text.split('\n'));
+              if(typeof p.data==='string')candidates.push(...p.data.split('\n'));
+              const lines=candidates.map(x=>typeof x==='string'?x:JSON.stringify(x)).map(safe).filter(Boolean);
+              console.log(JSON.stringify({payloadKeys:Object.keys(p),candidateCount:candidates.length,matchedCount:lines.length,lines:lines.slice(-180)},null,2));
+              return finish(true,'logs-ok');
             }
           });
           ws.addEventListener('error',()=>finish(false,'ws-error'));
