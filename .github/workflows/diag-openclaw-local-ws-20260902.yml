@@ -1,0 +1,79 @@
+name: DIAG OpenClaw local WebSocket 20260902
+
+on:
+  push:
+    branches: [diag/openclaw-ws-20260902]
+
+permissions:
+  contents: read
+
+jobs:
+  probe:
+    runs-on: [self-hosted, linux, x64, chat-staging]
+    environment: staging
+    timeout-minutes: 3
+    steps:
+      - name: Compare local 18789 proxy and 18790 gateway WebSockets
+        env:
+          OPENCLAW_GATEWAY_TOKEN: ${{ secrets.OPENCLAW_GATEWAY_TOKEN }}
+        run: |
+          set -Eeuo pipefail
+          echo "hostname=$(hostname)"
+          echo "node=$(node --version 2>/dev/null || true)"
+          for port in 18789 18790; do
+            printf 'http_%s=' "$port"
+            curl -sS --max-time 4 -o /dev/null -w '%{http_code}\n' "http://127.0.0.1:${port}/" || true
+          done
+          node <<'NODE'
+          const token = process.env.OPENCLAW_GATEWAY_TOKEN;
+          async function probe(port) {
+            return new Promise((resolve) => {
+              const result = {port, opened:false, challenge:false, connected:false, history:false, close:null, error:null};
+              const ws = new WebSocket(`ws://127.0.0.1:${port}/`);
+              const timer = setTimeout(() => finish('timeout'), 12000);
+              let done = false;
+              function finish(reason) {
+                if (done) return;
+                done = true;
+                clearTimeout(timer);
+                try { ws.close(); } catch {}
+                result.reason = reason;
+                console.log(JSON.stringify(result));
+                resolve(result);
+              }
+              function send(id, method, params) { ws.send(JSON.stringify({type:'req',id,method,params})); }
+              ws.addEventListener('open', () => { result.opened=true; });
+              ws.addEventListener('error', (e) => { result.error=e?.error?.code || e?.message || 'error'; });
+              ws.addEventListener('close', (e) => { result.close=e.code; if (!done) finish(`closed-${e.code}`); });
+              ws.addEventListener('message', (e) => {
+                let f; try { f=JSON.parse(String(e.data)); } catch { return finish('invalid-json'); }
+                if (f.type==='event' && f.event==='connect.challenge') {
+                  result.challenge=true;
+                  send(`connect-${port}`,'connect',{
+                    minProtocol:4,maxProtocol:4,
+                    client:{id:'cli',version:'2026.7.1-2',platform:'linux',mode:'operator'},
+                    role:'operator',scopes:['operator.read'],caps:[],commands:[],permissions:{},
+                    auth:{token},locale:'en-US',userAgent:'lucy-local-ws-diag/1'
+                  });
+                  return;
+                }
+                if (f.type==='res' && f.id===`connect-${port}`) {
+                  if (!f.ok) { result.error=f.error?.code || 'connect-failed'; return finish('connect-failed'); }
+                  result.connected=true;
+                  send(`history-${port}`,'chat.history',{sessionKey:'agent:main:main',limit:1});
+                  return;
+                }
+                if (f.type==='res' && f.id===`history-${port}`) {
+                  result.history=f.ok===true;
+                  if (!f.ok) result.error=f.error?.code || 'history-failed';
+                  return finish(f.ok ? 'history-ok' : 'history-failed');
+                }
+              });
+            });
+          }
+          (async()=>{
+            const a=await probe(18789);
+            const b=await probe(18790);
+            if (!(a.connected && a.history && b.connected && b.history)) process.exit(1);
+          })();
+          NODE
