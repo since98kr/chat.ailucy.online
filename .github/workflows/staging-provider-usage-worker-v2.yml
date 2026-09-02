@@ -19,7 +19,7 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: '22'
-      - name: Reproduce previously verified source
+      - name: Reproduce and validate provider gate source
         shell: bash
         run: |
           set -euxo pipefail
@@ -28,7 +28,7 @@ jobs:
           path = Path('.github/staging-provider-usage-worker-v2.py')
           text = path.read_text()
           old = "s = s.rstrip() + provider_blocked_job + '\\n'"
-          new = "s = s.rstrip() + '\\n\\n' + provider_blocked_job.strip() + '\\n'"
+          new = "s = s.rstrip() + '\\n\\n' + provider_blocked_job.lstrip('\\n')"
           if old not in text:
               raise SystemExit('EOF patch anchor not found')
           path.write_text(text.replace(old, new, 1))
@@ -36,7 +36,17 @@ jobs:
           python3 .github/staging-provider-usage-worker-v2.py
           git diff --check
           node scripts/ops/staging-provider-usage-gate.nodecheck.mjs
-          ruby -e "require 'yaml'; YAML.load_file(ARGV[0]); puts 'deploy-staging.yml YAML syntax PASS'" .github/workflows/deploy-staging.yml
+          ruby - <<'RUBY'
+          require 'yaml'
+          path = '.github/workflows/deploy-staging.yml'
+          value = YAML.load_file(path)
+          jobs = value.fetch('jobs')
+          %w[provider_gate deploy provider_blocked].each { |name| raise "missing jobs.#{name}" unless jobs.key?(name) }
+          raise 'provider_blocked leaked to top-level' if value.key?('provider_blocked')
+          raise 'deploy must depend on provider_gate' unless jobs.fetch('deploy').fetch('needs') == 'provider_gate'
+          raise 'provider_blocked must depend on provider_gate' unless jobs.fetch('provider_blocked').fetch('needs') == 'provider_gate'
+          puts 'deploy-staging.yml structure PASS'
+          RUBY
       - name: Export all final files
         run: |
           set -euo pipefail
