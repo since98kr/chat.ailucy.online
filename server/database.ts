@@ -12,6 +12,7 @@ import {
   type ConversationOperatingContext,
 } from '../shared/conversation-operating-context.js';
 import { conversationRuntimeIdentity } from './provider-session-identity.js';
+import { widenSystemIdCheckConstraints } from './sqlite-system-id-migration.js';
 import type {
   ArtifactRecord,
   BranchConversationInput,
@@ -221,6 +222,8 @@ export class ChatDatabase {
     if (!this.hasColumn('conversations', 'branched_from_message_id')) {
       this.db.exec('ALTER TABLE conversations ADD COLUMN branched_from_message_id TEXT');
     }
+
+    widenSystemIdCheckConstraints(this.db, 'conversations');
   }
 
   private seed() {

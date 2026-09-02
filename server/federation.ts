@@ -14,6 +14,7 @@ import type {
   WorkflowStepStatus,
 } from '../shared/contracts.js';
 import type { ChatDatabase } from './database.js';
+import { widenSystemIdCheckConstraints } from './sqlite-system-id-migration.js';
 
 const now = () => new Date().toISOString();
 const parseJson = <T>(value: string, fallback: T): T => {
@@ -240,6 +241,13 @@ export class FederationService {
       CREATE INDEX IF NOT EXISTS idx_workflow_steps_run_group ON workflow_steps(run_id, parallel_group, position);
       CREATE INDEX IF NOT EXISTS idx_workflow_events_run_sequence ON workflow_events(run_id, sequence);
     `);
+    widenSystemIdCheckConstraints(this.db, 'memory_capsules');
+    widenSystemIdCheckConstraints(this.db, 'workflow_steps');
+    this.db.prepare(`
+      UPDATE conversation_federation
+      SET allowed_system_ids_json = ?
+      WHERE allowed_system_ids_json = ?
+    `).run(JSON.stringify(['letta', 'hermes', 'claude']), JSON.stringify(['letta', 'hermes']));
   }
 
   enableConversation(conversationId: string, coordinatorAgentId = '[Hermes] Lucy') {

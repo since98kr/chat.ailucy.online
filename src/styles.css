@@ -193,7 +193,7 @@ button:focus-visible, textarea:focus-visible { outline: 2px solid rgba(139, 92, 
 .presence { width: 7px; height: 7px; border-radius: 50%; background: #485469; }
 .presence--active { background: var(--green); box-shadow: 0 0 0 3px rgba(61, 220, 151, .08); }
 
-.conversations-section { min-height: 0; display: flex; flex: 1; flex-direction: column; padding-bottom: 8px; }
+.conversations-section { min-height: 0; display: flex; flex: 1; flex-direction: column; overflow-y: auto; overscroll-behavior: contain; padding-bottom: 8px; }
 .conversations-title { margin-top: 2px; }
 .conversation-group { margin-top: 10px; }
 .conversation-group h3 { margin: 0 8px 5px; color: #707d92; font-size: 10px; font-weight: 600; }

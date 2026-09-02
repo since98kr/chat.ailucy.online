@@ -13,6 +13,7 @@ import type {
   UpdateParticipantsInput,
 } from '../shared/contracts.js';
 import type { ChatDatabase } from './database.js';
+import { widenSystemIdCheckConstraints } from './sqlite-system-id-migration.js';
 
 type AgentRow = {
   id: string;
@@ -235,6 +236,7 @@ export class CollaborationService {
       CREATE INDEX IF NOT EXISTS idx_participants_conversation ON conversation_participants(conversation_id, role, updated_at DESC);
       CREATE INDEX IF NOT EXISTS idx_team_activities_conversation ON team_activities(conversation_id, created_at DESC);
     `);
+    widenSystemIdCheckConstraints(this.db, 'agents');
   }
 
   private seedAgents() {
