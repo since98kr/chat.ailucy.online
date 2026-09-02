@@ -188,3 +188,9 @@ usually sufficient to distinguish these cases:
 the unmet items are covered by the specs above, which means they are unverified
 rather than unimplemented. They remain unmet until a run produces evidence.
 Enabling a gate is not evidence; a passing run is.
+
+## Provider usage / authentication external blocker
+
+`ops/staging-provider-usage-block.json` is an explicit, source-controlled emergency gate for a known provider authentication or usage exhaustion event. The GitHub-hosted `provider_gate` job evaluates it before the self-hosted staging job is scheduled. When `blocked: true`, staging/runtime secrets and provider calls are not started; the workflow records `chat-v2/staging = error` with `AUTH/USAGE BLOCKED` and fails closed. This is never acceptance evidence.
+
+The marker is non-secret and requires `classification: AUTH/USAGE`, a bounded reason, and the canonical issue number. After usage is restored, remove the marker (or set `blocked: false`) in a reviewed commit; the next main push re-enables normal fail-closed staging verification. Production workflows do not consume this marker.

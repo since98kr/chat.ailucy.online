@@ -13,7 +13,7 @@
     "typecheck": "tsc --noEmit --pretty false",
     "test": "vitest run && npm run test:bridge && npm run test:qa-gates",
     "test:bridge": "node --test ops/letta-bridge/*.nodecheck.mjs",
-    "test:qa-gates": "bash scripts/ops/staging-qa-gate-guard.nodecheck.sh",
+    "test:qa-gates": "bash scripts/ops/staging-qa-gate-guard.nodecheck.sh && node scripts/ops/staging-provider-usage-gate.nodecheck.mjs",
     "test:e2e": "playwright test",
     "test:e2e:auth": "playwright test --config playwright.auth.config.ts",
     "test:e2e:staging": "playwright test --config playwright.staging.config.ts",
