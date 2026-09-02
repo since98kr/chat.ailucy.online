@@ -1,3 +1,4 @@
+// Current-main revalidation marker: Claude SystemId migration remains covered after syncing #206.
 import Database from 'better-sqlite3';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
