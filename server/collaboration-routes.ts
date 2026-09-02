@@ -6,7 +6,7 @@ import type { CollaborationService } from './collaboration.js';
 import { runCollaborativeReply } from './collaboration-runner.js';
 import type { ChatDatabase } from './database.js';
 
-const systemIdSchema = z.enum(['letta', 'hermes']);
+const systemIdSchema = z.enum(['letta', 'hermes', 'claude']);
 const participantStateSchema = z.enum(['active', 'idle', 'working', 'reviewing', 'blocked', 'offline']);
 const retryModeSchema = z.enum(['retry', 'regenerate']);
 const eventLine = (event: StreamEvent) => `${JSON.stringify(event)}\n`;

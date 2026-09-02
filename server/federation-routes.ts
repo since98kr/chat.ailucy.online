@@ -7,7 +7,7 @@ import type { ChatDatabase } from './database.js';
 import type { FederationService } from './federation.js';
 import { replayWorkflowEvents, runFederatedWorkflow } from './federated-runner.js';
 
-const systemIdSchema = z.enum(['letta', 'hermes']);
+const systemIdSchema = z.enum(['letta', 'hermes', 'claude']);
 const capsuleStatusSchema = z.enum(['draft', 'approved', 'revoked']);
 
 const createCapsuleSchema = z.object({

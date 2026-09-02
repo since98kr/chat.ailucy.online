@@ -14,6 +14,7 @@ import type {
   WorkflowStepStatus,
 } from '../shared/contracts.js';
 import type { ChatDatabase } from './database.js';
+import { widenSystemIdCheckConstraints } from './sqlite-system-id-migration.js';
 
 const now = () => new Date().toISOString();
 const parseJson = <T>(value: string, fallback: T): T => {
@@ -168,7 +169,7 @@ export class FederationService {
         conversation_id TEXT PRIMARY KEY REFERENCES conversations(id) ON DELETE CASCADE,
         mode TEXT NOT NULL DEFAULT 'federated' CHECK (mode IN ('single', 'federated')),
         coordinator_agent_id TEXT NOT NULL,
-        allowed_system_ids_json TEXT NOT NULL DEFAULT '["letta","hermes"]',
+        allowed_system_ids_json TEXT NOT NULL DEFAULT '["letta","hermes","claude"]',
         memory_policy TEXT NOT NULL DEFAULT 'explicit-capsules-only' CHECK (memory_policy = 'explicit-capsules-only'),
         created_at TEXT NOT NULL,
         updated_at TEXT NOT NULL
@@ -177,8 +178,8 @@ export class FederationService {
       CREATE TABLE IF NOT EXISTS memory_capsules (
         id TEXT PRIMARY KEY,
         conversation_id TEXT NOT NULL REFERENCES conversations(id) ON DELETE CASCADE,
-        source_system_id TEXT NOT NULL CHECK (source_system_id IN ('letta', 'hermes')),
-        target_system_id TEXT NOT NULL CHECK (target_system_id IN ('letta', 'hermes')),
+        source_system_id TEXT NOT NULL CHECK (source_system_id IN ('letta', 'hermes', 'claude')),
+        target_system_id TEXT NOT NULL CHECK (target_system_id IN ('letta', 'hermes', 'claude')),
         title TEXT NOT NULL,
         content TEXT NOT NULL,
         status TEXT NOT NULL DEFAULT 'draft' CHECK (status IN ('draft', 'approved', 'revoked')),
@@ -210,7 +211,7 @@ export class FederationService {
         id TEXT PRIMARY KEY,
         run_id TEXT NOT NULL REFERENCES workflow_runs(id) ON DELETE CASCADE,
         agent_id TEXT NOT NULL,
-        system_id TEXT NOT NULL CHECK (system_id IN ('letta', 'hermes')),
+        system_id TEXT NOT NULL CHECK (system_id IN ('letta', 'hermes', 'claude')),
         position INTEGER NOT NULL,
         parallel_group INTEGER NOT NULL DEFAULT 0,
         depends_on_step_ids_json TEXT NOT NULL DEFAULT '[]',
@@ -240,6 +241,13 @@ export class FederationService {
       CREATE INDEX IF NOT EXISTS idx_workflow_steps_run_group ON workflow_steps(run_id, parallel_group, position);
       CREATE INDEX IF NOT EXISTS idx_workflow_events_run_sequence ON workflow_events(run_id, sequence);
     `);
+    widenSystemIdCheckConstraints(this.db, 'memory_capsules');
+    widenSystemIdCheckConstraints(this.db, 'workflow_steps');
+    this.db.prepare(`
+      UPDATE conversation_federation
+      SET allowed_system_ids_json = ?
+      WHERE allowed_system_ids_json = ?
+    `).run(JSON.stringify(['letta', 'hermes', 'claude']), JSON.stringify(['letta', 'hermes']));
   }
 
   enableConversation(conversationId: string, coordinatorAgentId = '[Hermes] Lucy') {
@@ -254,7 +262,7 @@ export class FederationService {
         coordinator_agent_id = excluded.coordinator_agent_id,
         allowed_system_ids_json = excluded.allowed_system_ids_json,
         updated_at = excluded.updated_at
-    `).run(conversationId, coordinatorAgentId, JSON.stringify(['letta', 'hermes']), createdAt, createdAt);
+    `).run(conversationId, coordinatorAgentId, JSON.stringify(['letta', 'hermes', 'claude']), createdAt, createdAt);
     return this.getConfig(conversationId)!;
   }
 
