@@ -1,0 +1,312 @@
+name: Claude 205 hardening worker
+
+on:
+  push:
+    branches:
+      - claude/add-theia-agent-relay-participant-20260902
+
+permissions:
+  contents: write
+
+jobs:
+  harden:
+    if: ${{ !contains(github.event.head_commit.message, '[claude205-hardened]') }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Apply migration and mobile hardening
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+
+          helper = r'''import type Database from 'better-sqlite3';
+
+          type SchemaRow = { sql: string | null };
+          type ColumnRow = { name: string };
+
+          function quoted(identifier: string) {
+            if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(identifier)) {
+              throw new Error(`Unsafe SQLite identifier: ${identifier}`);
+            }
+            return `"${identifier}"`;
+          }
+
+          export function widenSystemIdCheckConstraints(db: Database.Database, table: string) {
+            const schema = db.prepare(`SELECT sql FROM sqlite_master WHERE type = 'table' AND name = ?`)
+              .get(table) as SchemaRow | undefined;
+            const sql = schema?.sql ?? '';
+            if (!sql || sql.includes("'claude'")) return false;
+            const oldConstraint = "('letta', 'hermes')";
+            if (!sql.includes(oldConstraint)) {
+              throw new Error(`Cannot widen ${table}: expected legacy SystemId CHECK was not found`);
+            }
+            if (db.inTransaction) throw new Error(`Cannot widen ${table} inside an active transaction`);
+
+            const tableName = quoted(table);
+            const temp = `${table}__system_id_v3`;
+            const tempName = quoted(temp);
+            const columns = (db.prepare(`PRAGMA table_info(${tableName})`).all() as ColumnRow[]).map((row) => row.name);
+            if (!columns.length) throw new Error(`Cannot widen ${table}: no columns found`);
+            const columnList = columns.map(quoted).join(', ');
+            const objects = db.prepare(`
+              SELECT type, name, sql FROM sqlite_master
+              WHERE tbl_name = ? AND type IN ('index', 'trigger') AND sql IS NOT NULL
+              ORDER BY type, name
+            `).all(table) as Array<{ type: string; name: string; sql: string }>;
+
+            const createSql = sql
+              .replace(/^CREATE TABLE\s+(?:IF NOT EXISTS\s+)?(?:"[^"]+"|`[^`]+`|\[[^\]]+\]|\S+)/i, `CREATE TABLE ${tempName}`)
+              .split(oldConstraint).join("('letta', 'hermes', 'claude')");
+            const foreignKeysEnabled = Number(db.pragma('foreign_keys', { simple: true })) !== 0;
+            if (foreignKeysEnabled) db.pragma('foreign_keys = OFF');
+            try {
+              db.exec('BEGIN IMMEDIATE');
+              db.exec(`DROP TABLE IF EXISTS ${tempName}`);
+              db.exec(createSql);
+              db.exec(`INSERT INTO ${tempName} (${columnList}) SELECT ${columnList} FROM ${tableName}`);
+              db.exec(`DROP TABLE ${tableName}`);
+              db.exec(`ALTER TABLE ${tempName} RENAME TO ${tableName}`);
+              for (const object of objects) db.exec(object.sql);
+              db.exec('COMMIT');
+            } catch (error) {
+              if (db.inTransaction) db.exec('ROLLBACK');
+              throw error;
+            } finally {
+              if (foreignKeysEnabled) db.pragma('foreign_keys = ON');
+            }
+            const violations = db.pragma('foreign_key_check') as unknown[];
+            if (violations.length) throw new Error(`Foreign key check failed after widening ${table}`);
+            return true;
+          }
+          '''.replace(/^          /gm, '')
+          Path('server/sqlite-system-id-migration.ts').write_text(helper)
+
+          database = Path('server/database.ts')
+          text = database.read_text()
+          anchor = "import { conversationRuntimeIdentity } from './provider-session-identity.js';\n"
+          addition = anchor + "import { widenSystemIdCheckConstraints } from './sqlite-system-id-migration.js';\n"
+          if "sqlite-system-id-migration" not in text:
+              if anchor not in text: raise SystemExit('database import anchor missing')
+              text = text.replace(anchor, addition, 1)
+          anchor = "    if (!this.hasColumn('conversations', 'branched_from_message_id')) {\n      this.db.exec('ALTER TABLE conversations ADD COLUMN branched_from_message_id TEXT');\n    }\n"
+          replacement = anchor + "\n    widenSystemIdCheckConstraints(this.db, 'conversations');\n"
+          if "widenSystemIdCheckConstraints(this.db, 'conversations')" not in text:
+              if anchor not in text: raise SystemExit('database migration anchor missing')
+              text = text.replace(anchor, replacement, 1)
+          database.write_text(text)
+
+          collaboration = Path('server/collaboration.ts')
+          text = collaboration.read_text()
+          anchor = "import type { ChatDatabase } from './database.js';\n"
+          addition = anchor + "import { widenSystemIdCheckConstraints } from './sqlite-system-id-migration.js';\n"
+          if "sqlite-system-id-migration" not in text:
+              if anchor not in text: raise SystemExit('collaboration import anchor missing')
+              text = text.replace(anchor, addition, 1)
+          anchor = "      CREATE INDEX IF NOT EXISTS idx_team_activities_conversation ON team_activities(conversation_id, created_at DESC);\n    `);\n"
+          replacement = anchor + "    widenSystemIdCheckConstraints(this.db, 'agents');\n"
+          if "widenSystemIdCheckConstraints(this.db, 'agents')" not in text:
+              if anchor not in text: raise SystemExit('collaboration migrate anchor missing')
+              text = text.replace(anchor, replacement, 1)
+          collaboration.write_text(text)
+
+          federation = Path('server/federation.ts')
+          text = federation.read_text()
+          anchor = "import type { ChatDatabase } from './database.js';\n"
+          addition = anchor + "import { widenSystemIdCheckConstraints } from './sqlite-system-id-migration.js';\n"
+          if "sqlite-system-id-migration" not in text:
+              if anchor not in text: raise SystemExit('federation import anchor missing')
+              text = text.replace(anchor, addition, 1)
+          anchor = "      CREATE INDEX IF NOT EXISTS idx_workflow_events_run_sequence ON workflow_events(run_id, sequence);\n    `);\n"
+          replacement = anchor + "    widenSystemIdCheckConstraints(this.db, 'memory_capsules');\n    widenSystemIdCheckConstraints(this.db, 'workflow_steps');\n    this.db.prepare(`\n      UPDATE conversation_federation\n      SET allowed_system_ids_json = ?\n      WHERE allowed_system_ids_json = ?\n    `).run(JSON.stringify(['letta', 'hermes', 'claude']), JSON.stringify(['letta', 'hermes']));\n"
+          if "widenSystemIdCheckConstraints(this.db, 'memory_capsules')" not in text:
+              if anchor not in text: raise SystemExit('federation migrate anchor missing')
+              text = text.replace(anchor, replacement, 1)
+          federation.write_text(text)
+
+          styles = Path('src/styles.css')
+          text = styles.read_text()
+          old = ".conversations-section { min-height: 0; display: flex; flex: 1; flex-direction: column; padding-bottom: 8px; }"
+          new = ".conversations-section { min-height: 0; display: flex; flex: 1; flex-direction: column; overflow-y: auto; overscroll-behavior: contain; padding-bottom: 8px; }"
+          if old in text:
+              text = text.replace(old, new, 1)
+          elif new not in text:
+              raise SystemExit('styles conversations anchor missing')
+          styles.write_text(text)
+
+          test = r'''import Database from 'better-sqlite3';
+          import { mkdtempSync, rmSync } from 'node:fs';
+          import { join } from 'node:path';
+          import { tmpdir } from 'node:os';
+          import { afterEach, describe, expect, it } from 'vitest';
+          import type { FastifyInstance } from 'fastify';
+          import { buildApp } from './index.js';
+          import { widenSystemIdCheckConstraints } from './sqlite-system-id-migration.js';
+
+          process.env.NODE_ENV = 'test';
+          delete process.env.LETTA_BASE_URL;
+          delete process.env.HERMES_BASE_URL;
+          delete process.env.CLAUDE_BASE_URL;
+
+          describe('Claude SystemId schema migration', () => {
+            let app: FastifyInstance | undefined;
+            let directory: string | undefined;
+
+            afterEach(async () => {
+              if (app) await app.close();
+              if (directory) rmSync(directory, { recursive: true, force: true });
+              app = undefined;
+              directory = undefined;
+            });
+
+            it('widens every legacy SystemId CHECK in a table and preserves rows', () => {
+              const db = new Database(':memory:');
+              db.exec(`
+                CREATE TABLE capsules (
+                  id TEXT PRIMARY KEY,
+                  source_system_id TEXT NOT NULL CHECK (source_system_id IN ('letta', 'hermes')),
+                  target_system_id TEXT NOT NULL CHECK (target_system_id IN ('letta', 'hermes'))
+                );
+                INSERT INTO capsules VALUES ('legacy', 'letta', 'hermes');
+              `);
+              expect(widenSystemIdCheckConstraints(db, 'capsules')).toBe(true);
+              expect(db.prepare('SELECT * FROM capsules WHERE id = ?').get('legacy')).toMatchObject({
+                source_system_id: 'letta', target_system_id: 'hermes',
+              });
+              expect(() => db.prepare('INSERT INTO capsules VALUES (?, ?, ?)').run('new', 'claude', 'hermes')).not.toThrow();
+              expect(widenSystemIdCheckConstraints(db, 'capsules')).toBe(false);
+              db.close();
+            });
+
+            it('boots an existing pre-Claude database and enables Theia without losing existing conversation state', async () => {
+              directory = mkdtempSync(join(tmpdir(), 'chat-v2-claude-migrate-'));
+              const databasePath = join(directory, 'chat.sqlite');
+              const legacy = new Database(databasePath);
+              legacy.exec(`
+                PRAGMA foreign_keys = OFF;
+                CREATE TABLE conversations (
+                  id TEXT PRIMARY KEY,
+                  system_id TEXT NOT NULL CHECK (system_id IN ('letta', 'hermes')),
+                  agent_id TEXT NOT NULL,
+                  title TEXT NOT NULL,
+                  preview TEXT NOT NULL DEFAULT '',
+                  status TEXT NOT NULL DEFAULT 'active' CHECK (status IN ('active', 'archived', 'trashed')),
+                  pinned INTEGER NOT NULL DEFAULT 0 CHECK (pinned IN (0, 1)),
+                  created_at TEXT NOT NULL,
+                  updated_at TEXT NOT NULL,
+                  last_read_message_id TEXT,
+                  draft TEXT NOT NULL DEFAULT '',
+                  branched_from_conversation_id TEXT,
+                  branched_from_message_id TEXT
+                );
+                CREATE TABLE agents (
+                  id TEXT PRIMARY KEY,
+                  system_id TEXT NOT NULL CHECK (system_id IN ('letta', 'hermes')),
+                  display_name TEXT NOT NULL,
+                  short_name TEXT NOT NULL,
+                  role TEXT NOT NULL,
+                  description TEXT NOT NULL DEFAULT '',
+                  capabilities_json TEXT NOT NULL DEFAULT '[]',
+                  enabled INTEGER NOT NULL DEFAULT 1 CHECK (enabled IN (0, 1)),
+                  direct_chat_enabled INTEGER NOT NULL DEFAULT 0 CHECK (direct_chat_enabled IN (0, 1)),
+                  is_lead INTEGER NOT NULL DEFAULT 0 CHECK (is_lead IN (0, 1)),
+                  sort_order INTEGER NOT NULL DEFAULT 100,
+                  created_at TEXT NOT NULL,
+                  updated_at TEXT NOT NULL
+                );
+                CREATE TABLE conversation_federation (
+                  conversation_id TEXT PRIMARY KEY REFERENCES conversations(id) ON DELETE CASCADE,
+                  mode TEXT NOT NULL DEFAULT 'federated' CHECK (mode IN ('single', 'federated')),
+                  coordinator_agent_id TEXT NOT NULL,
+                  allowed_system_ids_json TEXT NOT NULL DEFAULT '["letta","hermes"]',
+                  memory_policy TEXT NOT NULL DEFAULT 'explicit-capsules-only' CHECK (memory_policy = 'explicit-capsules-only'),
+                  created_at TEXT NOT NULL,
+                  updated_at TEXT NOT NULL
+                );
+                CREATE TABLE memory_capsules (
+                  id TEXT PRIMARY KEY,
+                  conversation_id TEXT NOT NULL REFERENCES conversations(id) ON DELETE CASCADE,
+                  source_system_id TEXT NOT NULL CHECK (source_system_id IN ('letta', 'hermes')),
+                  target_system_id TEXT NOT NULL CHECK (target_system_id IN ('letta', 'hermes')),
+                  title TEXT NOT NULL,
+                  content TEXT NOT NULL,
+                  status TEXT NOT NULL DEFAULT 'draft' CHECK (status IN ('draft', 'approved', 'revoked')),
+                  source_message_ids_json TEXT NOT NULL DEFAULT '[]',
+                  created_by TEXT NOT NULL,
+                  approved_by TEXT,
+                  approved_at TEXT,
+                  revoked_at TEXT,
+                  created_at TEXT NOT NULL,
+                  updated_at TEXT NOT NULL
+                );
+                INSERT INTO conversations VALUES (
+                  'legacy-chat', 'hermes', '[Hermes] Lucy', '기존 대화', '보존되어야 함', 'active', 1,
+                  '2026-09-01T00:00:00.000Z', '2026-09-01T00:00:00.000Z', NULL, '', NULL, NULL
+                );
+                INSERT INTO conversation_federation VALUES (
+                  'legacy-chat', 'federated', '[Hermes] Lucy', '["letta","hermes"]',
+                  'explicit-capsules-only', '2026-09-01T00:00:00.000Z', '2026-09-01T00:00:00.000Z'
+                );
+              `);
+              legacy.close();
+
+              app = buildApp({ databasePath, artifactRoot: join(directory, 'artifacts') });
+              await app.ready();
+
+              const roster = await app.inject({ method: 'GET', url: '/api/agents?systemId=claude' });
+              expect(roster.statusCode).toBe(200);
+              expect(roster.json().agents).toEqual(expect.arrayContaining([
+                expect.objectContaining({ id: '[Claude] 테이아', systemId: 'claude', enabled: true }),
+              ]));
+
+              const existing = await app.inject({ method: 'GET', url: '/api/conversations/legacy-chat' });
+              expect(existing.statusCode).toBe(200);
+              expect(existing.json().conversation).toMatchObject({ id: 'legacy-chat', preview: '보존되어야 함' });
+
+              const config = await app.inject({ method: 'GET', url: '/api/conversations/legacy-chat/federation' });
+              expect(config.json().federation.config.allowedSystemIds).toEqual(['letta', 'hermes', 'claude']);
+
+              const capsule = await app.inject({
+                method: 'POST',
+                url: '/api/conversations/legacy-chat/memory-capsules',
+                payload: { sourceSystemId: 'claude', targetSystemId: 'hermes', title: '테이아 검토', content: '독립 검토 결과' },
+              });
+              expect(capsule.statusCode).toBe(201);
+
+              const created = await app.inject({
+                method: 'POST',
+                url: '/api/conversations',
+                payload: { systemId: 'claude', agentId: '[Claude] 테이아', title: '테이아 직접 대화' },
+              });
+              expect(created.statusCode).toBe(201);
+            });
+          });
+          '''.replace(/^          /gm, '')
+          Path('server/sqlite-system-id-migration.test.ts').write_text(test)
+          PY
+          git diff --check
+      - name: Install and verify source
+        run: |
+          npm install --no-audit --no-fund
+          npm run typecheck
+          npm test
+          npm run build
+      - name: Verify affected mobile browser paths
+        run: |
+          npx playwright install --with-deps chromium
+          npx playwright test e2e/artifact-lifecycle.spec.ts e2e/retry.spec.ts --project=mobile-chromium
+      - name: Commit hardened source
+        run: |
+          set -euo pipefail
+          git config user.name since98kr
+          git config user.email since98kr@gmail.com
+          git add server/sqlite-system-id-migration.ts server/sqlite-system-id-migration.test.ts server/database.ts server/collaboration.ts server/federation.ts src/styles.css
+          git commit -m 'fix(chat): harden Claude participant migration and mobile sidebar [claude205-hardened]'
+          git push origin HEAD:claude/add-theia-agent-relay-participant-20260902
