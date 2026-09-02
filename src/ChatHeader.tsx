@@ -74,7 +74,7 @@ export default function ChatHeader({
           </div>
         </details>
         {chat.selectedSystem === 'hermes' && <button className="team-button" onClick={onOpenTeam}><Users size={16} /> 팀 {collaboration.participants.length}</button>}
-        {chat.activeConversation && <button className={`federation-button ${federation.active ? 'is-active' : ''}`} onClick={onOpenFederation}><Network size={16} /> {federation.active ? '교차' : '연합'}</button>}
+        {chat.activeConversation?.systemId === 'hermes' && chat.activeConversation.agentId === '[Hermes] Lucy' && <button className={`federation-button ${federation.active ? 'is-active' : ''}`} onClick={onOpenFederation}><Network size={16} /> {federation.active ? '교차' : '연합'}</button>}
       </div>
     </header>
   );

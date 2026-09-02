@@ -120,6 +120,9 @@ export function registerFederationRoutes(
       .parse(request.body ?? {});
     const conversation = database.getConversation(id);
     if (!conversation) return reply.status(404).send({ error: 'CONVERSATION_NOT_FOUND' });
+    if (conversation.systemId !== 'hermes' || conversation.agentId !== '[Hermes] Lucy') {
+      return reply.status(409).send({ error: 'FEDERATED_CONVERSATION_REQUIRES_HERMES_LUCY' });
+    }
     const coordinator = collaboration.getAgent(input.coordinatorAgentId);
     if (!coordinator || !coordinator.enabled || coordinator.systemId !== 'hermes') {
       return reply.status(409).send({ error: 'FEDERATION_COORDINATOR_UNAVAILABLE' });
