@@ -1,0 +1,74 @@
+name: Chat 199 federation identity guard worker
+
+on:
+  push:
+    branches:
+      - lucy/chat-199-federation-identity-guard-20260903
+
+permissions:
+  contents: write
+
+jobs:
+  patch-and-verify:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: lucy/chat-199-federation-identity-guard-20260903
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Apply federation identity guard
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+          import base64
+
+          route = Path('server/federation-routes.ts')
+          text = route.read_text()
+          old = """    const conversation = database.getConversation(id);
+    if (!conversation) return reply.status(404).send({ error: 'CONVERSATION_NOT_FOUND' });
+    const coordinator = collaboration.getAgent(input.coordinatorAgentId);"""
+          new = """    const conversation = database.getConversation(id);
+    if (!conversation) return reply.status(404).send({ error: 'CONVERSATION_NOT_FOUND' });
+    if (conversation.systemId !== 'hermes' || conversation.agentId !== '[Hermes] Lucy') {
+      return reply.status(409).send({ error: 'FEDERATED_CONVERSATION_REQUIRES_HERMES_LUCY' });
+    }
+    const coordinator = collaboration.getAgent(input.coordinatorAgentId);"""
+          if old not in text:
+              raise SystemExit('federation route anchor not found')
+          route.write_text(text.replace(old, new, 1))
+
+          header = Path('src/ChatHeader.tsx')
+          text = header.read_text()
+          old = """        {chat.activeConversation && <button className={`federation-button ${federation.active ? 'is-active' : ''}`} onClick={onOpenFederation}><Network size={16} /> {federation.active ? '교차' : '연합'}</button>}"""
+          new = """        {chat.activeConversation?.systemId === 'hermes' && chat.activeConversation.agentId === '[Hermes] Lucy' && <button className={`federation-button ${federation.active ? 'is-active' : ''}`} onClick={onOpenFederation}><Network size={16} /> {federation.active ? '교차' : '연합'}</button>}"""
+          if old not in text:
+              raise SystemExit('chat header federation anchor not found')
+          header.write_text(text.replace(old, new, 1))
+
+          encoded = 'aW1wb3J0IHsgYWZ0ZXJFYWNoLCBiZWZvcmVFYWNoLCBkZXNjcmliZSwgZXhwZWN0LCBpdCB9IGZyb20gJ3ZpdGVzdCc7CmltcG9ydCB7IG1rZHRlbXBTeW5jLCBybVN5bmMgfSBmcm9tICdub2RlOmZzJzsKaW1wb3J0IHsgam9pbiB9IGZyb20gJ25vZGU6cGF0aCc7CmltcG9ydCB7IHRtcGRpciB9IGZyb20gJ25vZGU6b3MnOwppbXBvcnQgdHlwZSB7IEZhc3RpZnlJbnN0YW5jZSB9IGZyb20gJ2Zhc3RpZnknOwppbXBvcnQgeyBidWlsZEFwcCB9IGZyb20gJy4vaW5kZXguanMnOwoKcHJvY2Vzcy5lbnYuTk9ERV9FTlYgPSAndGVzdCc7CgpkZXNjcmliZSgnZmVkZXJhdGlvbiBjb252ZXJzYXRpb24gaWRlbnRpdHkgZ3VhcmQnLCAoKSA9PiB7CiAgbGV0IGRpcmVjdG9yeTogc3RyaW5nOwogIGxldCBhcHA6IEZhc3RpZnlJbnN0YW5jZTsKCiAgYmVmb3JlRWFjaChhc3luYyAoKSA9PiB7CiAgICBkaXJlY3RvcnkgPSBta2R0ZW1wU3luYyhqb2luKHRtcGRpcigpLCAnY2hhdC12Mi1mZWRlcmF0aW9uLWlkZW50aXR5LScpKTsKICAgIGFwcCA9IGJ1aWxkQXBwKHsKICAgICAgZGF0YWJhc2VQYXRoOiBqb2luKGRpcmVjdG9yeSwgJ2NoYXQuc3FsaXRlJyksCiAgICAgIGFydGlmYWN0Um9vdDogam9pbihkaXJlY3RvcnksICdhcnRpZmFjdHMnKSwKICAgIH0pOwogICAgYXdhaXQgYXBwLnJlYWR5KCk7CiAgfSk7CgogIGFmdGVyRWFjaChhc3luYyAoKSA9PiB7CiAgICBhd2FpdCBhcHAuY2xvc2UoKTsKICAgIHJtU3luYyhkaXJlY3RvcnksIHsgcmVjdXJzaXZlOiB0cnVlLCBmb3JjZTogdHJ1ZSB9KTsKICB9KTsKCiAgaXQoJ3JlamVjdHMgZmVkZXJhdGlvbiBvbiBhIHBlcnNvbmFsIExldHRhIGNvbnZlcnNhdGlvbicsIGFzeW5jICgpID0+IHsKICAgIGNvbnN0IGNyZWF0ZWQgPSBhd2FpdCBhcHAuaW5qZWN0KHsKICAgICAgbWV0aG9kOiAnUE9TVCcsCiAgICAgIHVybDogJy9hcGkvY29udmVyc2F0aW9ucycsCiAgICAgIHBheWxvYWQ6IHsgc3lzdGVtSWQ6ICdsZXR0YScsIGFnZW50SWQ6ICdbTGV0dGFdIEx1Y3knLCB0aXRsZTogJ1BlcnNvbmFsIEx1Y3knIH0sCiAgICB9KTsKICAgIGV4cGVjdChjcmVhdGVkLnN0YXR1c0NvZGUpLnRvQmUoMjAxKTsKICAgIGNvbnN0IGlkID0gY3JlYXRlZC5qc29uKCkuY29udmVyc2F0aW9uLmlkIGFzIHN0cmluZzsKCiAgICBjb25zdCBlbmFibGVkID0gYXdhaXQgYXBwLmluamVjdCh7CiAgICAgIG1ldGhvZDogJ1BPU1QnLAogICAgICB1cmw6IGAvYXBpL2NvbnZlcnNhdGlvbnMvJHtpZH0vZmVkZXJhdGlvbmAsCiAgICAgIHBheWxvYWQ6IHsgY29vcmRpbmF0b3JBZ2VudElkOiAnW0hlcm1lc10gTHVjeScgfSwKICAgIH0pOwogICAgZXhwZWN0KGVuYWJsZWQuc3RhdHVzQ29kZSkudG9CZSg0MDkpOwogICAgZXhwZWN0KGVuYWJsZWQuanNvbigpKS50b01hdGNoT2JqZWN0KHsKICAgICAgZXJyb3I6ICdGRURFUkFURURfQ09OVkVSU0FUSU9OX1JFUVVJUkVTX0hFUk1FU19MVUNZJywKICAgIH0pOwogIH0pOwoKICBpdCgnc3RpbGwgYWxsb3dzIGZlZGVyYXRpb24gb24gYW4gZXhwbGljaXQgSGVybWVzIEx1Y3kgY29udmVyc2F0aW9uJywgYXN5bmMgKCkgPT4gewogICAgY29uc3QgY3JlYXRlZCA9IGF3YWl0IGFwcC5pbmplY3QoewogICAgICBtZXRob2Q6ICdQT1NUJywKICAgICAgdXJsOiAnL2FwaS9jb252ZXJzYXRpb25zJywKICAgICAgcGF5bG9hZDogeyBzeXN0ZW1JZDogJ2hlcm1lcycsIGFnZW50SWQ6ICdbSGVybWVzXSBMdWN5JywgdGl0bGU6ICdIZXJtZXMgZmVkZXJhdGlvbicgfSwKICAgIH0pOwogICAgZXhwZWN0KGNyZWF0ZWQuc3RhdHVzQ29kZSkudG9CZSgyMDEpOwogICAgY29uc3QgaWQgPSBjcmVhdGVkLmpzb24oKS5jb252ZXJzYXRpb24uaWQgYXMgc3RyaW5nOwoKICAgIGNvbnN0IGVuYWJsZWQgPSBhd2FpdCBhcHAuaW5qZWN0KHsKICAgICAgbWV0aG9kOiAnUE9TVCcsCiAgICAgIHVybDogYC9hcGkvY29udmVyc2F0aW9ucy8ke2lkfS9mZWRlcmF0aW9uYCwKICAgICAgcGF5bG9hZDogeyBjb29yZGluYXRvckFnZW50SWQ6ICdbSGVybWVzXSBMdWN5JyB9LAogICAgfSk7CiAgICBleHBlY3QoZW5hYmxlZC5zdGF0dXNDb2RlKS50b0JlKDIwMSk7CiAgICBleHBlY3QoZW5hYmxlZC5qc29uKCkuY29uZmlnKS50b01hdGNoT2JqZWN0KHsKICAgICAgY29udmVyc2F0aW9uSWQ6IGlkLAogICAgICBjb29yZGluYXRvckFnZW50SWQ6ICdbSGVybWVzXSBMdWN5JywKICAgIH0pOwogIH0pOwp9KTsK'
+          Path('server/federation-identity.test.ts').write_bytes(base64.b64decode(encoded))
+          PY
+      - name: Install dependencies
+        run: npm install
+      - name: Typecheck
+        run: npm run typecheck
+      - name: Unit and contract tests
+        run: npm test -- --run
+      - name: Production build
+        run: npm run build
+      - name: Commit verified source and remove worker
+        shell: bash
+        run: |
+          set -euo pipefail
+          rm .github/workflows/chat199-federation-identity-worker.yml
+          git config user.name github-actions[bot]
+          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
+          git add server/federation-routes.ts src/ChatHeader.tsx server/federation-identity.test.ts .github/workflows/chat199-federation-identity-worker.yml
+          git diff --cached --check
+          git commit -m "fix(chat): preserve personal Lucy identity across federation [chat199-federation-guard-done]"
+          git push origin HEAD:lucy/chat-199-federation-identity-guard-20260903
