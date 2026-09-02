@@ -28,114 +28,38 @@ jobs:
           set -euo pipefail
           python3 - <<'PY'
           from pathlib import Path
-
+          import base64
           collaboration = Path('server/collaboration.ts')
           text = collaboration.read_text()
           old = "const timestamp = () => new Date().toISOString();\n\nconst seedAgents"
-          new = """const timestamp = () => new Date().toISOString();
-
-export function claudeDirectChatEnabled(env: NodeJS.ProcessEnv = process.env) {
-  if (env.NODE_ENV === 'test') return true;
-  return Boolean(env.CLAUDE_BASE_URL?.trim());
-}
-
-const seedAgents"""
+          new = "const timestamp = () => new Date().toISOString();\n\nexport function claudeDirectChatEnabled(env: NodeJS.ProcessEnv = process.env) {\n  if (env.NODE_ENV === 'test') return true;\n  return Boolean(env.CLAUDE_BASE_URL?.trim());\n}\n\nconst seedAgents"
           if old not in text:
-            raise SystemExit('collaboration helper anchor not found')
+              raise SystemExit('collaboration helper anchor not found')
           text = text.replace(old, new, 1)
-
-          old = """      for (const agent of seedAgents) {
-        const createdAt = timestamp();
-        statement.run("""
-          new = """      for (const agent of seedAgents) {
-        const createdAt = timestamp();
-        const directChatEnabled = agent.systemId === 'claude'
-          ? claudeDirectChatEnabled()
-          : agent.directChatEnabled;
-        statement.run("""
+          old = "      for (const agent of seedAgents) {\n        const createdAt = timestamp();\n        statement.run("
+          new = "      for (const agent of seedAgents) {\n        const createdAt = timestamp();\n        const directChatEnabled = agent.systemId === 'claude'\n          ? claudeDirectChatEnabled()\n          : agent.directChatEnabled;\n        statement.run("
           if old not in text:
-            raise SystemExit('collaboration seed anchor not found')
+              raise SystemExit('collaboration seed anchor not found')
           text = text.replace(old, new, 1)
-
-          old = """          agent.enabled ? 1 : 0,
-          agent.directChatEnabled ? 1 : 0,
-          agent.isLead ? 1 : 0,"""
-          new = """          agent.enabled ? 1 : 0,
-          directChatEnabled ? 1 : 0,
-          agent.isLead ? 1 : 0,"""
+          old = "          agent.enabled ? 1 : 0,\n          agent.directChatEnabled ? 1 : 0,\n          agent.isLead ? 1 : 0,"
+          new = "          agent.enabled ? 1 : 0,\n          directChatEnabled ? 1 : 0,\n          agent.isLead ? 1 : 0,"
           if old not in text:
-            raise SystemExit('collaboration direct-chat value anchor not found')
+              raise SystemExit('collaboration direct-chat value anchor not found')
           collaboration.write_text(text.replace(old, new, 1))
-
           sidebar = Path('src/AppSidebar.tsx')
           text = sidebar.read_text()
           old = "  const lead = agents.find((agent) => agent.isLead) ?? agents[0];"
-          new = """  const lead = agents.find((agent) => agent.isLead && agent.enabled && agent.directChatEnabled)
-    ?? agents.find((agent) => agent.enabled && agent.directChatEnabled);"""
+          new = "  const lead = agents.find((agent) => agent.isLead && agent.enabled && agent.directChatEnabled)\n    ?? agents.find((agent) => agent.enabled && agent.directChatEnabled);"
           if old not in text:
-            raise SystemExit('sidebar lead anchor not found')
+              raise SystemExit('sidebar lead anchor not found')
           text = text.replace(old, new, 1)
           old = "<span><strong>{label}</strong><small>{id === 'letta' ? 'Memory-first system' : id === 'claude' ? 'Independent review system' : 'Collaborative system'}</small></span>"
           new = "<span><strong>{label}</strong><small>{!lead ? 'Backend not configured' : id === 'letta' ? 'Memory-first system' : id === 'claude' ? 'Independent review system' : 'Collaborative system'}</small></span>"
           if old not in text:
-            raise SystemExit('sidebar status anchor not found')
+              raise SystemExit('sidebar status anchor not found')
           sidebar.write_text(text.replace(old, new, 1))
-
-          Path('server/claude-routing-availability.test.ts').write_text("""import { afterEach, describe, expect, it } from 'vitest';
-import { mkdtempSync, rmSync } from 'node:fs';
-import { join } from 'node:path';
-import { tmpdir } from 'node:os';
-import type { FastifyInstance } from 'fastify';
-import { buildApp } from './index.js';
-
-const originalNodeEnv = process.env.NODE_ENV;
-const originalClaudeBaseUrl = process.env.CLAUDE_BASE_URL;
-
-describe('Claude routing availability', () => {
-  let app: FastifyInstance | undefined;
-  let directory: string | undefined;
-
-  afterEach(async () => {
-    if (app) await app.close();
-    if (directory) rmSync(directory, { recursive: true, force: true });
-    app = undefined;
-    directory = undefined;
-    if (originalNodeEnv === undefined) delete process.env.NODE_ENV;
-    else process.env.NODE_ENV = originalNodeEnv;
-    if (originalClaudeBaseUrl === undefined) delete process.env.CLAUDE_BASE_URL;
-    else process.env.CLAUDE_BASE_URL = originalClaudeBaseUrl;
-  });
-
-  it('does not advertise or create direct Claude conversations without a configured backend', async () => {
-    process.env.NODE_ENV = 'production';
-    delete process.env.CLAUDE_BASE_URL;
-    directory = mkdtempSync(join(tmpdir(), 'chat-v2-claude-unconfigured-'));
-    app = buildApp({
-      databasePath: join(directory, 'chat.sqlite'),
-      artifactRoot: join(directory, 'artifacts'),
-    });
-    await app.ready();
-
-    const roster = await app.inject({ method: 'GET', url: '/api/agents?systemId=claude' });
-    expect(roster.statusCode).toBe(200);
-    expect(roster.json().agents).toEqual([
-      expect.objectContaining({
-        id: '[Claude] 테이아',
-        enabled: true,
-        directChatEnabled: false,
-      }),
-    ]);
-
-    const created = await app.inject({
-      method: 'POST',
-      url: '/api/conversations',
-      payload: { systemId: 'claude', agentId: '[Claude] 테이아', title: 'unconfigured Claude' },
-    });
-    expect(created.statusCode).toBe(409);
-    expect(created.json()).toMatchObject({ error: 'AGENT_UNAVAILABLE' });
-  });
-});
-""")
+          encoded = 'aW1wb3J0IHsgYWZ0ZXJFYWNoLCBkZXNjcmliZSwgZXhwZWN0LCBpdCB9IGZyb20gJ3ZpdGVzdCc7CmltcG9ydCB7IG1rZHRlbXBTeW5jLCBybVN5bmMgfSBmcm9tICdub2RlOmZzJzsKaW1wb3J0IHsgam9pbiB9IGZyb20gJ25vZGU6cGF0aCc7CmltcG9ydCB7IHRtcGRpciB9IGZyb20gJ25vZGU6b3MnOwppbXBvcnQgdHlwZSB7IEZhc3RpZnlJbnN0YW5jZSB9IGZyb20gJ2Zhc3RpZnknOwppbXBvcnQgeyBidWlsZEFwcCB9IGZyb20gJy4vaW5kZXguanMnOwoKY29uc3Qgb3JpZ2luYWxOb2RlRW52ID0gcHJvY2Vzcy5lbnYuTk9ERV9FTlY7CmNvbnN0IG9yaWdpbmFsQ2xhdWRlQmFzZVVybCA9IHByb2Nlc3MuZW52LkNMQVVERV9CQVNFX1VSTDsKCmRlc2NyaWJlKCdDbGF1ZGUgcm91dGluZyBhdmFpbGFiaWxpdHknLCAoKSA9PiB7CiAgbGV0IGFwcDogRmFzdGlmeUluc3RhbmNlIHwgdW5kZWZpbmVkOwogIGxldCBkaXJlY3Rvcnk6IHN0cmluZyB8IHVuZGVmaW5lZDsKCiAgYWZ0ZXJFYWNoKGFzeW5jICgpID0+IHsKICAgIGlmIChhcHApIGF3YWl0IGFwcC5jbG9zZSgpOwogICAgaWYgKGRpcmVjdG9yeSkgcm1TeW5jKGRpcmVjdG9yeSwgeyByZWN1cnNpdmU6IHRydWUsIGZvcmNlOiB0cnVlIH0pOwogICAgYXBwID0gdW5kZWZpbmVkOwogICAgZGlyZWN0b3J5ID0gdW5kZWZpbmVkOwogICAgaWYgKG9yaWdpbmFsTm9kZUVudiA9PT0gdW5kZWZpbmVkKSBkZWxldGUgcHJvY2Vzcy5lbnYuTk9ERV9FTlY7CiAgICBlbHNlIHByb2Nlc3MuZW52Lk5PREVfRU5WID0gb3JpZ2luYWxOb2RlRW52OwogICAgaWYgKG9yaWdpbmFsQ2xhdWRlQmFzZVVybCA9PT0gdW5kZWZpbmVkKSBkZWxldGUgcHJvY2Vzcy5lbnYuQ0xBVURFX0JBU0VfVVJMOwogICAgZWxzZSBwcm9jZXNzLmVudi5DTEFVREVfQkFTRV9VUkwgPSBvcmlnaW5hbENsYXVkZUJhc2VVcmw7CiAgfSk7CgogIGl0KCdkb2VzIG5vdCBhZHZlcnRpc2Ugb3IgY3JlYXRlIGRpcmVjdCBDbGF1ZGUgY29udmVyc2F0aW9ucyB3aXRob3V0IGEgY29uZmlndXJlZCBiYWNrZW5kJywgYXN5bmMgKCkgPT4gewogICAgcHJvY2Vzcy5lbnYuTk9ERV9FTlYgPSAncHJvZHVjdGlvbic7CiAgICBkZWxldGUgcHJvY2Vzcy5lbnYuQ0xBVURFX0JBU0VfVVJMOwogICAgZGlyZWN0b3J5ID0gbWtkdGVtcFN5bmMoam9pbih0bXBkaXIoKSwgJ2NoYXQtdjItY2xhdWRlLXVuY29uZmlndXJlZC0nKSk7CiAgICBhcHAgPSBidWlsZEFwcCh7CiAgICAgIGRhdGFiYXNlUGF0aDogam9pbihkaXJlY3RvcnksICdjaGF0LnNxbGl0ZScpLAogICAgICBhcnRpZmFjdFJvb3Q6IGpvaW4oZGlyZWN0b3J5LCAnYXJ0aWZhY3RzJyksCiAgICB9KTsKICAgIGF3YWl0IGFwcC5yZWFkeSgpOwoKICAgIGNvbnN0IHJvc3RlciA9IGF3YWl0IGFwcC5pbmplY3QoeyBtZXRob2Q6ICdHRVQnLCB1cmw6ICcvYXBpL2FnZW50cz9zeXN0ZW1JZD1jbGF1ZGUnIH0pOwogICAgZXhwZWN0KHJvc3Rlci5zdGF0dXNDb2RlKS50b0JlKDIwMCk7CiAgICBleHBlY3Qocm9zdGVyLmpzb24oKS5hZ2VudHMpLnRvRXF1YWwoWwogICAgICBleHBlY3Qub2JqZWN0Q29udGFpbmluZyh7CiAgICAgICAgaWQ6ICdbQ2xhdWRlXSDthYzsnbTslYQnLAogICAgICAgIGVuYWJsZWQ6IHRydWUsCiAgICAgICAgZGlyZWN0Q2hhdEVuYWJsZWQ6IGZhbHNlLAogICAgICB9KSwKICAgIF0pOwoKICAgIGNvbnN0IGNyZWF0ZWQgPSBhd2FpdCBhcHAuaW5qZWN0KHsKICAgICAgbWV0aG9kOiAnUE9TVCcsCiAgICAgIHVybDogJy9hcGkvY29udmVyc2F0aW9ucycsCiAgICAgIHBheWxvYWQ6IHsgc3lzdGVtSWQ6ICdjbGF1ZGUnLCBhZ2VudElkOiAnW0NsYXVkZV0g7YWM7J207JWEJywgdGl0bGU6ICd1bmNvbmZpZ3VyZWQgQ2xhdWRlJyB9LAogICAgfSk7CiAgICBleHBlY3QoY3JlYXRlZC5zdGF0dXNDb2RlKS50b0JlKDQwOSk7CiAgICBleHBlY3QoY3JlYXRlZC5qc29uKCkpLnRvTWF0Y2hPYmplY3QoeyBlcnJvcjogJ0FHRU5UX1VOQVZBSUxBQkxFJyB9KTsKICB9KTsKfSk7Cg=='
+          Path('server/claude-routing-availability.test.ts').write_bytes(base64.b64decode(encoded))
           PY
 
       - name: Install dependencies
