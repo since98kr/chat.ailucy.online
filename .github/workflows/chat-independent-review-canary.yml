@@ -1,0 +1,51 @@
+name: Chat independent review canary
+
+on:
+  push:
+    branches:
+      - lucy/chat-independent-review-canary-20260903
+
+permissions:
+  contents: read
+
+jobs:
+  reviewer-canary:
+    runs-on: [self-hosted, linux, x64, chat-staging]
+    timeout-minutes: 8
+    steps:
+      - name: Locate OpenClaw reviewer runtime
+        shell: bash
+        run: |
+          set -euo pipefail
+          bin="$(command -v openclaw || true)"
+          if [[ -z "$bin" && -x /home/since98kr/.local/bin/openclaw ]]; then
+            bin=/home/since98kr/.local/bin/openclaw
+          fi
+          [[ -n "$bin" && -x "$bin" ]] || { echo 'OPENCLAW_REVIEWER_RUNTIME_MISSING'; exit 1; }
+          printf '%s\n' "$bin" > "$RUNNER_TEMP/openclaw-bin"
+          echo 'OPENCLAW_REVIEWER_RUNTIME_FOUND'
+
+      - name: Probe independent DeepSeek reviewer
+        shell: bash
+        run: |
+          set -euo pipefail
+          bin="$(cat "$RUNNER_TEMP/openclaw-bin")"
+          out="$RUNNER_TEMP/reviewer-canary.json"
+          set +e
+          timeout 240 "$bin" infer model run \
+            --gateway \
+            --model deepseek/deepseek-v4-pro \
+            --prompt 'Reply exactly REVIEWER_OK' \
+            --thinking low \
+            --json >"$out" 2>"$RUNNER_TEMP/reviewer-canary.err"
+          rc=$?
+          set -e
+          if [[ $rc -ne 0 ]]; then
+            echo "INDEPENDENT_REVIEWER_CANARY_FAILED rc=$rc"
+            exit 1
+          fi
+          if ! grep -q 'REVIEWER_OK' "$out"; then
+            echo 'INDEPENDENT_REVIEWER_CANARY_BAD_RESPONSE'
+            exit 1
+          fi
+          echo 'INDEPENDENT_REVIEWER_CANARY_PASS model=deepseek/deepseek-v4-pro'
