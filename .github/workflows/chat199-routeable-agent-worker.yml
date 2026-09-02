@@ -1,0 +1,165 @@
+name: Chat 199 routeable-agent guard worker
+
+on:
+  push:
+    branches:
+      - lucy/chat-199-routeable-agent-guard-20260903
+
+permissions:
+  contents: write
+
+jobs:
+  patch-and-verify:
+    if: ${{ !contains(github.event.head_commit.message, '[chat199-routeable-guard-done]') }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.ref }}
+          fetch-depth: 0
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Apply fail-closed routeability patch
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+
+          collaboration = Path('server/collaboration.ts')
+          text = collaboration.read_text()
+          old = "const timestamp = () => new Date().toISOString();\n\nconst seedAgents"
+          new = """const timestamp = () => new Date().toISOString();
+
+export function claudeDirectChatEnabled(env: NodeJS.ProcessEnv = process.env) {
+  if (env.NODE_ENV === 'test') return true;
+  return Boolean(env.CLAUDE_BASE_URL?.trim());
+}
+
+const seedAgents"""
+          if old not in text:
+            raise SystemExit('collaboration helper anchor not found')
+          text = text.replace(old, new, 1)
+
+          old = """      for (const agent of seedAgents) {
+        const createdAt = timestamp();
+        statement.run("""
+          new = """      for (const agent of seedAgents) {
+        const createdAt = timestamp();
+        const directChatEnabled = agent.systemId === 'claude'
+          ? claudeDirectChatEnabled()
+          : agent.directChatEnabled;
+        statement.run("""
+          if old not in text:
+            raise SystemExit('collaboration seed anchor not found')
+          text = text.replace(old, new, 1)
+
+          old = """          agent.enabled ? 1 : 0,
+          agent.directChatEnabled ? 1 : 0,
+          agent.isLead ? 1 : 0,"""
+          new = """          agent.enabled ? 1 : 0,
+          directChatEnabled ? 1 : 0,
+          agent.isLead ? 1 : 0,"""
+          if old not in text:
+            raise SystemExit('collaboration direct-chat value anchor not found')
+          collaboration.write_text(text.replace(old, new, 1))
+
+          sidebar = Path('src/AppSidebar.tsx')
+          text = sidebar.read_text()
+          old = "  const lead = agents.find((agent) => agent.isLead) ?? agents[0];"
+          new = """  const lead = agents.find((agent) => agent.isLead && agent.enabled && agent.directChatEnabled)
+    ?? agents.find((agent) => agent.enabled && agent.directChatEnabled);"""
+          if old not in text:
+            raise SystemExit('sidebar lead anchor not found')
+          text = text.replace(old, new, 1)
+          old = "<span><strong>{label}</strong><small>{id === 'letta' ? 'Memory-first system' : id === 'claude' ? 'Independent review system' : 'Collaborative system'}</small></span>"
+          new = "<span><strong>{label}</strong><small>{!lead ? 'Backend not configured' : id === 'letta' ? 'Memory-first system' : id === 'claude' ? 'Independent review system' : 'Collaborative system'}</small></span>"
+          if old not in text:
+            raise SystemExit('sidebar status anchor not found')
+          sidebar.write_text(text.replace(old, new, 1))
+
+          test = Path('server/claude-routing-availability.test.ts')
+          test.write_text("""import { afterEach, describe, expect, it } from 'vitest';
+import { mkdtempSync, rmSync } from 'node:fs';
+import { join } from 'node:path';
+import { tmpdir } from 'node:os';
+import type { FastifyInstance } from 'fastify';
+import { buildApp } from './index.js';
+
+const originalNodeEnv = process.env.NODE_ENV;
+const originalClaudeBaseUrl = process.env.CLAUDE_BASE_URL;
+
+describe('Claude routing availability', () => {
+  let app: FastifyInstance | undefined;
+  let directory: string | undefined;
+
+  afterEach(async () => {
+    if (app) await app.close();
+    if (directory) rmSync(directory, { recursive: true, force: true });
+    app = undefined;
+    directory = undefined;
+    if (originalNodeEnv === undefined) delete process.env.NODE_ENV;
+    else process.env.NODE_ENV = originalNodeEnv;
+    if (originalClaudeBaseUrl === undefined) delete process.env.CLAUDE_BASE_URL;
+    else process.env.CLAUDE_BASE_URL = originalClaudeBaseUrl;
+  });
+
+  it('does not advertise or create direct Claude conversations without a configured backend', async () => {
+    process.env.NODE_ENV = 'production';
+    delete process.env.CLAUDE_BASE_URL;
+    directory = mkdtempSync(join(tmpdir(), 'chat-v2-claude-unconfigured-'));
+    app = buildApp({
+      databasePath: join(directory, 'chat.sqlite'),
+      artifactRoot: join(directory, 'artifacts'),
+    });
+    await app.ready();
+
+    const roster = await app.inject({ method: 'GET', url: '/api/agents?systemId=claude' });
+    expect(roster.statusCode).toBe(200);
+    expect(roster.json().agents).toEqual([
+      expect.objectContaining({
+        id: '[Claude] 테이아',
+        enabled: true,
+        directChatEnabled: false,
+      }),
+    ]);
+
+    const created = await app.inject({
+      method: 'POST',
+      url: '/api/conversations',
+      payload: { systemId: 'claude', agentId: '[Claude] 테이아', title: 'unconfigured Claude' },
+    });
+    expect(created.statusCode).toBe(409);
+    expect(created.json()).toMatchObject({ error: 'AGENT_UNAVAILABLE' });
+  });
+});
+""")
+          PY
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Typecheck
+        run: npm run typecheck
+
+      - name: Unit and contract tests
+        run: npm test -- --run
+
+      - name: Production build
+        run: npm run build
+
+      - name: Commit verified source and remove worker
+        shell: bash
+        run: |
+          set -euo pipefail
+          rm .github/workflows/chat199-routeable-agent-worker.yml
+          git config user.name github-actions[bot]
+          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
+          git add server/collaboration.ts src/AppSidebar.tsx server/claude-routing-availability.test.ts .github/workflows/chat199-routeable-agent-worker.yml
+          git diff --cached --check
+          git commit -m "fix(chat): fail closed for unconfigured Claude routing [chat199-routeable-guard-done]"
+          git push origin HEAD:${GITHUB_REF_NAME}
