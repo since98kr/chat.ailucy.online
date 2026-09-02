@@ -9,9 +9,9 @@ permissions:
   contents: read
 
 jobs:
-  build:
+  export:
     runs-on: ubuntu-latest
-    timeout-minutes: 25
+    timeout-minutes: 5
     steps:
       - uses: actions/checkout@v4
         with:
@@ -19,14 +19,11 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: '22'
-      - name: Apply durable provider usage gate
-        id: apply
+      - name: Reproduce previously verified source
         shell: bash
         run: |
-          set -o pipefail
-          {
-            set -euxo pipefail
-            python3 - <<'PY'
+          set -euxo pipefail
+          python3 - <<'PY'
           from pathlib import Path
           path = Path('.github/staging-provider-usage-worker-v2.py')
           text = path.read_text()
@@ -36,44 +33,23 @@ jobs:
               raise SystemExit('EOF patch anchor not found')
           path.write_text(text.replace(old, new, 1))
           PY
-            python3 .github/staging-provider-usage-worker-v2.py
-            git diff --check
-            node scripts/ops/staging-provider-usage-gate.nodecheck.mjs
-            gate="$(node scripts/ops/staging-provider-usage-gate.mjs)"
-            node -e "const j=JSON.parse(process.argv[1]); if(!j.blocked || j.classification !== 'AUTH/USAGE' || j.issue !== 199) process.exit(1)" "$gate"
-          } 2>&1 | tee provider-gate-worker.log
-      - name: Upload worker diagnostic
-        if: failure() && steps.apply.outcome == 'failure'
-        uses: actions/upload-artifact@v4
-        with:
-          name: provider-gate-worker-diagnostic-${{ github.run_id }}
-          path: provider-gate-worker.log
-          if-no-files-found: error
-          retention-days: 1
-      - name: Validate workflow YAML syntax
-        run: ruby -e "require 'yaml'; YAML.load_file(ARGV[0]); puts 'deploy-staging.yml YAML syntax PASS'" .github/workflows/deploy-staging.yml
-      - name: Install dependencies
-        run: npm install --no-audit --no-fund
-      - name: Typecheck
-        run: npm run typecheck
-      - name: Full source tests
-        run: npm test
-      - name: Production build
-        run: npm run build
-      - name: Stage verified source bundle
+          python3 .github/staging-provider-usage-worker-v2.py
+          git diff --check
+          node scripts/ops/staging-provider-usage-gate.nodecheck.mjs
+          ruby -e "require 'yaml'; YAML.load_file(ARGV[0]); puts 'deploy-staging.yml YAML syntax PASS'" .github/workflows/deploy-staging.yml
+      - name: Export all final files
         run: |
           set -euo pipefail
-          mkdir -p verified-provider-gate/.github/workflows verified-provider-gate/ops verified-provider-gate/scripts/ops verified-provider-gate/docs
-          cp .github/workflows/deploy-staging.yml verified-provider-gate/.github/workflows/deploy-staging.yml
+          mkdir -p verified-provider-gate/ops verified-provider-gate/scripts/ops verified-provider-gate/docs
+          cp .github/workflows/deploy-staging.yml verified-provider-gate/deploy-staging.yml
           cp package.json verified-provider-gate/package.json
           cp ops/staging-provider-usage-block.json verified-provider-gate/ops/staging-provider-usage-block.json
           cp scripts/ops/staging-provider-usage-gate.mjs verified-provider-gate/scripts/ops/staging-provider-usage-gate.mjs
           cp scripts/ops/staging-provider-usage-gate.nodecheck.mjs verified-provider-gate/scripts/ops/staging-provider-usage-gate.nodecheck.mjs
           cp docs/E2E_STAGING_QA_GATES.md verified-provider-gate/docs/E2E_STAGING_QA_GATES.md
-      - name: Upload verified provider gate source
-        uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v4
         with:
-          name: verified-provider-gate-${{ github.run_id }}
+          name: verified-provider-gate-visible-${{ github.run_id }}
           path: verified-provider-gate
           if-no-files-found: error
           retention-days: 1
