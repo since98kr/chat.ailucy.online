@@ -1,0 +1,49 @@
+name: Staging Provider Usage Worker V2
+
+on:
+  push:
+    branches:
+      - lucy/staging-provider-usage-gate-199
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Apply durable provider usage gate
+        run: |
+          set -euo pipefail
+          python3 .github/staging-provider-usage-worker-v2.py
+          git diff --check
+          node scripts/ops/staging-provider-usage-gate.nodecheck.mjs
+          gate="$(node scripts/ops/staging-provider-usage-gate.mjs)"
+          node -e "const j=JSON.parse(process.argv[1]); if(!j.blocked || j.classification !== 'AUTH/USAGE' || j.issue !== 199) process.exit(1)" "$gate"
+      - name: Validate workflow YAML syntax
+        run: ruby -e "require 'yaml'; YAML.load_file(ARGV[0]); puts 'deploy-staging.yml YAML syntax PASS'" .github/workflows/deploy-staging.yml
+      - name: Install dependencies
+        run: npm install --no-audit --no-fund
+      - name: Typecheck
+        run: npm run typecheck
+      - name: Full source tests
+        run: npm test
+      - name: Production build
+        run: npm run build
+      - name: Commit verified provider gate and remove worker
+        run: |
+          set -euo pipefail
+          git rm .github/workflows/staging-provider-usage-worker-v2.yml .github/staging-provider-usage-worker-v2.py
+          git diff --check
+          git config user.name since98kr
+          git config user.email since98kr@gmail.com
+          git add .github/workflows/deploy-staging.yml package.json ops/staging-provider-usage-block.json scripts/ops/staging-provider-usage-gate.mjs scripts/ops/staging-provider-usage-gate.nodecheck.mjs docs/E2E_STAGING_QA_GATES.md
+          git commit -m 'ci(staging): fail closed before provider calls when usage is exhausted'
+          git push origin HEAD:lucy/staging-provider-usage-gate-199
