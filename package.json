@@ -43,6 +43,7 @@
   },
   "devDependencies": {
     "@playwright/test": "latest",
+    "@rolldown/binding-wasm32-wasi": "1.2.2",
     "@types/better-sqlite3": "latest",
     "@types/node": "latest",
     "@types/react": "latest",
