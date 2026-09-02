@@ -1,0 +1,57 @@
+name: DIAG OpenClaw main session 20260902
+
+on:
+  push:
+    branches: [diag/openclaw-ws-20260902]
+
+permissions:
+  contents: read
+
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    environment: staging
+    timeout-minutes: 4
+    steps:
+      - name: Probe exact main session through Gateway API
+        env:
+          OPENCLAW_GATEWAY_BASE_URL: ${{ vars.OPENCLAW_GATEWAY_BASE_URL }}
+          OPENCLAW_GATEWAY_TOKEN: ${{ secrets.OPENCLAW_GATEWAY_TOKEN }}
+          CF_ACCESS_CLIENT_ID: ${{ vars.CF_ACCESS_CLIENT_ID }}
+          CF_ACCESS_CLIENT_SECRET: ${{ secrets.CF_ACCESS_CLIENT_SECRET }}
+          LETTA_OPENCLAW_AGENT_TARGET: ${{ vars.LETTA_OPENCLAW_AGENT_TARGET }}
+        run: |
+          set -Eeuo pipefail
+          test -n "$OPENCLAW_GATEWAY_BASE_URL"
+          test -n "$OPENCLAW_GATEWAY_TOKEN"
+          test -n "$LETTA_OPENCLAW_AGENT_TARGET"
+          marker="MAIN_SESSION_HEALTH_OK_${GITHUB_RUN_ID}"
+          payload="$(python3 - "$LETTA_OPENCLAW_AGENT_TARGET" "$marker" <<'PY'
+import json,sys
+model,marker=sys.argv[1:]
+print(json.dumps({"model":model,"stream":False,"messages":[{"role":"user","content":f"Diagnostic canary. Return exactly {marker} and nothing else."}]}))
+PY
+)"
+          code="$(curl -sS --max-time 120 -o /tmp/main-session.json -w '%{http_code}' \
+            -X POST "${OPENCLAW_GATEWAY_BASE_URL%/}/v1/chat/completions" \
+            -H "Authorization: Bearer $OPENCLAW_GATEWAY_TOKEN" \
+            -H 'Content-Type: application/json' \
+            -H "CF-Access-Client-Id: $CF_ACCESS_CLIENT_ID" \
+            -H "CF-Access-Client-Secret: $CF_ACCESS_CLIENT_SECRET" \
+            -H 'x-openclaw-session-key: agent:main:main' \
+            --data "$payload" || true)"
+          echo "http_status=$code"
+          python3 - "$marker" "$code" <<'PY'
+import json,sys,pathlib
+marker,code=sys.argv[1:]
+raw=pathlib.Path('/tmp/main-session.json').read_text(errors='replace') if pathlib.Path('/tmp/main-session.json').exists() else ''
+try: data=json.loads(raw)
+except Exception:
+    print(json.dumps({"ok":False,"http":code,"json":False,"bodyPrefix":raw[:300]})); raise SystemExit(1)
+content=''
+try: content=data['choices'][0]['message']['content']
+except Exception: pass
+error=data.get('error') if isinstance(data,dict) else None
+print(json.dumps({"ok":code=='200' and marker in str(content),"http":code,"markerSeen":marker in str(content),"contentPrefix":str(content)[:180],"error":error},ensure_ascii=False))
+if code!='200' or marker not in str(content): raise SystemExit(1)
+PY
