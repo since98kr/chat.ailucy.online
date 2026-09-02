@@ -10,12 +10,11 @@ permissions:
 
 jobs:
   patch-and-verify:
-    if: ${{ !contains(github.event.head_commit.message, '[chat199-routeable-guard-done]') }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
         with:
-          ref: ${{ github.ref }}
+          ref: lucy/chat-199-routeable-agent-guard-20260903
           fetch-depth: 0
 
       - uses: actions/setup-node@v4
@@ -82,8 +81,7 @@ const seedAgents"""
             raise SystemExit('sidebar status anchor not found')
           sidebar.write_text(text.replace(old, new, 1))
 
-          test = Path('server/claude-routing-availability.test.ts')
-          test.write_text("""import { afterEach, describe, expect, it } from 'vitest';
+          Path('server/claude-routing-availability.test.ts').write_text("""import { afterEach, describe, expect, it } from 'vitest';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
@@ -162,4 +160,4 @@ describe('Claude routing availability', () => {
           git add server/collaboration.ts src/AppSidebar.tsx server/claude-routing-availability.test.ts .github/workflows/chat199-routeable-agent-worker.yml
           git diff --cached --check
           git commit -m "fix(chat): fail closed for unconfigured Claude routing [chat199-routeable-guard-done]"
-          git push origin HEAD:${GITHUB_REF_NAME}
+          git push origin HEAD:lucy/chat-199-routeable-agent-guard-20260903
