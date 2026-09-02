@@ -13,6 +13,9 @@ jobs:
     environment: staging
     timeout-minutes: 4
     steps:
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
       - name: Probe exact main session through Gateway API
         env:
           OPENCLAW_GATEWAY_BASE_URL: ${{ vars.OPENCLAW_GATEWAY_BASE_URL }}
@@ -22,36 +25,8 @@ jobs:
           LETTA_OPENCLAW_AGENT_TARGET: ${{ vars.LETTA_OPENCLAW_AGENT_TARGET }}
         run: |
           set -Eeuo pipefail
-          test -n "$OPENCLAW_GATEWAY_BASE_URL"
-          test -n "$OPENCLAW_GATEWAY_TOKEN"
-          test -n "$LETTA_OPENCLAW_AGENT_TARGET"
           marker="MAIN_SESSION_HEALTH_OK_${GITHUB_RUN_ID}"
-          payload="$(python3 - "$LETTA_OPENCLAW_AGENT_TARGET" "$marker" <<'PY'
-import json,sys
-model,marker=sys.argv[1:]
-print(json.dumps({"model":model,"stream":False,"messages":[{"role":"user","content":f"Diagnostic canary. Return exactly {marker} and nothing else."}]}))
-PY
-)"
-          code="$(curl -sS --max-time 120 -o /tmp/main-session.json -w '%{http_code}' \
-            -X POST "${OPENCLAW_GATEWAY_BASE_URL%/}/v1/chat/completions" \
-            -H "Authorization: Bearer $OPENCLAW_GATEWAY_TOKEN" \
-            -H 'Content-Type: application/json' \
-            -H "CF-Access-Client-Id: $CF_ACCESS_CLIENT_ID" \
-            -H "CF-Access-Client-Secret: $CF_ACCESS_CLIENT_SECRET" \
-            -H 'x-openclaw-session-key: agent:main:main' \
-            --data "$payload" || true)"
+          payload="$(node -e 'const [m,k]=process.argv.slice(1); process.stdout.write(JSON.stringify({model:m,stream:false,messages:[{role:"user",content:`Diagnostic canary. Return exactly ${k} and nothing else.`}]}))' "$LETTA_OPENCLAW_AGENT_TARGET" "$marker")"
+          code="$(curl -sS --max-time 120 -o /tmp/main-session.json -w '%{http_code}' -X POST "${OPENCLAW_GATEWAY_BASE_URL%/}/v1/chat/completions" -H "Authorization: Bearer $OPENCLAW_GATEWAY_TOKEN" -H 'Content-Type: application/json' -H "CF-Access-Client-Id: $CF_ACCESS_CLIENT_ID" -H "CF-Access-Client-Secret: $CF_ACCESS_CLIENT_SECRET" -H 'x-openclaw-session-key: agent:main:main' --data "$payload" || true)"
           echo "http_status=$code"
-          python3 - "$marker" "$code" <<'PY'
-import json,sys,pathlib
-marker,code=sys.argv[1:]
-raw=pathlib.Path('/tmp/main-session.json').read_text(errors='replace') if pathlib.Path('/tmp/main-session.json').exists() else ''
-try: data=json.loads(raw)
-except Exception:
-    print(json.dumps({"ok":False,"http":code,"json":False,"bodyPrefix":raw[:300]})); raise SystemExit(1)
-content=''
-try: content=data['choices'][0]['message']['content']
-except Exception: pass
-error=data.get('error') if isinstance(data,dict) else None
-print(json.dumps({"ok":code=='200' and marker in str(content),"http":code,"markerSeen":marker in str(content),"contentPrefix":str(content)[:180],"error":error},ensure_ascii=False))
-if code!='200' or marker not in str(content): raise SystemExit(1)
-PY
+          MARKER="$marker" CODE="$code" node -e 'const fs=require("fs"); const raw=fs.existsSync("/tmp/main-session.json")?fs.readFileSync("/tmp/main-session.json","utf8"):""; let d; try{d=JSON.parse(raw)}catch{console.log(JSON.stringify({ok:false,http:process.env.CODE,json:false,bodyPrefix:raw.slice(0,300)}));process.exit(1)} const c=d?.choices?.[0]?.message?.content??""; const ok=process.env.CODE==="200"&&String(c).includes(process.env.MARKER); console.log(JSON.stringify({ok,http:process.env.CODE,markerSeen:String(c).includes(process.env.MARKER),contentPrefix:String(c).slice(0,180),error:d?.error??null})); if(!ok) process.exit(1)'
