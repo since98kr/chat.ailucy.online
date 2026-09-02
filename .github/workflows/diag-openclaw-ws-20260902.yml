@@ -19,17 +19,33 @@ jobs:
       - name: Probe public dashboard and authenticated WebSocket chat
         env:
           OPENCLAW_GATEWAY_TOKEN: ${{ secrets.OPENCLAW_GATEWAY_TOKEN }}
+          CF_ACCESS_CLIENT_ID: ${{ vars.CF_ACCESS_CLIENT_ID }}
+          CF_ACCESS_CLIENT_SECRET: ${{ secrets.CF_ACCESS_CLIENT_SECRET }}
         run: |
           set -Eeuo pipefail
           test -n "$OPENCLAW_GATEWAY_TOKEN"
-          curl -fsS --max-time 15 -o /tmp/lucy-index.html -w 'http_status=%{http_code}\n' https://lucy.ailucy.online/
-          grep -q '<html\|<!doctype' /tmp/lucy-index.html
+          test -n "$CF_ACCESS_CLIENT_ID"
+          test -n "$CF_ACCESS_CLIENT_SECRET"
+          curl -fsS --max-time 15 \
+            -H "CF-Access-Client-Id: $CF_ACCESS_CLIENT_ID" \
+            -H "CF-Access-Client-Secret: $CF_ACCESS_CLIENT_SECRET" \
+            -o /tmp/lucy-index.html -w 'http_status=%{http_code}\n' https://lucy.ailucy.online/
+          grep -Eqi '<html|<!doctype' /tmp/lucy-index.html
+          mkdir -p /tmp/wsdiag && cd /tmp/wsdiag
+          npm init -y >/dev/null 2>&1
+          npm install --no-audit --no-fund --silent ws@8
           node <<'NODE'
           const crypto = require('node:crypto');
+          const WebSocket = require('ws');
           const token = process.env.OPENCLAW_GATEWAY_TOKEN;
           const sessionKey = `agent:main:diag-ws-${process.env.GITHUB_RUN_ID}`;
           const marker = `WS_CHAT_OK_${process.env.GITHUB_RUN_ID}`;
-          const ws = new WebSocket('wss://lucy.ailucy.online/');
+          const ws = new WebSocket('wss://lucy.ailucy.online/', {
+            headers: {
+              'CF-Access-Client-Id': process.env.CF_ACCESS_CLIENT_ID,
+              'CF-Access-Client-Secret': process.env.CF_ACCESS_CLIENT_SECRET,
+            },
+          });
           let connected = false;
           let chatAccepted = false;
           let markerLive = false;
@@ -52,16 +68,21 @@ jobs:
             historyRequested = true;
             send('history-1', 'chat.history', {sessionKey, limit: 20});
           }
-          ws.addEventListener('open', () => console.log('ws_open=true'));
-          ws.addEventListener('error', () => console.log('ws_error=true'));
-          ws.addEventListener('close', (event) => {
-            console.log(`ws_close_code=${event.code}`);
-            if (!done) finish(false, `closed-${event.code}`);
+          ws.on('open', () => console.log('ws_open=true'));
+          ws.on('unexpected-response', (_req, res) => {
+            console.log(`ws_unexpected_status=${res.statusCode}`);
+            finish(false, `unexpected-http-${res.statusCode}`);
           });
-          ws.addEventListener('message', (event) => {
+          ws.on('error', (error) => console.log(`ws_error=${error.code || error.name || 'error'}`));
+          ws.on('close', (code) => {
+            console.log(`ws_close_code=${code}`);
+            if (!done) finish(false, `closed-${code}`);
+          });
+          ws.on('message', (data) => {
             let frame;
-            try { frame = JSON.parse(String(event.data)); } catch { return finish(false, 'invalid-json-frame'); }
+            try { frame = JSON.parse(String(data)); } catch { return finish(false, 'invalid-json-frame'); }
             if (frame.type === 'event' && frame.event === 'connect.challenge') {
+              console.log('challenge_seen=true');
               send('connect-1', 'connect', {
                 minProtocol: 4,
                 maxProtocol: 4,
@@ -69,7 +90,7 @@ jobs:
                 role:'operator',
                 scopes:['operator.read','operator.write'],
                 caps:[], commands:[], permissions:{},
-                auth:{token}, locale:'en-US', userAgent:'lucy-ws-diag/1'
+                auth:{token}, locale:'en-US', userAgent:'lucy-ws-diag/2'
               });
               return;
             }
