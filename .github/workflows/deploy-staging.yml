@@ -21,8 +21,58 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
+  provider_gate:
+    name: Classify provider usage gate
+    runs-on: ubuntu-latest
+    outputs:
+      blocked: ${{ steps.gate.outputs.blocked }}
+      classification: ${{ steps.gate.outputs.classification }}
+      reason: ${{ steps.gate.outputs.reason }}
+      issue: ${{ steps.gate.outputs.issue }}
+      source_sha: ${{ steps.source.outputs.sha }}
+    steps:
+      - name: Checkout requested revision for gate classification
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.ref || github.sha }}
+          clean: true
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Verify source revision
+        id: source
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+
+      - name: Read source-controlled provider usage gate
+        id: gate
+        shell: bash
+        run: |
+          set -euo pipefail
+          gate="$(node scripts/ops/staging-provider-usage-gate.mjs)"
+          blocked="$(node -e "const j=JSON.parse(process.argv[1]);process.stdout.write(String(j.blocked))" "${gate}")"
+          classification="$(node -e "const j=JSON.parse(process.argv[1]);process.stdout.write(j.classification || '')" "${gate}")"
+          reason="$(node -e "const j=JSON.parse(process.argv[1]);process.stdout.write(j.reason || '')" "${gate}")"
+          issue="$(node -e "const j=JSON.parse(process.argv[1]);process.stdout.write(String(j.issue || ''))" "${gate}")"
+          echo "blocked=${blocked}" >> "$GITHUB_OUTPUT"
+          echo "classification=${classification}" >> "$GITHUB_OUTPUT"
+          echo "reason=${reason}" >> "$GITHUB_OUTPUT"
+          echo "issue=${issue}" >> "$GITHUB_OUTPUT"
+          if [[ "${blocked}" == 'true' ]]; then
+            echo "Provider-backed staging QA is externally blocked: ${classification} · issue #${issue}."
+          else
+            echo 'Provider-backed staging QA is enabled.'
+          fi
+
   deploy:
     name: Deploy and verify isolated staging
+    needs: provider_gate
+    if: needs.provider_gate.outputs.blocked != 'true'
     runs-on: [self-hosted, linux, x64, chat-staging]
     environment: staging
     timeout-minutes: 80
@@ -319,3 +369,51 @@ jobs:
                 : 'OpenClaw staging deploy or QA failed',
               target_url: `${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`,
             });
+
+  provider_blocked:
+    name: Record external provider usage blocker
+    needs: provider_gate
+    if: needs.provider_gate.outputs.blocked == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Publish AUTH/USAGE blocked commit status
+        uses: actions/github-script@v7
+        env:
+          DEPLOY_SHA: ${{ needs.provider_gate.outputs.source_sha }}
+          PROVIDER_CLASSIFICATION: ${{ needs.provider_gate.outputs.classification }}
+          PROVIDER_BLOCK_REASON: ${{ needs.provider_gate.outputs.reason }}
+          PROVIDER_BLOCK_ISSUE: ${{ needs.provider_gate.outputs.issue }}
+        with:
+          script: |
+            await github.rest.repos.createCommitStatus({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              sha: process.env.DEPLOY_SHA,
+              state: 'error',
+              context: 'chat-v2/staging',
+              description: 'AUTH/USAGE BLOCKED: provider model QA deferred',
+              target_url: `${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/issues/${process.env.PROVIDER_BLOCK_ISSUE}`,
+            });
+
+      - name: Publish external blocker summary
+        shell: bash
+        env:
+          PROVIDER_CLASSIFICATION: ${{ needs.provider_gate.outputs.classification }}
+          PROVIDER_BLOCK_REASON: ${{ needs.provider_gate.outputs.reason }}
+          PROVIDER_BLOCK_ISSUE: ${{ needs.provider_gate.outputs.issue }}
+        run: |
+          {
+            echo '## Chat V2 staging — externally blocked'
+            echo
+            echo "- Classification: \`${PROVIDER_CLASSIFICATION}\`"
+            echo "- Reason: ${PROVIDER_BLOCK_REASON}"
+            echo "- Canonical issue: #${PROVIDER_BLOCK_ISSUE}"
+            echo '- Self-hosted staging, secrets, provider turns, browser model QA, and external QA were not started.'
+            echo '- This is not a PASS. Remove or deactivate the source marker only after provider usage is restored.'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Fail closed without provider execution
+        shell: bash
+        run: |
+          echo 'AUTH/USAGE BLOCKED: provider-backed staging QA was intentionally not executed.' >&2
+          exit 1
