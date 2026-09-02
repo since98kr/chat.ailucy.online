@@ -25,11 +25,9 @@ jobs:
           echo "node=$(node --version)"
           printf 'http_18789='
           curl -sS --max-time 4 -o /dev/null -w '%{http_code}\n' http://127.0.0.1:18789/ || true
-          printf 'http_18790='
-          curl -sS --max-time 4 -o /dev/null -w '%{http_code}\n' http://127.0.0.1:18790/ || true
           node <<'NODE'
           const token = process.env.OPENCLAW_GATEWAY_TOKEN;
-          const result = {opened:false,challenge:false,connected:false,history:false,close:null,error:null};
+          const result = {opened:false,challenge:false,connected:false,history:false,close:null,error:null,errorMessage:null};
           const ws = new WebSocket('ws://127.0.0.1:18789/');
           let done=false;
           const timer=setTimeout(()=>finish(false,'timeout'),15000);
@@ -45,15 +43,15 @@ jobs:
             let f; try{f=JSON.parse(String(e.data))}catch{return finish(false,'invalid-json')}
             if(f.type==='event'&&f.event==='connect.challenge'){
               result.challenge=true; console.log('challenge=true');
-              send('connect-1','connect',{minProtocol:4,maxProtocol:4,client:{id:'cli',version:'2026.7.1-2',platform:'linux',mode:'operator'},role:'operator',scopes:['operator.read'],caps:[],commands:[],permissions:{},auth:{token},locale:'en-US',userAgent:'lucy-local-ws-diag/2'}); return;
+              send('connect-1','connect',{minProtocol:4,maxProtocol:4,client:{id:'gateway-client',version:'2026.7.1-2',platform:'linux',mode:'backend'},role:'operator',scopes:['operator.read'],caps:[],commands:[],permissions:{},auth:{token},locale:'en-US',userAgent:'lucy-local-ws-diag/3'}); return;
             }
             if(f.type==='res'&&f.id==='connect-1'){
-              if(!f.ok){result.error=f.error?.code||'connect-failed';return finish(false,'connect-failed')}
-              result.connected=true; console.log('connect=true');
+              if(!f.ok){result.error=f.error?.code||'connect-failed';result.errorMessage=f.error?.message||null;return finish(false,'connect-failed')}
+              result.connected=true; console.log(`connect=true scopes=${JSON.stringify(f.payload?.auth?.scopes||[])}`);
               send('history-1','chat.history',{sessionKey:'agent:main:main',limit:1}); return;
             }
             if(f.type==='res'&&f.id==='history-1'){
-              result.history=f.ok===true; if(!f.ok)result.error=f.error?.code||'history-failed';
+              result.history=f.ok===true; if(!f.ok){result.error=f.error?.code||'history-failed';result.errorMessage=f.error?.message||null;}
               return finish(result.history,result.history?'history-ok':'history-failed');
             }
           });
