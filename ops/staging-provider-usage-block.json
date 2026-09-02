@@ -1,0 +1,7 @@
+{
+  "blocked": true,
+  "classification": "AUTH/USAGE",
+  "reason": "OpenAI OAuth usage exhausted; model-dependent staging QA is intentionally deferred.",
+  "issue": 199,
+  "setAt": "2026-09-02T13:14:00Z"
+}
