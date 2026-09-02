@@ -6,10 +6,10 @@ on:
       - lucy/staging-provider-usage-gate-199
 
 permissions:
-  contents: read
+  contents: write
 
 jobs:
-  export:
+  publish:
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
@@ -38,8 +38,7 @@ jobs:
           node scripts/ops/staging-provider-usage-gate.nodecheck.mjs
           ruby - <<'RUBY'
           require 'yaml'
-          path = '.github/workflows/deploy-staging.yml'
-          value = YAML.load_file(path)
+          value = YAML.load_file('.github/workflows/deploy-staging.yml')
           jobs = value.fetch('jobs')
           %w[provider_gate deploy provider_blocked].each { |name| raise "missing jobs.#{name}" unless jobs.key?(name) }
           raise 'provider_blocked leaked to top-level' if value.key?('provider_blocked')
@@ -47,19 +46,25 @@ jobs:
           raise 'provider_blocked must depend on provider_gate' unless jobs.fetch('provider_blocked').fetch('needs') == 'provider_gate'
           puts 'deploy-staging.yml structure PASS'
           RUBY
-      - name: Export all final files
+      - name: Commit only verified final source
+        id: publish
+        shell: bash
         run: |
-          set -euo pipefail
-          mkdir -p verified-provider-gate/ops verified-provider-gate/scripts/ops verified-provider-gate/docs
-          cp .github/workflows/deploy-staging.yml verified-provider-gate/deploy-staging.yml
-          cp package.json verified-provider-gate/package.json
-          cp ops/staging-provider-usage-block.json verified-provider-gate/ops/staging-provider-usage-block.json
-          cp scripts/ops/staging-provider-usage-gate.mjs verified-provider-gate/scripts/ops/staging-provider-usage-gate.mjs
-          cp scripts/ops/staging-provider-usage-gate.nodecheck.mjs verified-provider-gate/scripts/ops/staging-provider-usage-gate.nodecheck.mjs
-          cp docs/E2E_STAGING_QA_GATES.md verified-provider-gate/docs/E2E_STAGING_QA_GATES.md
-      - uses: actions/upload-artifact@v4
+          set -o pipefail
+          {
+            set -euxo pipefail
+            git config user.name since98kr
+            git config user.email since98kr@gmail.com
+            git add .github/workflows/deploy-staging.yml package.json ops/staging-provider-usage-block.json scripts/ops/staging-provider-usage-gate.mjs scripts/ops/staging-provider-usage-gate.nodecheck.mjs docs/E2E_STAGING_QA_GATES.md
+            git diff --cached --check
+            git commit -m 'ci(staging): fail closed before provider calls when usage is exhausted'
+            git push origin HEAD:lucy/staging-provider-usage-gate-199
+          } 2>&1 | tee provider-gate-publish.log
+      - name: Upload publish diagnostic
+        if: failure() && steps.publish.outcome == 'failure'
+        uses: actions/upload-artifact@v4
         with:
-          name: verified-provider-gate-visible-${{ github.run_id }}
-          path: verified-provider-gate
+          name: provider-gate-publish-diagnostic-${{ github.run_id }}
+          path: provider-gate-publish.log
           if-no-files-found: error
           retention-days: 1
