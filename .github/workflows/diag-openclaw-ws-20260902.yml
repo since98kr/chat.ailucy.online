@@ -1,0 +1,110 @@
+name: DIAG OpenClaw public WebSocket 20260902
+
+on:
+  push:
+    branches: [diag/openclaw-ws-20260902]
+
+permissions:
+  contents: read
+
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    environment: staging
+    timeout-minutes: 5
+    steps:
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - name: Probe public dashboard and authenticated WebSocket chat
+        env:
+          OPENCLAW_GATEWAY_TOKEN: ${{ secrets.OPENCLAW_GATEWAY_TOKEN }}
+        run: |
+          set -Eeuo pipefail
+          test -n "$OPENCLAW_GATEWAY_TOKEN"
+          curl -fsS --max-time 15 -o /tmp/lucy-index.html -w 'http_status=%{http_code}\n' https://lucy.ailucy.online/
+          grep -q '<html\|<!doctype' /tmp/lucy-index.html
+          node <<'NODE'
+          const crypto = require('node:crypto');
+          const token = process.env.OPENCLAW_GATEWAY_TOKEN;
+          const sessionKey = `agent:main:diag-ws-${process.env.GITHUB_RUN_ID}`;
+          const marker = `WS_CHAT_OK_${process.env.GITHUB_RUN_ID}`;
+          const ws = new WebSocket('wss://lucy.ailucy.online/');
+          let connected = false;
+          let chatAccepted = false;
+          let markerLive = false;
+          let historyRequested = false;
+          let done = false;
+          const timeout = setTimeout(() => finish(false, 'overall-timeout'), 110000);
+          function send(id, method, params) {
+            ws.send(JSON.stringify({type:'req', id, method, params}));
+          }
+          function finish(ok, reason) {
+            if (done) return;
+            done = true;
+            clearTimeout(timeout);
+            console.log(JSON.stringify({ok, reason, connected, chatAccepted, markerLive, historyRequested, sessionKey}));
+            try { ws.close(); } catch {}
+            setTimeout(() => process.exit(ok ? 0 : 1), 100);
+          }
+          function requestHistory() {
+            if (historyRequested || !connected) return;
+            historyRequested = true;
+            send('history-1', 'chat.history', {sessionKey, limit: 20});
+          }
+          ws.addEventListener('open', () => console.log('ws_open=true'));
+          ws.addEventListener('error', () => console.log('ws_error=true'));
+          ws.addEventListener('close', (event) => {
+            console.log(`ws_close_code=${event.code}`);
+            if (!done) finish(false, `closed-${event.code}`);
+          });
+          ws.addEventListener('message', (event) => {
+            let frame;
+            try { frame = JSON.parse(String(event.data)); } catch { return finish(false, 'invalid-json-frame'); }
+            if (frame.type === 'event' && frame.event === 'connect.challenge') {
+              send('connect-1', 'connect', {
+                minProtocol: 4,
+                maxProtocol: 4,
+                client: {id:'cli', version:'2026.7.1-2', platform:'linux', mode:'operator'},
+                role:'operator',
+                scopes:['operator.read','operator.write'],
+                caps:[], commands:[], permissions:{},
+                auth:{token}, locale:'en-US', userAgent:'lucy-ws-diag/1'
+              });
+              return;
+            }
+            if (frame.type === 'res' && frame.id === 'connect-1') {
+              if (!frame.ok) return finish(false, `connect-error-${frame.error?.code || 'unknown'}`);
+              connected = true;
+              console.log(`connect_ok=true protocol=${frame.payload?.protocol ?? 'unknown'}`);
+              send('chat-1', 'chat.send', {
+                sessionKey,
+                message:`Return exactly ${marker} and nothing else.`,
+                deliver:false,
+                idempotencyKey:crypto.randomUUID()
+              });
+              setTimeout(requestHistory, 45000);
+              return;
+            }
+            if (frame.type === 'res' && frame.id === 'chat-1') {
+              chatAccepted = frame.ok === true;
+              console.log(`chat_response_ok=${frame.ok === true} status=${frame.payload?.status ?? 'unknown'}`);
+              if (!frame.ok) return finish(false, `chat-error-${frame.error?.code || 'unknown'}`);
+            }
+            const raw = JSON.stringify(frame);
+            if (raw.includes(marker)) {
+              markerLive = true;
+              console.log('marker_seen_live=true');
+              return finish(true, 'live-marker');
+            }
+            if (frame.type === 'event' && (frame.event === 'chat' || frame.event === 'agent')) {
+              console.log(`event=${frame.event} state=${frame.payload?.state ?? frame.payload?.status ?? 'unknown'}`);
+              if (frame.payload?.state === 'final') setTimeout(requestHistory, 250);
+            }
+            if (frame.type === 'res' && frame.id === 'history-1') {
+              const found = JSON.stringify(frame.payload || {}).includes(marker);
+              console.log(`history_ok=${frame.ok === true} marker_seen_history=${found}`);
+              return finish(found, found ? 'history-marker-only' : `history-missing-${frame.error?.code || 'none'}`);
+            }
+          });
+          NODE
