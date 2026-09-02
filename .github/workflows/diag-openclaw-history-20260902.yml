@@ -16,7 +16,7 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: "22"
-      - name: Read main-session latency metadata only
+      - name: Read main-session runtime metadata only
         env:
           OPENCLAW_GATEWAY_TOKEN: ${{ secrets.OPENCLAW_GATEWAY_TOKEN }}
         run: |
@@ -28,24 +28,20 @@ jobs:
           const timer=setTimeout(()=>finish(false,'timeout'),15000);
           function send(id,method,params){ws.send(JSON.stringify({type:'req',id,method,params}));}
           function finish(ok,reason){if(done)return;done=true;clearTimeout(timer);console.log(`finish=${reason}`);try{ws.close()}catch{};setTimeout(()=>process.exit(ok?0:1),100);}
-          function textOf(m){const c=m?.content;if(typeof c==='string')return c;if(Array.isArray(c))return c.map(x=>typeof x==='string'?x:(typeof x?.text==='string'?x.text:'')).join('');return typeof m?.text==='string'?m.text:'';}
-          function safeMeta(m,i){const txt=textOf(m);return {i,role:m?.role??m?.type??'unknown',timestamp:m?.timestamp??m?.createdAt??m?.created_at??m?.ts??null,chars:txt.length,diagnostic:/Diagnostic canary|MAIN_SESSION_HEALTH_OK_|WS_CHAT_OK_|OPENCLAW_LIVE_HEALTH_OK/.test(txt),api:m?.api??null,provider:m?.provider??null,model:m?.model??null,stopReason:m?.stopReason??m?.stop_reason??null,isError:m?.isError??null,usage:m?.usage??null,keys:Object.keys(m||{}).filter(k=>!['content','text','message','reasoning','thinking'].includes(k)).sort()};}
+          function pick(s){if(!s||typeof s!=='object')return null;const keys=['key','sessionId','status','startedAt','endedAt','runtimeMs','modelProvider','model','agentRuntime','contextTokens','totalTokensFresh','effectiveFastMode','effectiveFastModeSource','fastAutoOnSeconds','hasActiveRun','abortedLastRun','thinkingLevel','unread','updatedAt'];const out={};for(const k of keys)out[k]=s[k]??null;out.activeRunCount=Array.isArray(s.activeRunIds)?s.activeRunIds.length:null;out.effectiveResponseUsage=s.effectiveResponseUsage??null;return out;}
           ws.addEventListener('message',(e)=>{
             let f;try{f=JSON.parse(String(e.data))}catch{return finish(false,'invalid-json')}
             if(f.type==='event'&&f.event==='connect.challenge'){
-              send('connect','connect',{minProtocol:4,maxProtocol:4,client:{id:'gateway-client',version:'2026.7.1-2',platform:'linux',mode:'backend'},role:'operator',scopes:['operator.read'],caps:[],commands:[],permissions:{},auth:{token},locale:'en-US',userAgent:'lucy-history-diag/2'});return;
+              send('connect','connect',{minProtocol:4,maxProtocol:4,client:{id:'gateway-client',version:'2026.7.1-2',platform:'linux',mode:'backend'},role:'operator',scopes:['operator.read'],caps:[],commands:[],permissions:{},auth:{token},locale:'en-US',userAgent:'lucy-runtime-diag/1'});return;
             }
             if(f.type==='res'&&f.id==='connect'){
               if(!f.ok)return finish(false,'connect-failed');
-              send('history','chat.history',{sessionKey:'agent:main:main',limit:50});return;
+              send('history','chat.history',{sessionKey:'agent:main:main',limit:2});return;
             }
             if(f.type==='res'&&f.id==='history'){
               if(!f.ok)return finish(false,'history-failed');
-              const p=f.payload||{};const ms=Array.isArray(p.messages)?p.messages:[];const metas=ms.map(safeMeta);const nonDiag=metas.filter(x=>!x.diagnostic);const tail=nonDiag.slice(-6);
-              const ua=[...nonDiag].reverse().find(x=>String(x.role).toLowerCase().includes('assistant'));
-              const uu=[...nonDiag].reverse().find(x=>String(x.role).toLowerCase().includes('user')&&(!ua||x.timestamp<=ua.timestamp));
-              const latencyMs=(ua?.timestamp&&uu?.timestamp)?Number(ua.timestamp)-Number(uu.timestamp):null;
-              console.log(JSON.stringify({thinkingLevel:p.thinkingLevel??null,sessionInfoKeys:p.sessionInfo?Object.keys(p.sessionInfo):[],defaultsKeys:p.defaults?Object.keys(p.defaults):[],messageCount:ms.length,lastUser:uu??null,lastAssistant:ua??null,latestPairLatencyMs:latencyMs,tail},null,2));
+              const p=f.payload||{};
+              console.log(JSON.stringify({thinkingLevel:p.thinkingLevel??null,sessionInfo:pick(p.sessionInfo),defaults:{modelProvider:p.defaults?.modelProvider??null,model:p.defaults?.model??null,contextTokens:p.defaults?.contextTokens??null,agentRuntime:p.defaults?.agentRuntime??null,thinkingDefault:p.defaults?.thinkingDefault??null}},null,2));
               return finish(true,'history-ok');
             }
           });
