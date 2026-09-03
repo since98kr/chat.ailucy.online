@@ -42,6 +42,10 @@ connect_adapter_network() {
 
 rollback() {
   log 'Deployment failed. Starting rollback.'
+  # Compose interpolates CHAT_IMAGE even for `logs`. Bind a safe image before
+  # collecting diagnostics so rollback never obscures the original failure
+  # with a secondary missing-CHAT_IMAGE interpolation error.
+  export CHAT_IMAGE="${PREVIOUS_IMAGE:-${IMAGE}}"
   docker compose -p chat-v2-staging -f "${REPO_ROOT}/compose.staging.yml" logs --tail=120 || true
   if [[ -n "${PREVIOUS_IMAGE}" ]] && docker image inspect "${PREVIOUS_IMAGE}" >/dev/null 2>&1; then
     export CHAT_IMAGE="${PREVIOUS_IMAGE}"

@@ -8,7 +8,7 @@ import { securityConfigFromEnv } from './security.js';
 
 type CheckLevel = 'info' | 'warning' | 'error';
 
-type PreflightCheck = {
+export type PreflightCheck = {
   name: string;
   ok: boolean;
   level: CheckLevel;
@@ -192,6 +192,33 @@ function checkSecurity(checks: PreflightCheck[], strict: boolean) {
   }
 }
 
+
+export function evaluateAdapterHealthForPreflight(
+  system: string,
+  health: { ok: boolean; mode: string; detail: string; latencyMs?: number },
+  requireRealAdapters: boolean,
+  env: NodeJS.ProcessEnv = process.env,
+): PreflightCheck {
+  const optionalUnconfigured = system === 'claude' && !(env.CLAUDE_BASE_URL ?? '').trim();
+  if (optionalUnconfigured) {
+    return {
+      name: `adapter-${system}`,
+      ok: true,
+      level: 'warning',
+      detail: `optional-unconfigured; mode=${health.mode}; ${health.detail}; latency=${health.latencyMs ?? 0}ms`,
+    };
+  }
+
+  const realEnough = health.mode === 'http' && health.ok;
+  const ok = health.ok && (!requireRealAdapters || realEnough);
+  return {
+    name: `adapter-${system}`,
+    ok,
+    level: ok ? (health.mode === 'mock' ? 'warning' : 'info') : 'error',
+    detail: `mode=${health.mode}; ${health.detail}; latency=${health.latencyMs ?? 0}ms`,
+  };
+}
+
 export async function runPreflight(options?: { strict?: boolean }): Promise<PreflightReport> {
   const strict = options?.strict ?? false;
   const checks: PreflightCheck[] = [];
@@ -220,14 +247,7 @@ export async function runPreflight(options?: { strict?: boolean }): Promise<Pref
   const adapters = await adapterHealth();
   const requireRealAdapters = boolEnv('CHAT_PREFLIGHT_REQUIRE_REAL_ADAPTERS', strict);
   for (const [system, health] of Object.entries(adapters)) {
-    const realEnough = health.mode === 'http' && health.ok;
-    const ok = health.ok && (!requireRealAdapters || realEnough);
-    addCheck(checks, {
-      name: `adapter-${system}`,
-      ok,
-      level: ok ? (health.mode === 'mock' ? 'warning' : 'info') : 'error',
-      detail: `mode=${health.mode}; ${health.detail}; latency=${health.latencyMs ?? 0}ms`,
-    });
+    addCheck(checks, evaluateAdapterHealthForPreflight(system, health, requireRealAdapters));
   }
 
   const readiness = await adapterReadiness();

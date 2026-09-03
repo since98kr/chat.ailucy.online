@@ -2,7 +2,7 @@ import { afterEach, describe, expect, it } from 'vitest';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { runPreflight } from './preflight.js';
+import { evaluateAdapterHealthForPreflight, runPreflight } from './preflight.js';
 
 const originalEnv = { ...process.env };
 const directories: string[] = [];
@@ -31,6 +31,29 @@ function prepareEnvironment() {
 afterEach(() => {
   process.env = { ...originalEnv };
   while (directories.length) rmSync(directories.pop()!, { recursive: true, force: true });
+});
+
+describe('adapter health preflight semantics', () => {
+  it('treats an intentionally unconfigured Claude backend as optional and non-routeable', () => {
+    const check = evaluateAdapterHealthForPreflight(
+      'claude',
+      { ok: false, mode: 'unavailable', detail: 'claude real backend is not configured', latencyMs: 0 },
+      true,
+      {},
+    );
+    expect(check).toMatchObject({ ok: true, level: 'warning' });
+    expect(check.detail).toContain('optional-unconfigured');
+  });
+
+  it('fails closed when Claude is configured but unhealthy', () => {
+    const check = evaluateAdapterHealthForPreflight(
+      'claude',
+      { ok: false, mode: 'http', detail: '503 Service Unavailable', latencyMs: 5 },
+      true,
+      { CLAUDE_BASE_URL: 'http://claude.internal' },
+    );
+    expect(check).toMatchObject({ ok: false, level: 'error' });
+  });
 });
 
 describe('deployment preflight', () => {
