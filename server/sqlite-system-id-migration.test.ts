@@ -22,6 +22,7 @@ describe('Claude SystemId schema migration', () => {
     if (directory) rmSync(directory, { recursive: true, force: true });
     app = undefined;
     directory = undefined;
+    delete process.env.CLAUDE_BASE_URL;
   });
 
   it('widens every legacy SystemId CHECK in a table and preserves rows', () => {
@@ -45,6 +46,7 @@ describe('Claude SystemId schema migration', () => {
   });
 
   it('boots an existing pre-Claude database and enables Theia without losing existing state', async () => {
+    process.env.CLAUDE_BASE_URL = 'http://claude.test';
     directory = mkdtempSync(join(tmpdir(), 'chat-v2-claude-migrate-'));
     const databasePath = join(directory, 'chat.sqlite');
     const legacy = new Database(databasePath);
