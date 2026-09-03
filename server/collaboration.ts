@@ -55,7 +55,6 @@ type ActivityRow = {
 const timestamp = () => new Date().toISOString();
 
 export function claudeDirectChatEnabled(env: NodeJS.ProcessEnv = process.env) {
-  if (env.NODE_ENV === 'test') return true;
   return Boolean(env.CLAUDE_BASE_URL?.trim());
 }
 
