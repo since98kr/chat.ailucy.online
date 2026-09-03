@@ -1,7 +1,8 @@
 {
-  "blocked": true,
-  "classification": "AUTH/USAGE",
-  "reason": "Staging OPENCLAW_GATEWAY_TOKEN is rejected with HTTP 401 while the current gateway config token succeeds on the same route.",
+  "blocked": false,
+  "classification": null,
+  "reason": null,
   "issue": 210,
-  "evidence": "20260903T1828KST-chat210-openclaw-config-file-probe-v2"
+  "clearedAt": "2026-09-03T15:21:36Z",
+  "evidence": "20260904T0022KST-chat210-sync-staging-openclaw-token"
 }
