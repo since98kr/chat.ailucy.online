@@ -5,6 +5,11 @@ import type { StreamEvent, SystemId } from '../shared/contracts.js';
 import type { CollaborationService } from './collaboration.js';
 import type { ChatDatabase } from './database.js';
 import type { FederationService } from './federation.js';
+import {
+  FEDERATED_CONVERSATION_IDENTITY_ERROR,
+  federationSnapshotForConversation,
+  isFederationConversationIdentity,
+} from './federation-identity.js';
 import { replayWorkflowEvents, runFederatedWorkflow } from './federated-runner.js';
 
 const systemIdSchema = z.enum(['letta', 'hermes', 'claude']);
@@ -55,7 +60,7 @@ export function registerFederationRoutes(
     const publicArtifacts = artifacts.map(({ storagePath: _storagePath, ...artifact }) => artifact);
     const participants = collaboration.listParticipants(id);
     const activities = collaboration.listActivities(id, 500);
-    const snapshot = federation.snapshot(id);
+    const snapshot = federationSnapshotForConversation(conversation, federation.snapshot(id));
     const retries = database.db.prepare(`
       SELECT
         idempotency_key, original_message_id, source_message_id, output_message_id,
@@ -110,8 +115,9 @@ export function registerFederationRoutes(
 
   app.get('/api/conversations/:id/federation', async (request, reply) => {
     const { id } = z.object({ id: z.string().min(1) }).parse(request.params);
-    if (!database.getConversation(id)) return reply.status(404).send({ error: 'CONVERSATION_NOT_FOUND' });
-    return { federation: federation.snapshot(id) };
+    const conversation = database.getConversation(id);
+    if (!conversation) return reply.status(404).send({ error: 'CONVERSATION_NOT_FOUND' });
+    return { federation: federationSnapshotForConversation(conversation, federation.snapshot(id)) };
   });
 
   app.post('/api/conversations/:id/federation', async (request, reply) => {
@@ -120,8 +126,8 @@ export function registerFederationRoutes(
       .parse(request.body ?? {});
     const conversation = database.getConversation(id);
     if (!conversation) return reply.status(404).send({ error: 'CONVERSATION_NOT_FOUND' });
-    if (conversation.systemId !== 'hermes' || conversation.agentId !== '[Hermes] Lucy') {
-      return reply.status(409).send({ error: 'FEDERATED_CONVERSATION_REQUIRES_HERMES_LUCY' });
+    if (!isFederationConversationIdentity(conversation)) {
+      return reply.status(409).send({ error: FEDERATED_CONVERSATION_IDENTITY_ERROR });
     }
     const coordinator = collaboration.getAgent(input.coordinatorAgentId);
     if (!coordinator || !coordinator.enabled || coordinator.systemId !== 'hermes') {
@@ -146,6 +152,9 @@ export function registerFederationRoutes(
     const input = createCapsuleSchema.parse(request.body);
     const conversation = database.getConversation(id);
     if (!conversation) return reply.status(404).send({ error: 'CONVERSATION_NOT_FOUND' });
+    if (!isFederationConversationIdentity(conversation)) {
+      return reply.status(409).send({ error: FEDERATED_CONVERSATION_IDENTITY_ERROR });
+    }
     if (federation.getConfig(id)?.mode !== 'federated') {
       return reply.status(409).send({ error: 'FEDERATION_NOT_ENABLED' });
     }
@@ -162,6 +171,11 @@ export function registerFederationRoutes(
     const input = updateCapsuleSchema.parse(request.body);
     const current = federation.getCapsule(capsuleId);
     if (!current) return reply.status(404).send({ error: 'MEMORY_CAPSULE_NOT_FOUND' });
+    const conversation = database.getConversation(current.conversationId);
+    if (!conversation) return reply.status(409).send({ error: 'MEMORY_CAPSULE_CONTEXT_MISSING' });
+    if (!isFederationConversationIdentity(conversation) && input.status !== 'revoked') {
+      return reply.status(409).send({ error: FEDERATED_CONVERSATION_IDENTITY_ERROR });
+    }
     if (current.status === 'revoked' && input.status === 'approved') {
       return reply.status(409).send({ error: 'REVOKED_CAPSULE_CANNOT_BE_REAPPROVED' });
     }
@@ -201,6 +215,9 @@ export function registerFederationRoutes(
     const foundUserMessage = database.getMessage(foundRun.sourceMessageId);
     if (!foundConversation || !foundUserMessage) {
       return reply.status(409).send({ error: 'WORKFLOW_SOURCE_CONTEXT_MISSING' });
+    }
+    if (!isFederationConversationIdentity(foundConversation)) {
+      return reply.status(409).send({ error: FEDERATED_CONVERSATION_IDENTITY_ERROR });
     }
 
     const run = foundRun;
