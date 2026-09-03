@@ -110,12 +110,13 @@ function SystemCard({ id, label, accent, agents, selectedSystem, activeAgent, on
   activeAgent: string;
   onSelect: (agent: AgentRecord) => void;
 }) {
-  const lead = agents.find((agent) => agent.isLead) ?? agents[0];
+  const lead = agents.find((agent) => agent.isLead && agent.enabled && agent.directChatEnabled)
+    ?? agents.find((agent) => agent.enabled && agent.directChatEnabled);
   return (
     <div className={`system-card system-card--${accent} ${selectedSystem === id ? 'is-selected' : ''}`}>
       <button className="system-card__header" onClick={() => lead && onSelect(lead)} disabled={!lead}>
         <span className="system-card__icon">{id === 'letta' ? <Sparkles size={16} /> : <Bot size={17} />}</span>
-        <span><strong>{label}</strong><small>{id === 'letta' ? 'Memory-first system' : id === 'claude' ? 'Independent review system' : 'Collaborative system'}</small></span>
+        <span><strong>{label}</strong><small>{!lead ? 'Backend not configured' : id === 'letta' ? 'Memory-first system' : id === 'claude' ? 'Independent review system' : 'Collaborative system'}</small></span>
         <ChevronDown size={15} />
       </button>
       <div className="agent-list">

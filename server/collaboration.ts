@@ -54,6 +54,10 @@ type ActivityRow = {
 
 const timestamp = () => new Date().toISOString();
 
+export function claudeDirectChatEnabled(env: NodeJS.ProcessEnv = process.env) {
+  return Boolean(env.CLAUDE_BASE_URL?.trim());
+}
+
 const seedAgents: Array<Omit<AgentRecord, 'createdAt' | 'updatedAt'>> = [
   {
     id: '[Letta] Lucy',
@@ -261,6 +265,9 @@ export class CollaborationService {
     const transaction = this.db.transaction(() => {
       for (const agent of seedAgents) {
         const createdAt = timestamp();
+        const directChatEnabled = agent.systemId === 'claude'
+          ? claudeDirectChatEnabled()
+          : agent.directChatEnabled;
         statement.run(
           agent.id,
           agent.systemId,
@@ -270,7 +277,7 @@ export class CollaborationService {
           agent.description,
           JSON.stringify(agent.capabilities),
           agent.enabled ? 1 : 0,
-          agent.directChatEnabled ? 1 : 0,
+          directChatEnabled ? 1 : 0,
           agent.isLead ? 1 : 0,
           agent.sortOrder,
           createdAt,
