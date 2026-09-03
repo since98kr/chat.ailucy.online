@@ -51,4 +51,42 @@ describe('Claude routing availability', () => {
     expect(created.statusCode).toBe(409);
     expect(created.json()).toMatchObject({ error: 'AGENT_UNAVAILABLE' });
   });
+
+  it('reconciles persisted Claude routeability when the backend is removed between restarts', async () => {
+    process.env.NODE_ENV = 'production';
+    directory = mkdtempSync(join(tmpdir(), 'chat-v2-claude-reconcile-'));
+    const databasePath = join(directory, 'chat.sqlite');
+    const artifactRoot = join(directory, 'artifacts');
+
+    process.env.CLAUDE_BASE_URL = 'http://127.0.0.1:65534';
+    app = buildApp({ databasePath, artifactRoot });
+    await app.ready();
+
+    const initiallyRouteable = await app.inject({ method: 'GET', url: '/api/agents?systemId=claude' });
+    expect(initiallyRouteable.statusCode).toBe(200);
+    expect(initiallyRouteable.json().agents).toEqual([
+      expect.objectContaining({ id: '[Claude] 테이아', directChatEnabled: true }),
+    ]);
+
+    await app.close();
+    app = undefined;
+    delete process.env.CLAUDE_BASE_URL;
+
+    app = buildApp({ databasePath, artifactRoot });
+    await app.ready();
+
+    const reconciled = await app.inject({ method: 'GET', url: '/api/agents?systemId=claude' });
+    expect(reconciled.statusCode).toBe(200);
+    expect(reconciled.json().agents).toEqual([
+      expect.objectContaining({ id: '[Claude] 테이아', directChatEnabled: false }),
+    ]);
+
+    const created = await app.inject({
+      method: 'POST',
+      url: '/api/conversations',
+      payload: { systemId: 'claude', agentId: '[Claude] 테이아', title: 'stale Claude route' },
+    });
+    expect(created.statusCode).toBe(409);
+    expect(created.json()).toMatchObject({ error: 'AGENT_UNAVAILABLE' });
+  });
 });
