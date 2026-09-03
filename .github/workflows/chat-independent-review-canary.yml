@@ -32,14 +32,7 @@ jobs:
           set -euo pipefail
           req="$RUNNER_TEMP/reviewer-canary-request.json"
           out="$RUNNER_TEMP/reviewer-canary-response.json"
-          node - <<'NODE' >"$req"
-          process.stdout.write(JSON.stringify({
-            model: 'deepseek/deepseek-v4-pro',
-            stream: false,
-            max_tokens: 32,
-            messages: [{ role: 'user', content: 'Reply exactly REVIEWER_OK' }],
-          }));
-          NODE
+          printf '%s' '{"model":"deepseek/deepseek-v4-pro","stream":false,"max_tokens":32,"messages":[{"role":"user","content":"Reply exactly REVIEWER_OK"}]}' >"$req"
           set +e
           curl --silent --show-error --fail-with-body \
             --max-time 240 \
@@ -53,11 +46,8 @@ jobs:
             echo "INDEPENDENT_REVIEWER_CANARY_FAILED rc=$rc"
             exit 1
           fi
-          node - "$out" <<'NODE'
-          const fs = require('fs');
-          const path = process.argv[2];
-          const payload = JSON.parse(fs.readFileSync(path, 'utf8'));
-          const text = payload?.choices?.[0]?.message?.content ?? '';
-          if (String(text).trim() !== 'REVIEWER_OK') process.exit(1);
-          console.log('INDEPENDENT_REVIEWER_CANARY_PASS model=deepseek/deepseek-v4-pro');
-          NODE
+          if ! grep -q 'REVIEWER_OK' "$out"; then
+            echo 'INDEPENDENT_REVIEWER_CANARY_BAD_RESPONSE'
+            exit 1
+          fi
+          echo 'INDEPENDENT_REVIEWER_CANARY_PASS model=deepseek/deepseek-v4-pro'
