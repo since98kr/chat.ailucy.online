@@ -1,8 +1,7 @@
 {
-  "blocked": false,
-  "classification": null,
-  "reason": null,
-  "issue": 199,
-  "clearedAt": "2026-09-03T03:50:02Z",
-  "evidence": "OpenClaw letta/lucy exact-route recovery canary CHAT_LUCY_OK"
+  "blocked": true,
+  "classification": "AUTH/USAGE",
+  "reason": "Staging OPENCLAW_GATEWAY_TOKEN is rejected with HTTP 401 while the current gateway config token succeeds on the same route.",
+  "issue": 210,
+  "evidence": "20260903T1828KST-chat210-openclaw-config-file-probe-v2"
 }
