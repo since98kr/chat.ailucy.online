@@ -11,41 +11,53 @@ permissions:
 jobs:
   reviewer-canary:
     runs-on: [self-hosted, linux, x64, chat-staging]
+    environment: staging
     timeout-minutes: 8
     steps:
-      - name: Locate OpenClaw reviewer runtime
+      - name: Require private OpenClaw staging ingress
         shell: bash
+        env:
+          OPENCLAW_GATEWAY_TOKEN: ${{ secrets.OPENCLAW_GATEWAY_TOKEN }}
         run: |
           set -euo pipefail
-          bin="$(command -v openclaw || true)"
-          if [[ -z "$bin" && -x /home/since98kr/.local/bin/openclaw ]]; then
-            bin=/home/since98kr/.local/bin/openclaw
-          fi
-          [[ -n "$bin" && -x "$bin" ]] || { echo 'OPENCLAW_REVIEWER_RUNTIME_MISSING'; exit 1; }
-          printf '%s\n' "$bin" > "$RUNNER_TEMP/openclaw-bin"
-          echo 'OPENCLAW_REVIEWER_RUNTIME_FOUND'
+          [[ -n "${OPENCLAW_GATEWAY_TOKEN}" ]] || { echo 'OPENCLAW_GATEWAY_TOKEN_MISSING'; exit 1; }
+          curl --fail --silent --show-error --max-time 5 http://127.0.0.1:18789/health >/dev/null
+          echo 'OPENCLAW_REVIEWER_GATEWAY_HEALTHY'
 
       - name: Probe independent DeepSeek reviewer
         shell: bash
+        env:
+          OPENCLAW_GATEWAY_TOKEN: ${{ secrets.OPENCLAW_GATEWAY_TOKEN }}
         run: |
           set -euo pipefail
-          bin="$(cat "$RUNNER_TEMP/openclaw-bin")"
-          out="$RUNNER_TEMP/reviewer-canary.json"
+          req="$RUNNER_TEMP/reviewer-canary-request.json"
+          out="$RUNNER_TEMP/reviewer-canary-response.json"
+          node - <<'NODE' >"$req"
+          process.stdout.write(JSON.stringify({
+            model: 'deepseek/deepseek-v4-pro',
+            stream: false,
+            max_tokens: 32,
+            messages: [{ role: 'user', content: 'Reply exactly REVIEWER_OK' }],
+          }));
+          NODE
           set +e
-          timeout 240 "$bin" infer model run \
-            --gateway \
-            --model deepseek/deepseek-v4-pro \
-            --prompt 'Reply exactly REVIEWER_OK' \
-            --thinking low \
-            --json >"$out" 2>"$RUNNER_TEMP/reviewer-canary.err"
+          curl --silent --show-error --fail-with-body \
+            --max-time 240 \
+            -H 'Content-Type: application/json' \
+            -H "Authorization: Bearer ${OPENCLAW_GATEWAY_TOKEN}" \
+            --data-binary @"$req" \
+            http://127.0.0.1:18789/v1/chat/completions >"$out" 2>"$RUNNER_TEMP/reviewer-canary.err"
           rc=$?
           set -e
           if [[ $rc -ne 0 ]]; then
             echo "INDEPENDENT_REVIEWER_CANARY_FAILED rc=$rc"
             exit 1
           fi
-          if ! grep -q 'REVIEWER_OK' "$out"; then
-            echo 'INDEPENDENT_REVIEWER_CANARY_BAD_RESPONSE'
-            exit 1
-          fi
-          echo 'INDEPENDENT_REVIEWER_CANARY_PASS model=deepseek/deepseek-v4-pro'
+          node - "$out" <<'NODE'
+          const fs = require('fs');
+          const path = process.argv[2];
+          const payload = JSON.parse(fs.readFileSync(path, 'utf8'));
+          const text = payload?.choices?.[0]?.message?.content ?? '';
+          if (String(text).trim() !== 'REVIEWER_OK') process.exit(1);
+          console.log('INDEPENDENT_REVIEWER_CANARY_PASS model=deepseek/deepseek-v4-pro');
+          NODE
