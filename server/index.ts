@@ -25,6 +25,11 @@ import {
   type ConversationApprovalBackend,
 } from './openclaw-approval.js';
 import { FederationService } from './federation.js';
+import {
+  FEDERATED_CONVERSATION_IDENTITY_ERROR,
+  federationSnapshotForConversation,
+  isFederationConversationIdentity,
+} from './federation-identity.js';
 import { registerFederationRoutes } from './federation-routes.js';
 import { runFederatedWorkflow } from './federated-runner.js';
 import type {
@@ -351,7 +356,7 @@ export function buildApp(options?: BuildAppOptions) {
       claude: collaboration.listAgents('claude').filter((agent) => agent.enabled).length,
     },
     workflow: {
-      federatedConversations: db.db.prepare(`SELECT COUNT(*) AS count FROM conversation_federation WHERE mode = 'federated'`).get(),
+      federatedConversations: db.db.prepare(`SELECT COUNT(*) AS count FROM conversation_federation cf JOIN conversations c ON c.id = cf.conversation_id WHERE cf.mode = 'federated' AND c.system_id = 'hermes' AND c.agent_id = '[Hermes] Lucy'`).get(),
       resumableRuns: db.db.prepare(`SELECT COUNT(*) AS count FROM workflow_runs WHERE status IN ('paused', 'failed')`).get(),
     },
     timestamp: new Date().toISOString(),
@@ -444,7 +449,7 @@ export function buildApp(options?: BuildAppOptions) {
     const conversation = db.branchConversation(id, input);
     if (!conversation) return reply.status(404).send({ error: 'CONVERSATION_OR_MESSAGE_NOT_FOUND' });
     collaboration.cloneParticipants(id, conversation.id);
-    federation.cloneConversation(id, conversation.id);
+    if (isFederationConversationIdentity(conversation)) federation.cloneConversation(id, conversation.id);
     return reply.status(201).send({ conversation: db.getConversation(conversation.id) });
   });
 
@@ -461,7 +466,7 @@ export function buildApp(options?: BuildAppOptions) {
       conversation,
       collaboration.listParticipants(id),
       collaboration.listActivities(id, 500),
-      federation.snapshot(id),
+      federationSnapshotForConversation(conversation, federation.snapshot(id)),
     ));
   });
 
@@ -533,7 +538,11 @@ export function buildApp(options?: BuildAppOptions) {
         .header('X-Accel-Buffering', 'no')
         .send(eventLine({ type: 'approval.resolved', approvalId: result.approvalId }));
     }
-    const config = federation.getConfig(id);
+    const federationIdentityValid = isFederationConversationIdentity(conversation);
+    const config = federationIdentityValid ? federation.getConfig(id) : null;
+    if (input.workflowMode === 'federated' && !federationIdentityValid) {
+      return reply.status(409).send({ error: FEDERATED_CONVERSATION_IDENTITY_ERROR });
+    }
     const federated = config?.mode === 'federated' || input.workflowMode === 'federated';
     if (federated && config?.mode !== 'federated') {
       return reply.status(409).send({ error: 'FEDERATION_NOT_ENABLED' });
