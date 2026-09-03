@@ -45,6 +45,26 @@ describe('adapter health preflight semantics', () => {
     expect(check.detail).toContain('optional-unconfigured');
   });
 
+  it('does not waive an HTTP Claude failure merely because CLAUDE_BASE_URL is absent from the caller env', () => {
+    const check = evaluateAdapterHealthForPreflight(
+      'claude',
+      { ok: false, mode: 'http', detail: '401 Unauthorized', latencyMs: 5 },
+      true,
+      {},
+    );
+    expect(check).toMatchObject({ ok: false, level: 'error' });
+  });
+
+  it('does not waive a routeable mock Claude in strict real-adapter mode', () => {
+    const check = evaluateAdapterHealthForPreflight(
+      'claude',
+      { ok: true, mode: 'mock', detail: 'mock adapter', latencyMs: 0 },
+      true,
+      {},
+    );
+    expect(check).toMatchObject({ ok: false, level: 'error' });
+  });
+
   it('fails closed when Claude is configured but unhealthy', () => {
     const check = evaluateAdapterHealthForPreflight(
       'claude',

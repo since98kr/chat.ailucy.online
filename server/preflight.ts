@@ -199,7 +199,7 @@ export function evaluateAdapterHealthForPreflight(
   requireRealAdapters: boolean,
   env: NodeJS.ProcessEnv = process.env,
 ): PreflightCheck {
-  const optionalUnconfigured = system === 'claude' && !(env.CLAUDE_BASE_URL ?? '').trim();
+  const optionalUnconfigured = system === 'claude' && !(env.CLAUDE_BASE_URL ?? '').trim() && health.mode === 'unavailable' && !health.ok;
   if (optionalUnconfigured) {
     return {
       name: `adapter-${system}`,
