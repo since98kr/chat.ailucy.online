@@ -15,6 +15,7 @@ import { storeGeneratedArtifact } from './artifacts.js';
 import type { CollaborationService } from './collaboration.js';
 import type { ChatDatabase } from './database.js';
 import type { FederationService } from './federation.js';
+import { FEDERATED_CONVERSATION_IDENTITY_ERROR, isFederationConversationIdentity } from './federation-identity.js';
 
 class AsyncEventQueue<T> {
   private values: T[] = [];
@@ -349,6 +350,9 @@ async function executeStep(input: {
 
 export async function* runFederatedWorkflow(input: FederatedRunInput): AsyncGenerator<StreamEvent> {
   const { database, collaboration, federation, conversation, userMessage, attachedArtifacts, signal } = input;
+  if (!isFederationConversationIdentity(conversation)) {
+    throw new Error(FEDERATED_CONVERSATION_IDENTITY_ERROR);
+  }
   const resolved = resolveFederatedAgents(collaboration, conversation, userMessage.content, input.requestedAgentIds);
   const coordinator = resolved.coordinator;
   const requestedIds = [...resolved.requestedAgents.map((agent) => agent.id), coordinator.id];
