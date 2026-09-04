@@ -8,7 +8,7 @@ type OpsStatus = {
   ok: boolean;
   build: { sha: string; version: string; builtAt: string; environment: string };
   auth: { mode: AuthMode; allowedEmailCount: number; allowedOriginCount: number };
-  adapters: { letta: AdapterStatus; hermes: AdapterStatus; claude: AdapterStatus };
+  adapters: { letta: AdapterStatus; hermes: AdapterStatus; claude: AdapterStatus; b200: AdapterStatus };
   runtime: { node: string; uptimeSeconds: number; pid: number };
   timestamp: string;
 };
@@ -214,6 +214,7 @@ function RuntimePanel({ session, onClose, onLogout }: { session: AuthSession; on
               <AdapterRow name="[Letta] Lucy" status={status.adapters.letta} />
               <AdapterRow name="[Hermes] Lucy" status={status.adapters.hermes} />
               <AdapterRow name="[Claude] 테이아" status={status.adapters.claude} />
+              <AdapterRow name="[B200] qwen3.8-27b" status={status.adapters.b200} />
             </section>
           </div>
         )}

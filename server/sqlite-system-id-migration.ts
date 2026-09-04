@@ -10,20 +10,28 @@ function quoted(identifier: string) {
   return `"${identifier}"`;
 }
 
+// Every known historical SystemId CHECK shape, oldest first. When a new system is
+// added, append the new full list here rather than writing a new one-off function.
+const LEGACY_CONSTRAINTS = [
+  "('letta', 'hermes')",
+  "('letta', 'hermes', 'claude')",
+];
+const CURRENT_CONSTRAINT = "('letta', 'hermes', 'claude', 'b200')";
+
 export function widenSystemIdCheckConstraints(db: Database.Database, table: string) {
   const schema = db.prepare(`SELECT sql FROM sqlite_master WHERE type = 'table' AND name = ?`)
     .get(table) as SchemaRow | undefined;
   const sql = schema?.sql ?? '';
-  if (!sql || sql.includes("'claude'")) return false;
+  if (!sql || sql.includes(CURRENT_CONSTRAINT)) return false;
 
-  const oldConstraint = "('letta', 'hermes')";
-  if (!sql.includes(oldConstraint)) {
+  const oldConstraint = LEGACY_CONSTRAINTS.find((candidate) => sql.includes(candidate));
+  if (!oldConstraint) {
     throw new Error(`Cannot widen ${table}: expected legacy SystemId CHECK was not found`);
   }
   if (db.inTransaction) throw new Error(`Cannot widen ${table} inside an active transaction`);
 
   const tableName = quoted(table);
-  const temp = `${table}__system_id_v3`;
+  const temp = `${table}__system_id_migration`;
   const tempName = quoted(temp);
   const columns = (db.prepare(`PRAGMA table_info(${tableName})`).all() as ColumnRow[]).map((row) => row.name);
   if (!columns.length) throw new Error(`Cannot widen ${table}: no columns found`);
@@ -36,7 +44,7 @@ export function widenSystemIdCheckConstraints(db: Database.Database, table: stri
 
   const createSql = sql
     .replace(/^CREATE TABLE\s+(?:IF NOT EXISTS\s+)?(?:"[^"]+"|`[^`]+`|\[[^\]]+\]|\S+)/i, `CREATE TABLE ${tempName}`)
-    .split(oldConstraint).join("('letta', 'hermes', 'claude')");
+    .split(oldConstraint).join(CURRENT_CONSTRAINT);
 
   const foreignKeysEnabled = Number(db.pragma('foreign_keys', { simple: true })) !== 0;
   if (foreignKeysEnabled) db.pragma('foreign_keys = OFF');

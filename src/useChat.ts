@@ -34,6 +34,7 @@ const defaultAgent: Record<SystemId, string> = {
   letta: '[Letta] Lucy',
   hermes: '[Hermes] Lucy',
   claude: '[Claude] 테이아',
+  b200: '[B200] qwen3.8-27b',
 };
 
 function upsertMessage(messages: MessageRecord[], next: MessageRecord) {

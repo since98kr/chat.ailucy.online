@@ -12,7 +12,7 @@ import {
 } from './federation-identity.js';
 import { replayWorkflowEvents, runFederatedWorkflow } from './federated-runner.js';
 
-const systemIdSchema = z.enum(['letta', 'hermes', 'claude']);
+const systemIdSchema = z.enum(['letta', 'hermes', 'claude', 'b200']);
 const capsuleStatusSchema = z.enum(['draft', 'approved', 'revoked']);
 
 const createCapsuleSchema = z.object({

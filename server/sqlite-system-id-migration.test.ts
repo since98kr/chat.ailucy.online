@@ -12,6 +12,7 @@ process.env.NODE_ENV = 'test';
 delete process.env.LETTA_BASE_URL;
 delete process.env.HERMES_BASE_URL;
 delete process.env.CLAUDE_BASE_URL;
+delete process.env.B200_BASE_URL;
 
 describe('Claude SystemId schema migration', () => {
   let app: FastifyInstance | undefined;
@@ -132,7 +133,7 @@ describe('Claude SystemId schema migration', () => {
     expect(existing.json().conversation).toMatchObject({ id: 'legacy-chat', preview: '보존되어야 함' });
 
     const config = await app.inject({ method: 'GET', url: '/api/conversations/legacy-chat/federation' });
-    expect(config.json().federation.config.allowedSystemIds).toEqual(['letta', 'hermes', 'claude']);
+    expect(config.json().federation.config.allowedSystemIds).toEqual(['letta', 'hermes', 'claude', 'b200']);
 
     const capsule = await app.inject({
       method: 'POST',

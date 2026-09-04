@@ -1,4 +1,4 @@
-export type SystemId = 'letta' | 'hermes' | 'claude';
+export type SystemId = 'letta' | 'hermes' | 'claude' | 'b200';
 export type ConversationStatus = 'active' | 'archived' | 'trashed';
 export type ConversationMode = 'single' | 'federated';
 export type MessageRole = 'user' | 'assistant' | 'system';

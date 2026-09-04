@@ -69,6 +69,14 @@ services:
       CLAUDE_API_KEY: ${CLAUDE_API_KEY:-}
       CLAUDE_TIMEOUT_MS: ${CLAUDE_TIMEOUT_MS:-10000}
       CLAUDE_PROTOCOL: ${CLAUDE_PROTOCOL:-native}
+      B200_BASE_URL: ${B200_BASE_URL:-}
+      B200_CHAT_PATH: ${B200_CHAT_PATH:-/v1/chat/completions}
+      B200_HEALTH_PATH: ${B200_HEALTH_PATH:-/health}
+      B200_AGENT_ID: ${B200_AGENT_ID:-[B200] qwen3.8-27b}
+      B200_API_KEY: ${B200_API_KEY:-}
+      B200_TIMEOUT_MS: ${B200_TIMEOUT_MS:-30000}
+      B200_PROTOCOL: ${B200_PROTOCOL:-openai}
+      B200_MODEL_MAP_JSON: ${B200_MODEL_MAP_JSON:-}
     volumes:
       - ${CHAT_PRODUCTION_DATA_DIR:?CHAT_PRODUCTION_DATA_DIR is required}:/data
     healthcheck:

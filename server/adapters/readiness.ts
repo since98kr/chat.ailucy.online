@@ -8,7 +8,7 @@ export type AdapterReadinessRecord = {
   latencyMs: number;
 };
 
-const READINESS_SYSTEMS: SystemId[] = ['hermes', 'letta', 'claude'];
+const READINESS_SYSTEMS: SystemId[] = ['hermes', 'letta', 'claude', 'b200'];
 
 function trimSlash(value: string) {
   return value.replace(/\/+$/, '');
