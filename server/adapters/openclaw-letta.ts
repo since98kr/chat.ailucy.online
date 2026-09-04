@@ -116,6 +116,17 @@ function responseDelta(payload: unknown) {
   return null;
 }
 
+function responseFinished(payload: unknown) {
+  if (!payload || typeof payload !== 'object') return false;
+  const choices = (payload as Record<string, unknown>).choices;
+  if (!Array.isArray(choices) || !choices.length) return false;
+  const choice = choices[0];
+  if (!choice || typeof choice !== 'object') return false;
+  const finishReason = (choice as Record<string, unknown>).finish_reason;
+  return typeof finishReason === 'string' && finishReason.trim().length > 0;
+}
+
+
 async function serializeCurrentArtifacts(request: AdapterRequest, config: OpenClawLettaConfig) {
   const artifacts = request.artifacts ?? [];
   let totalBytes = 0;
@@ -366,6 +377,10 @@ export class OpenClawLettaAdapter implements ChatBackendAdapter {
         accumulator.ingest(payload);
         const delta = responseDelta(payload);
         if (delta) yield { type: 'delta', delta };
+        if (responseFinished(payload)) {
+          terminalFrameSeen = true;
+          break;
+        }
       }
       if (terminalFrameSeen) {
         await reader.cancel().catch(() => undefined);
