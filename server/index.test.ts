@@ -96,6 +96,40 @@ describe('Chat Core API', () => {
     expect(messages[1].state).toBe('complete');
   });
 
+  it('does not block ordinary Letta chat on a slow approval delivery surface', async () => {
+    await app.close();
+    const neverReady = new Promise<void>(() => undefined);
+    const approvalBackend: ConversationApprovalBackend = {
+      start: async () => await neverReady,
+      async listPending() { return []; },
+      async resolvePending() { throw new Error('not used'); },
+    };
+    app = buildApp({
+      databasePath: join(directory, 'chat.sqlite'),
+      artifactRoot: join(directory, 'artifacts'),
+      approvalBackend,
+    });
+    await app.ready();
+
+    const created = await app.inject({
+      method: 'POST',
+      url: '/api/conversations',
+      payload: { systemId: 'letta', agentId: '[Letta] Lucy' },
+    });
+    const id = created.json().conversation.id as string;
+    const started = performance.now();
+    const streamed = await app.inject({
+      method: 'POST',
+      url: `/api/conversations/${id}/messages/stream`,
+      payload: { content: 'ordinary chat must not wait for approval transport' },
+    });
+    const elapsedMs = performance.now() - started;
+
+    expect(streamed.statusCode).toBe(200);
+    expect(streamed.body).toContain('run.completed');
+    expect(elapsedMs).toBeLessThan(500);
+  });
+
   it('deduplicates direct operations and rejects idempotency payload conflicts', async () => {
     const created = await app.inject({
       method: 'POST',
@@ -229,10 +263,12 @@ describe('Chat Core API', () => {
     expect(detail.json().conversation.messages).toHaveLength(0);
   });
 
-  it('re-verifies one backend-owned approval and rejects replay after resolution', async () => {
+  it('re-verifies one backend-owned approval even while the delivery surface is still starting, and rejects replay after resolution', async () => {
     await app.close();
+    const neverReady = new Promise<void>(() => undefined);
     const resolved = new Set<string>();
     const approvalBackend: ConversationApprovalBackend = {
+      start: async () => await neverReady,
       async listPending(context) {
         const approvalId = `approval:${context.conversationId}`;
         if (resolved.has(approvalId)) return [];

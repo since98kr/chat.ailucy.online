@@ -498,14 +498,9 @@ export function buildApp(options?: BuildAppOptions) {
     const operatingIntent = classifyConversationIntent(input.content);
     const operatingContext = db.getConversationOperatingContext(id)!;
     const currentIdentity = conversationRuntimeIdentity(conversation);
-    if (conversation.systemId === 'letta' && approvalBackend?.start) {
-      try {
-        await approvalBackend.start();
-      } catch {
-        // Ordinary chat remains available. A protected action still fails closed
-        // at OpenClaw when no approval delivery surface can be established.
-      }
-    }
+    // The approval delivery surface is started once during app initialization.
+    // Ordinary chat must never wait for that optional WebSocket surface: protected
+    // approval actions re-verify the backend separately and still fail closed.
     if (operatingIntent === 'continuation') {
       const binding = resolveContinuation(operatingContext, currentIdentity);
       if (!binding.ok) {
