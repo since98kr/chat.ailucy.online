@@ -15,13 +15,32 @@ function protocol(value: string | undefined) {
   return (value ?? '').trim().toLowerCase();
 }
 
+function openClawSessionAgentId(agentTarget: string | undefined) {
+  const normalizedTarget = boundedIdentifier(
+    agentTarget?.trim() || 'openclaw/main',
+    'LETTA_OPENCLAW_AGENT_TARGET',
+    256,
+  );
+  const agentId = normalizedTarget === 'openclaw'
+    ? 'main'
+    : normalizedTarget.startsWith('openclaw/')
+      ? normalizedTarget.slice('openclaw/'.length)
+      : normalizedTarget.startsWith('openclaw:')
+        ? normalizedTarget.slice('openclaw:'.length)
+        : normalizedTarget.startsWith('agent:')
+          ? normalizedTarget.slice('agent:'.length)
+          : '';
+  return boundedIdentifier(agentId, 'OpenClaw session agent id', 128);
+}
+
 export function openClawConversationSessionIdentity(
   conversationId: string,
   sessionPrefix = process.env.LETTA_OPENCLAW_SESSION_PREFIX?.trim() || 'chat-v2',
+  agentTarget = process.env.LETTA_OPENCLAW_AGENT_TARGET?.trim() || 'openclaw/main',
 ) {
   const normalizedPrefix = boundedIdentifier(sessionPrefix, 'LETTA_OPENCLAW_SESSION_PREFIX', 64);
   const normalizedConversation = boundedIdentifier(conversationId, 'conversation id', 256);
-  return `${normalizedPrefix}:${normalizedConversation}`;
+  return `agent:${openClawSessionAgentId(agentTarget)}:${normalizedPrefix}:${normalizedConversation}`;
 }
 
 /**
