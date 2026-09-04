@@ -149,7 +149,7 @@ export class ChatDatabase {
     this.db.exec(`
       CREATE TABLE IF NOT EXISTS conversations (
         id TEXT PRIMARY KEY,
-        system_id TEXT NOT NULL CHECK (system_id IN ('letta', 'hermes', 'claude')),
+        system_id TEXT NOT NULL CHECK (system_id IN ('letta', 'hermes', 'claude', 'b200')),
         agent_id TEXT NOT NULL,
         title TEXT NOT NULL,
         preview TEXT NOT NULL DEFAULT '',

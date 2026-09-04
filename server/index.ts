@@ -41,7 +41,7 @@ import type {
 } from '../shared/contracts.js';
 
 const conversationStatusSchema = z.enum(['active', 'archived', 'trashed']);
-const systemIdSchema = z.enum(['letta', 'hermes', 'claude']);
+const systemIdSchema = z.enum(['letta', 'hermes', 'claude', 'b200']);
 
 const createConversationSchema = z.object({
   systemId: systemIdSchema,
@@ -354,6 +354,7 @@ export function buildApp(options?: BuildAppOptions) {
       letta: collaboration.listAgents('letta').filter((agent) => agent.enabled).length,
       hermes: collaboration.listAgents('hermes').filter((agent) => agent.enabled).length,
       claude: collaboration.listAgents('claude').filter((agent) => agent.enabled).length,
+      b200: collaboration.listAgents('b200').filter((agent) => agent.enabled).length,
     },
     workflow: {
       federatedConversations: db.db.prepare(`SELECT COUNT(*) AS count FROM conversation_federation cf JOIN conversations c ON c.id = cf.conversation_id WHERE cf.mode = 'federated' AND c.system_id = 'hermes' AND c.agent_id = '[Hermes] Lucy'`).get(),

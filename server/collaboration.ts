@@ -137,6 +137,19 @@ const seedAgents: Array<Omit<AgentRecord, 'createdAt' | 'updatedAt'>> = [
     isLead: true,
     sortOrder: 15,
   },
+  {
+    id: '[B200] qwen3.8-27b',
+    systemId: 'b200',
+    displayName: '[B200] qwen3.8-27b',
+    shortName: 'qwen3.8-27b',
+    role: 'Local GPU Model',
+    description: 'Locally hosted 27B model served from the team B200 GPU cluster.',
+    capabilities: ['reasoning', 'analysis', 'conversation'],
+    enabled: true,
+    directChatEnabled: true,
+    isLead: true,
+    sortOrder: 50,
+  },
 ];
 
 function mapAgent(row: AgentRow): AgentRecord {
@@ -200,7 +213,7 @@ export class CollaborationService {
     this.db.exec(`
       CREATE TABLE IF NOT EXISTS agents (
         id TEXT PRIMARY KEY,
-        system_id TEXT NOT NULL CHECK (system_id IN ('letta', 'hermes', 'claude')),
+        system_id TEXT NOT NULL CHECK (system_id IN ('letta', 'hermes', 'claude', 'b200')),
         display_name TEXT NOT NULL,
         short_name TEXT NOT NULL,
         role TEXT NOT NULL,

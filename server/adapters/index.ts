@@ -110,6 +110,7 @@ const adapters: Record<SystemId, ChatBackendAdapter> = {
   letta: createAdapter('letta'),
   hermes: createAdapter('hermes'),
   claude: createAdapter('claude'),
+  b200: createAdapter('b200'),
 };
 
 export function getAdapter(systemId: SystemId) {

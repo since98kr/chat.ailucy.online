@@ -29,6 +29,7 @@ export default function AppSidebar({
   const lettaAgents = agents.filter((agent) => agent.systemId === 'letta');
   const hermesAgents = agents.filter((agent) => agent.systemId === 'hermes');
   const claudeAgents = agents.filter((agent) => agent.systemId === 'claude');
+  const b200Agents = agents.filter((agent) => agent.systemId === 'b200');
 
   const select = (id: string) => {
     void chat.selectConversation(id);
@@ -61,6 +62,7 @@ export default function AppSidebar({
           <SystemCard id="letta" label="Letta" accent="blue" agents={lettaAgents} selectedSystem={chat.selectedSystem} activeAgent={chat.activeAgent} onSelect={onOpenAgent} />
           <SystemCard id="hermes" label="Hermes" accent="violet" agents={hermesAgents} selectedSystem={chat.selectedSystem} activeAgent={chat.activeAgent} onSelect={onOpenAgent} />
           <SystemCard id="claude" label="Claude" accent="amber" agents={claudeAgents} selectedSystem={chat.selectedSystem} activeAgent={chat.activeAgent} onSelect={onOpenAgent} />
+          <SystemCard id="b200" label="B200" accent="emerald" agents={b200Agents} selectedSystem={chat.selectedSystem} activeAgent={chat.activeAgent} onSelect={onOpenAgent} />
         </section>
 
         <section className="sidebar-section conversations-section">
@@ -104,7 +106,7 @@ export default function AppSidebar({
 function SystemCard({ id, label, accent, agents, selectedSystem, activeAgent, onSelect }: {
   id: SystemId;
   label: string;
-  accent: 'blue' | 'violet' | 'amber';
+  accent: 'blue' | 'violet' | 'amber' | 'emerald';
   agents: AgentRecord[];
   selectedSystem: SystemId;
   activeAgent: string;
@@ -116,7 +118,7 @@ function SystemCard({ id, label, accent, agents, selectedSystem, activeAgent, on
     <div className={`system-card system-card--${accent} ${selectedSystem === id ? 'is-selected' : ''}`}>
       <button className="system-card__header" onClick={() => lead && onSelect(lead)} disabled={!lead}>
         <span className="system-card__icon">{id === 'letta' ? <Sparkles size={16} /> : <Bot size={17} />}</span>
-        <span><strong>{label}</strong><small>{!lead ? 'Backend not configured' : id === 'letta' ? 'Memory-first system' : id === 'claude' ? 'Independent review system' : 'Collaborative system'}</small></span>
+        <span><strong>{label}</strong><small>{!lead ? 'Backend not configured' : id === 'letta' ? 'Memory-first system' : id === 'claude' ? 'Independent review system' : id === 'b200' ? 'Local GPU model' : 'Collaborative system'}</small></span>
         <ChevronDown size={15} />
       </button>
       <div className="agent-list">
