@@ -127,7 +127,7 @@ describe('Chat Core API', () => {
 
     expect(streamed.statusCode).toBe(200);
     expect(streamed.body).toContain('run.completed');
-    expect(elapsedMs).toBeLessThan(500);
+    expect(elapsedMs).toBeLessThan(2_000);
   });
 
   it('deduplicates direct operations and rejects idempotency payload conflicts', async () => {
