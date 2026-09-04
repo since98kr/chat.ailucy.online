@@ -215,4 +215,30 @@ describe('OpenClawLettaAdapter', () => {
     expect(items).toEqual([{ type: 'delta', delta: 'CHAT_OK' }]);
     expect(elapsedMs).toBeLessThan(500);
   });
+
+  it('stops at finish_reason even when a gateway omits [DONE] and keeps transport open', async () => {
+    const baseUrl = await startServer((_request, response) => {
+      response.writeHead(200, { 'Content-Type': 'text/event-stream' });
+      response.write('data: {\"choices\":[{\"delta\":{\"content\":\"FINISH_REASON_OK\"},\"finish_reason\":null}]}\n\n');
+      response.write('data: {\"choices\":[{\"delta\":{},\"finish_reason\":\"stop\"}]}\n\n');
+      setTimeout(() => response.end(), 1_500);
+    });
+    const openClaw = adapter(baseUrl);
+    const started = performance.now();
+    const items = [];
+    for await (const item of openClaw.streamReply({
+      conversation,
+      userMessage,
+      history: [userMessage],
+      targetAgentId: '[Letta] Lucy',
+      selectedAgentId: '[Letta] Lucy',
+      routingMode: 'direct',
+      participants: [participant],
+    })) items.push(item);
+    const elapsedMs = performance.now() - started;
+    server?.closeAllConnections();
+    expect(items).toEqual([{ type: 'delta', delta: 'FINISH_REASON_OK' }]);
+    expect(elapsedMs).toBeLessThan(500);
+  });
+
 });
