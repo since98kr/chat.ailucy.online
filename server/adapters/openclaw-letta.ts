@@ -338,6 +338,7 @@ export class OpenClawLettaAdapter implements ChatBackendAdapter {
     const reader = response.body.getReader();
     const decoder = new TextDecoder();
     let buffer = '';
+    let terminalFrameSeen = false;
 
     while (true) {
       const { value, done } = await reader.read();
@@ -349,7 +350,11 @@ export class OpenClawLettaAdapter implements ChatBackendAdapter {
         newline = buffer.indexOf('\n');
         if (!line || line.startsWith(':')) continue;
         if (line.startsWith('data:')) line = line.slice(5).trim();
-        if (!line || line === '[DONE]') continue;
+        if (!line) continue;
+        if (line === '[DONE]') {
+          terminalFrameSeen = true;
+          break;
+        }
         let payload: unknown;
         try {
           payload = JSON.parse(line) as unknown;
@@ -361,6 +366,10 @@ export class OpenClawLettaAdapter implements ChatBackendAdapter {
         accumulator.ingest(payload);
         const delta = responseDelta(payload);
         if (delta) yield { type: 'delta', delta };
+      }
+      if (terminalFrameSeen) {
+        await reader.cancel().catch(() => undefined);
+        break;
       }
       if (done) break;
     }
