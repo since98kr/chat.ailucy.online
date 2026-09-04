@@ -263,10 +263,12 @@ describe('Chat Core API', () => {
     expect(detail.json().conversation.messages).toHaveLength(0);
   });
 
-  it('re-verifies one backend-owned approval and rejects replay after resolution', async () => {
+  it('re-verifies one backend-owned approval even while the delivery surface is still starting, and rejects replay after resolution', async () => {
     await app.close();
+    const neverReady = new Promise<void>(() => undefined);
     const resolved = new Set<string>();
     const approvalBackend: ConversationApprovalBackend = {
+      start: async () => await neverReady,
       async listPending(context) {
         const approvalId = `approval:${context.conversationId}`;
         if (resolved.has(approvalId)) return [];
