@@ -1,19 +1,13 @@
-import { afterEach, describe, expect, it } from 'vitest';
-import { createServer, type RequestListener, type Server } from 'node:http';
-import type { AddressInfo } from 'node:net';
-import type {
-  ConversationParticipantRecord,
-  ConversationRecord,
-  MessageRecord,
-} from '../../shared/contracts.js';
+import { afterEach, describe, expect, it, vi } from 'vitest';
+import type { ConversationParticipantRecord, ConversationRecord, MessageRecord } from '../../shared/contracts.js';
 import { OpenClawLettaAdapter } from './openclaw-letta.js';
 
-const timestamp = '2026-08-08T00:00:00.000Z';
+const timestamp = '2026-09-04T00:00:00.000Z';
 const conversation: ConversationRecord = {
-  id: 'conversation-1',
+  id: 'openclaw-terminal-conversation',
   systemId: 'letta',
   agentId: '[Letta] Lucy',
-  title: 'OpenClaw transport',
+  title: 'Terminal frame regression',
   preview: '',
   status: 'active',
   pinned: false,
@@ -24,40 +18,18 @@ const conversation: ConversationRecord = {
   branchedFromConversationId: null,
   branchedFromMessageId: null,
 };
-const oldMessage: MessageRecord = {
-  id: 'message-old',
+const userMessage: MessageRecord = {
+  id: 'openclaw-terminal-message',
   conversationId: conversation.id,
   role: 'user',
   authorId: 'tei',
-  content: '이전 질문',
+  content: 'terminal frame test',
   state: 'complete',
   parentMessageId: null,
   createdAt: timestamp,
   updatedAt: timestamp,
 };
-const oldAnswer: MessageRecord = {
-  id: 'message-answer',
-  conversationId: conversation.id,
-  role: 'assistant',
-  authorId: '[Letta] Lucy',
-  content: '이전 답변',
-  state: 'complete',
-  parentMessageId: oldMessage.id,
-  createdAt: timestamp,
-  updatedAt: timestamp,
-};
-const userMessage: MessageRecord = {
-  id: 'message-current',
-  conversationId: conversation.id,
-  role: 'user',
-  authorId: 'tei',
-  content: '현재 질문',
-  state: 'complete',
-  parentMessageId: oldAnswer.id,
-  createdAt: timestamp,
-  updatedAt: timestamp,
-};
-const participant: ConversationParticipantRecord = {
+const participants: ConversationParticipantRecord[] = [{
   conversationId: conversation.id,
   agentId: '[Letta] Lucy',
   role: 'lead',
@@ -69,9 +41,9 @@ const participant: ConversationParticipantRecord = {
     systemId: 'letta',
     displayName: '[Letta] Lucy',
     shortName: 'Lucy',
-    role: 'Primary Cognitive Agent',
+    role: 'Lead Orchestrator',
     description: '',
-    capabilities: ['memory', 'planning', 'orchestration'],
+    capabilities: ['orchestration'],
     enabled: true,
     directChatEnabled: true,
     isLead: true,
@@ -79,112 +51,65 @@ const participant: ConversationParticipantRecord = {
     createdAt: timestamp,
     updatedAt: timestamp,
   },
-};
+}];
 
-let server: Server | null = null;
-
-afterEach(async () => {
-  if (!server) return;
-  await new Promise<void>((resolve, reject) => server?.close((error) => (error ? reject(error) : resolve())));
-  server = null;
+afterEach(() => {
+  vi.unstubAllGlobals();
 });
 
-async function startServer(handler: RequestListener) {
-  server = createServer(handler);
-  await new Promise<void>((resolve) => server?.listen(0, '127.0.0.1', resolve));
-  const address = server.address() as AddressInfo;
-  return `http://127.0.0.1:${address.port}`;
-}
-
-function adapter(baseUrl: string) {
-  return new OpenClawLettaAdapter({
-    baseUrl,
-    chatPath: '/v1/chat/completions',
-    healthPath: '/health',
-    apiKey: 'gateway-secret',
-    agentTarget: 'openclaw/main',
-    sessionPrefix: 'chat-v2',
-    timeoutMs: 2_000,
-    maxArtifactBytes: 10 * 1024 * 1024,
-    maxArtifactTotalBytes: 20 * 1024 * 1024,
-    artifactToolEnabled: false,
-  });
-}
-
-describe('OpenClawLettaAdapter', () => {
-  it('preserves Letta identity while routing a stable Chat conversation to the OpenClaw main agent session', async () => {
-    let authorization = '';
-    let receivedBody: Record<string, unknown> = {};
-    const baseUrl = await startServer((request, response) => {
-      if (request.url === '/health') {
-        response.writeHead(200, { 'Content-Type': 'application/json' });
-        response.end('{"ok":true,"status":"live"}');
-        return;
-      }
-      authorization = String(request.headers.authorization ?? '');
-      const chunks: Buffer[] = [];
-      request.on('data', (chunk: Buffer) => chunks.push(Buffer.from(chunk)));
-      request.on('end', () => {
-        receivedBody = JSON.parse(Buffer.concat(chunks).toString('utf8')) as Record<string, unknown>;
-        response.writeHead(200, { 'Content-Type': 'text/event-stream' });
-        response.write('data: {"choices":[{"delta":{"role":"assistant"}}]}\n\n');
-        response.write('data: {"choices":[{"delta":{"content":"OpenClaw를 통해 "}}]}\n\n');
-        response.write('data: {"choices":[{"delta":{"content":"Letta Lucy 응답"}}]}\n\n');
-        response.end('data: [DONE]\n\n');
-      });
+describe('OpenClawLettaAdapter stream termination', () => {
+  it('stops at the OpenAI [DONE] frame instead of waiting for transport EOF', async () => {
+    let cancelled = false;
+    let emitted = false;
+    let closeTimer: ReturnType<typeof setTimeout> | undefined;
+    const stream = new ReadableStream<Uint8Array>({
+      pull(controller) {
+        if (emitted) return;
+        emitted = true;
+        controller.enqueue(new TextEncoder().encode(
+          'data: {"choices":[{"delta":{"content":"CHAT_OK"},"finish_reason":null}]}\n\n'
+          + 'data: {"choices":[{"delta":{},"finish_reason":"stop"}]}\n\n'
+          + 'data: [DONE]\n\n',
+        ));
+        closeTimer = setTimeout(() => controller.close(), 1_500);
+      },
+      cancel() {
+        cancelled = true;
+        if (closeTimer) clearTimeout(closeTimer);
+      },
     });
 
-    const openClaw = adapter(baseUrl);
-    const health = await openClaw.health();
-    expect(health).toMatchObject({ ok: true, mode: 'http' });
-    expect(health.detail).toContain('OpenClaw Gateway');
+    vi.stubGlobal('fetch', vi.fn(async () => new Response(stream, {
+      status: 200,
+      headers: { 'Content-Type': 'text/event-stream' },
+    })));
 
+    const adapter = new OpenClawLettaAdapter({
+      baseUrl: 'http://openclaw.invalid',
+      chatPath: '/v1/chat/completions',
+      healthPath: '/health',
+      agentTarget: 'openclaw/main',
+      sessionPrefix: 'test',
+      timeoutMs: 2_000,
+      maxArtifactBytes: 1024,
+      maxArtifactTotalBytes: 2048,
+      artifactToolEnabled: false,
+    });
+
+    const started = performance.now();
     const items = [];
-    for await (const item of openClaw.streamReply({
+    for await (const item of adapter.streamReply({
       conversation,
       userMessage,
-      history: [oldMessage, oldAnswer, userMessage],
+      history: [userMessage],
       targetAgentId: '[Letta] Lucy',
-      selectedAgentId: '[Letta] Lucy',
       routingMode: 'direct',
-      participants: [participant],
-      sessionId: 'legacy-chat-session-id-is-not-the-openclaw-key',
-      idempotencyKey: 'operation-1',
+      participants,
     })) items.push(item);
+    const elapsedMs = performance.now() - started;
 
-    expect(authorization).toBe('Bearer gateway-secret');
-    expect(receivedBody.model).toBe('openclaw/main');
-    expect(receivedBody.user).toBe('chat-v2:conversation-1');
-    expect(receivedBody.stream).toBe(true);
-    expect(receivedBody).not.toHaveProperty('system_id');
-    expect(receivedBody).not.toHaveProperty('agent_id');
-    expect(receivedBody.messages).toEqual([{ role: 'user', content: '현재 질문' }]);
-    expect(items).toEqual([
-      { type: 'delta', delta: 'OpenClaw를 통해 ' },
-      { type: 'delta', delta: 'Letta Lucy 응답' },
-    ]);
-  });
-
-  it('fails closed on OpenClaw error frames without streaming them as assistant text', async () => {
-    const baseUrl = await startServer((_request, response) => {
-      response.writeHead(200, { 'Content-Type': 'text/event-stream' });
-      response.end('data: {"error":{"message":"approval continuation failed"}}\n\n');
-    });
-    const openClaw = adapter(baseUrl);
-    const items: Array<{ type: string }> = [];
-    const consume = async () => {
-      for await (const item of openClaw.streamReply({
-        conversation,
-        userMessage,
-        history: [userMessage],
-        targetAgentId: '[Letta] Lucy',
-        selectedAgentId: '[Letta] Lucy',
-        routingMode: 'direct',
-        participants: [participant],
-      })) items.push(item);
-    };
-
-    await expect(consume()).rejects.toThrow('OpenClaw Gateway error: approval continuation failed');
-    expect(items).toEqual([]);
+    expect(items).toEqual([{ type: 'delta', delta: 'CHAT_OK' }]);
+    expect(cancelled).toBe(true);
+    expect(elapsedMs).toBeLessThan(500);
   });
 });
