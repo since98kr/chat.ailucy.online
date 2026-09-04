@@ -193,9 +193,13 @@ test('real Hermes returns a generated file that survives reload and byte verific
     expect(Buffer.from(await downloaded.body()).toString('utf8')).toBe(marker);
 
     await page.goto('/');
+    await page.locator('.system-card--violet .system-card__header').click();
+    await expect(page.locator('.system-card--violet')).toHaveClass(/is-selected/);
     await page.locator('.conversation-row').filter({ hasText: title }).first().click();
     await expect(page.locator('.message--assistant .file-card').filter({ hasText: 'qa-result.txt' })).toBeVisible();
     await page.reload();
+    await page.locator('.system-card--violet .system-card__header').click();
+    await expect(page.locator('.system-card--violet')).toHaveClass(/is-selected/);
     await page.locator('.conversation-row').filter({ hasText: title }).first().click();
     await expect(page.locator('.message--assistant .file-card').filter({ hasText: 'qa-result.txt' })).toBeVisible();
   } finally {
