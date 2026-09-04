@@ -96,6 +96,16 @@ function backendError(payload: unknown) {
   return sanitized || null;
 }
 
+function responseFinished(payload: unknown) {
+  if (!payload || typeof payload !== 'object') return false;
+  const choices = (payload as Record<string, unknown>).choices;
+  if (!Array.isArray(choices) || !choices.length) return false;
+  const choice = choices[0];
+  if (!choice || typeof choice !== 'object') return false;
+  const finishReason = (choice as Record<string, unknown>).finish_reason;
+  return finishReason !== undefined && finishReason !== null && String(finishReason).trim() !== '';
+}
+
 function responseDelta(payload: unknown) {
   if (!payload || typeof payload !== 'object') return null;
   const choices = (payload as Record<string, unknown>).choices;
@@ -366,6 +376,10 @@ export class OpenClawLettaAdapter implements ChatBackendAdapter {
         accumulator.ingest(payload);
         const delta = responseDelta(payload);
         if (delta) yield { type: 'delta', delta };
+        if (responseFinished(payload)) {
+          terminalFrameSeen = true;
+          break;
+        }
       }
       if (terminalFrameSeen) {
         await reader.cancel().catch(() => undefined);
