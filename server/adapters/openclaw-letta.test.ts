@@ -219,16 +219,10 @@ describe('OpenClawLettaAdapter', () => {
   it('stops at finish_reason even when the gateway delays [DONE] and transport EOF', async () => {
     const baseUrl = await startServer((_request, response) => {
       response.writeHead(200, { 'Content-Type': 'text/event-stream' });
-      response.write('data: {"choices":[{"delta":{"content":"FINISH_OK"},"finish_reason":null}]}
-
-');
-      response.write('data: {"choices":[{"delta":{},"finish_reason":"stop"}]}
-
-');
+      response.write('data: {"choices":[{"delta":{"content":"FINISH_OK"},"finish_reason":null}]}\n\n');
+      response.write('data: {"choices":[{"delta":{},"finish_reason":"stop"}]}\n\n');
       setTimeout(() => {
-        response.write('data: [DONE]
-
-');
+        response.write('data: [DONE]\n\n');
         response.end();
       }, 1_500);
     });
