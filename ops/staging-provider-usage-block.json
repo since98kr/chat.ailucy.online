@@ -1,8 +1,8 @@
 {
-  "blocked": false,
-  "classification": null,
-  "reason": null,
+  "blocked": true,
+  "classification": "AUTH/USAGE",
+  "reason": "Exact-main staging browser QA reached Hermes provider HTTP 429 usage exhaustion on run 33925249889 after deploy, real Hermes/Letta transport, and OpenClaw-backed Letta session continuity had passed. Keep provider-backed staging fail-closed until usage is independently observed recovered.",
   "issue": 210,
-  "clearedAt": "2026-09-03T15:21:36Z",
-  "evidence": "20260904T0022KST-chat210-sync-staging-openclaw-token"
+  "blockedAt": "2026-09-04T22:29:42Z",
+  "evidence": "github-actions://since98kr/chat.ailucy.online/runs/33925249889/jobs/101192286359"
 }
