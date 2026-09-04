@@ -114,6 +114,7 @@ function adapter(baseUrl: string) {
 describe('OpenClawLettaAdapter', () => {
   it('preserves Letta identity while routing a stable Chat conversation to the OpenClaw main agent session', async () => {
     let authorization = '';
+    let sessionKey = '';
     let receivedBody: Record<string, unknown> = {};
     const baseUrl = await startServer((request, response) => {
       if (request.url === '/health') {
@@ -122,6 +123,7 @@ describe('OpenClawLettaAdapter', () => {
         return;
       }
       authorization = String(request.headers.authorization ?? '');
+      sessionKey = String(request.headers['x-openclaw-session-key'] ?? '');
       const chunks: Buffer[] = [];
       request.on('data', (chunk: Buffer) => chunks.push(Buffer.from(chunk)));
       request.on('end', () => {
@@ -154,7 +156,8 @@ describe('OpenClawLettaAdapter', () => {
 
     expect(authorization).toBe('Bearer gateway-secret');
     expect(receivedBody.model).toBe('openclaw/main');
-    expect(receivedBody.user).toBe('chat-v2:conversation-1');
+    expect(receivedBody.user).toBe('agent:main:chat-v2:conversation-1');
+    expect(sessionKey).toBe('agent:main:chat-v2:conversation-1');
     expect(receivedBody.stream).toBe(true);
     expect(receivedBody).not.toHaveProperty('system_id');
     expect(receivedBody).not.toHaveProperty('agent_id');
@@ -240,5 +243,4 @@ describe('OpenClawLettaAdapter', () => {
     expect(items).toEqual([{ type: 'delta', delta: 'FINISH_REASON_OK' }]);
     expect(elapsedMs).toBeLessThan(500);
   });
-
 });
