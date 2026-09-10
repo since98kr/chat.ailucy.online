@@ -53,6 +53,8 @@ type ActivityRow = {
 } & AgentRow;
 
 const timestamp = () => new Date().toISOString();
+const LEGACY_LETTA_LUCY_ID = '[Letta] Lucy';
+const OPENCLAW_LUCY_ID = '[OpenClaw] Lucy';
 
 export function claudeDirectChatEnabled(env: NodeJS.ProcessEnv = process.env) {
   return Boolean(env.CLAUDE_BASE_URL?.trim());
@@ -60,13 +62,13 @@ export function claudeDirectChatEnabled(env: NodeJS.ProcessEnv = process.env) {
 
 const seedAgents: Array<Omit<AgentRecord, 'createdAt' | 'updatedAt'>> = [
   {
-    id: '[Letta] Lucy',
+    id: OPENCLAW_LUCY_ID,
     systemId: 'letta',
-    displayName: '[Letta] Lucy',
+    displayName: OPENCLAW_LUCY_ID,
     shortName: 'Lucy',
     role: 'Personal AI',
-    description: 'Persistent personal Lucy with approved long-term memory.',
-    capabilities: ['personal-memory', 'planning', 'writing', 'conversation'],
+    description: 'Persistent personal Lucy running through the OpenClaw runtime.',
+    capabilities: ['personal-memory', 'planning', 'writing', 'conversation', 'openclaw-runtime'],
     enabled: true,
     directChatEnabled: true,
     isLead: true,
@@ -193,6 +195,7 @@ export class CollaborationService {
     this.db = database.db;
     this.migrate();
     this.seedAgents();
+    this.migrateLegacyPersonalLucyIdentity();
     this.backfillConversations();
   }
 
@@ -257,6 +260,7 @@ export class CollaborationService {
         role = excluded.role,
         description = excluded.description,
         capabilities_json = excluded.capabilities_json,
+        enabled = excluded.enabled,
         direct_chat_enabled = excluded.direct_chat_enabled,
         is_lead = excluded.is_lead,
         sort_order = excluded.sort_order,
@@ -284,6 +288,53 @@ export class CollaborationService {
           createdAt,
         );
       }
+    });
+    transaction();
+  }
+
+  private migrateLegacyPersonalLucyIdentity() {
+    const canonical = this.db.prepare('SELECT id FROM agents WHERE id = ?').get(OPENCLAW_LUCY_ID) as { id: string } | undefined;
+    if (!canonical) throw new Error('Canonical OpenClaw Lucy agent is missing');
+    const legacy = this.db.prepare('SELECT id FROM agents WHERE id = ?').get(LEGACY_LETTA_LUCY_ID) as { id: string } | undefined;
+    const transaction = this.db.transaction(() => {
+      this.db.prepare(`
+        UPDATE conversations SET agent_id = ?
+        WHERE system_id = 'letta' AND agent_id = ?
+      `).run(OPENCLAW_LUCY_ID, LEGACY_LETTA_LUCY_ID);
+      this.db.prepare('UPDATE messages SET author_id = ? WHERE author_id = ?')
+        .run(OPENCLAW_LUCY_ID, LEGACY_LETTA_LUCY_ID);
+      if (!legacy) return;
+      this.db.prepare(`
+        INSERT INTO conversation_participants (
+          conversation_id, agent_id, role, state, added_at, updated_at
+        )
+        SELECT conversation_id, ?, role, state, added_at, updated_at
+        FROM conversation_participants
+        WHERE agent_id = ?
+        ON CONFLICT(conversation_id, agent_id) DO UPDATE SET
+          role = excluded.role,
+          state = excluded.state,
+          updated_at = excluded.updated_at
+      `).run(OPENCLAW_LUCY_ID, LEGACY_LETTA_LUCY_ID);
+      this.db.prepare('DELETE FROM conversation_participants WHERE agent_id = ?')
+        .run(LEGACY_LETTA_LUCY_ID);
+      this.db.prepare(`
+        UPDATE team_activities
+        SET summary = REPLACE(summary, ?, ?)
+        WHERE summary LIKE ?
+      `).run(LEGACY_LETTA_LUCY_ID, OPENCLAW_LUCY_ID, `%${LEGACY_LETTA_LUCY_ID}%`);
+      this.db.prepare(`
+        UPDATE agents SET
+          display_name = ?,
+          short_name = 'Lucy',
+          role = 'Legacy compatibility identity',
+          description = 'Retired Letta identity retained only for historical activity foreign keys.',
+          enabled = 0,
+          direct_chat_enabled = 0,
+          is_lead = 0,
+          updated_at = ?
+        WHERE id = ?
+      `).run(OPENCLAW_LUCY_ID, timestamp(), LEGACY_LETTA_LUCY_ID);
     });
     transaction();
   }
