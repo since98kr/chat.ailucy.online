@@ -1,6 +1,6 @@
 import { createHash } from 'node:crypto';
 import { createRemoteJWKSet, jwtVerify, type JWTPayload } from 'jose';
-import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
+import type { FastifyInstance, FastifyRequest } from 'fastify';
 import { z } from 'zod';
 import type { ChatDatabase } from './database.js';
 
@@ -10,6 +10,8 @@ const DEFAULT_PROTOCOL_VERSION = '2025-06-18';
 const CHATGPT_LUCY_AUTHOR_ID = '[ChatGPT] Lucy';
 const READ_SCOPE = 'chat:read';
 const WRITE_SCOPE = 'chat:write';
+
+type AuthFailure = 'missing' | 'invalid' | null;
 
 const jsonRpcSchema = z.object({
   jsonrpc: z.literal('2.0'),
@@ -154,8 +156,17 @@ function toolError(message: string, code = 'TOOL_FAILED', meta?: Record<string, 
   };
 }
 
-function authChallenge(metadataUrl: string, scope?: string) {
-  return `Bearer resource_metadata="${metadataUrl}"${scope ? `, scope="${scope}"` : ''}`;
+function authChallenge(metadataUrl: string, options?: {
+  scope?: string;
+  error?: 'invalid_token' | 'insufficient_scope';
+  description?: string;
+}) {
+  return [
+    `Bearer resource_metadata="${metadataUrl}"`,
+    options?.scope ? `scope="${options.scope}"` : null,
+    options?.error ? `error="${options.error}"` : null,
+    options?.description ? `error_description="${options.description}"` : null,
+  ].filter(Boolean).join(', ');
 }
 
 function safeRoom(room: ReturnType<ChatDatabase['listConversations']>[number]) {
@@ -184,6 +195,42 @@ function safeMessage(message: NonNullable<ReturnType<ChatDatabase['getMessage']>
     updatedAt: message.updatedAt,
   };
 }
+
+const roomOutputSchema = {
+  type: 'object',
+  properties: {
+    id: { type: 'string' },
+    title: { type: 'string' },
+    systemId: { type: 'string' },
+    agentId: { type: 'string' },
+    preview: { type: 'string' },
+    status: { type: 'string', enum: ['active', 'archived', 'trashed'] },
+    pinned: { type: 'boolean' },
+    updatedAt: { type: 'string' },
+  },
+  required: ['id', 'title', 'systemId', 'agentId', 'preview', 'status', 'pinned', 'updatedAt'],
+  additionalProperties: false,
+};
+
+const messageOutputSchema = {
+  type: 'object',
+  properties: {
+    id: { type: 'string' },
+    conversationId: { type: 'string' },
+    role: { type: 'string', enum: ['user', 'assistant', 'system'] },
+    authorId: { type: 'string' },
+    content: { type: 'string' },
+    state: { type: 'string', enum: ['complete', 'streaming', 'failed', 'cancelled'] },
+    parentMessageId: { type: ['string', 'null'] },
+    createdAt: { type: 'string' },
+    updatedAt: { type: 'string' },
+  },
+  required: [
+    'id', 'conversationId', 'role', 'authorId', 'content', 'state',
+    'parentMessageId', 'createdAt', 'updatedAt',
+  ],
+  additionalProperties: false,
+};
 
 function sha256(value: string) {
   return createHash('sha256').update(value, 'utf8').digest('hex');
@@ -225,6 +272,15 @@ function mcpTools() {
         },
         additionalProperties: false,
       },
+      outputSchema: {
+        type: 'object',
+        properties: {
+          participant: { type: 'string', const: CHATGPT_LUCY_AUTHOR_ID },
+          rooms: { type: 'array', items: roomOutputSchema },
+        },
+        required: ['participant', 'rooms'],
+        additionalProperties: false,
+      },
       securitySchemes: [{ type: 'oauth2', scopes: [READ_SCOPE] }],
       annotations: {
         readOnlyHint: true,
@@ -245,6 +301,18 @@ function mcpTools() {
           limit: { type: 'integer', minimum: 1, maximum: 200, default: 100 },
         },
         required: ['conversationId'],
+        additionalProperties: false,
+      },
+      outputSchema: {
+        type: 'object',
+        properties: {
+          participant: { type: 'string', const: CHATGPT_LUCY_AUTHOR_ID },
+          room: roomOutputSchema,
+          messages: { type: 'array', items: messageOutputSchema },
+          hasMore: { type: 'boolean' },
+          nextAfterMessageId: { type: ['string', 'null'] },
+        },
+        required: ['participant', 'room', 'messages', 'hasMore', 'nextAfterMessageId'],
         additionalProperties: false,
       },
       securitySchemes: [{ type: 'oauth2', scopes: [READ_SCOPE] }],
@@ -268,6 +336,16 @@ function mcpTools() {
           idempotencyKey: { type: 'string', minLength: 8, maxLength: 200 },
         },
         required: ['conversationId', 'content', 'idempotencyKey'],
+        additionalProperties: false,
+      },
+      outputSchema: {
+        type: 'object',
+        properties: {
+          participant: { type: 'string', const: CHATGPT_LUCY_AUTHOR_ID },
+          created: { type: 'boolean' },
+          message: messageOutputSchema,
+        },
+        required: ['participant', 'created', 'message'],
         additionalProperties: false,
       },
       securitySchemes: [{ type: 'oauth2', scopes: [WRITE_SCOPE] }],
@@ -388,33 +466,58 @@ function postMessage(db: ChatDatabase, args: unknown) {
   }, result.kind === 'created' ? 'ChatGPT Lucy message posted.' : 'Existing ChatGPT Lucy message returned.');
 }
 
-function scopeError(metadataUrl: string, scope: string) {
+function toolAuthError(metadataUrl: string, scope: string, failure: AuthFailure) {
+  const insufficientScope = failure === null;
+  const error = insufficientScope ? 'insufficient_scope' : 'invalid_token';
+  const description = insufficientScope
+    ? `OAuth scope ${scope} is required for this tool.`
+    : failure === 'missing'
+      ? `OAuth access token with scope ${scope} is required.`
+      : 'The OAuth access token is invalid or expired.';
   return toolError(
-    `OAuth scope ${scope} is required for this tool.`,
-    'INSUFFICIENT_SCOPE',
-    { 'mcp/www_authenticate': [authChallenge(metadataUrl, scope)] },
+    description,
+    insufficientScope ? 'INSUFFICIENT_SCOPE' : 'OAUTH_ACCESS_TOKEN_REQUIRED',
+    {
+      'mcp/www_authenticate': [authChallenge(metadataUrl, {
+        scope,
+        error,
+        description,
+      })],
+    },
   );
+}
+
+function authorizeTool(
+  identity: ChatGptParticipantIdentity | null,
+  authFailure: AuthFailure,
+  metadataUrl: string,
+  scope: string,
+) {
+  if (!identity) return toolAuthError(metadataUrl, scope, authFailure ?? 'invalid');
+  if (!identity.scopes.has(scope)) return toolAuthError(metadataUrl, scope, null);
+  return null;
 }
 
 async function handleToolCall(
   db: ChatDatabase,
-  identity: ChatGptParticipantIdentity,
+  identity: ChatGptParticipantIdentity | null,
+  authFailure: AuthFailure,
   metadataUrl: string,
   name: string,
   args: unknown,
 ) {
   try {
     if (name === 'list_chat_rooms') {
-      if (!identity.scopes.has(READ_SCOPE)) return scopeError(metadataUrl, READ_SCOPE);
-      return listRooms(db, args);
+      const denied = authorizeTool(identity, authFailure, metadataUrl, READ_SCOPE);
+      return denied ?? listRooms(db, args);
     }
     if (name === 'read_chat_room') {
-      if (!identity.scopes.has(READ_SCOPE)) return scopeError(metadataUrl, READ_SCOPE);
-      return readRoom(db, args);
+      const denied = authorizeTool(identity, authFailure, metadataUrl, READ_SCOPE);
+      return denied ?? readRoom(db, args);
     }
     if (name === 'post_chatgpt_lucy_message') {
-      if (!identity.scopes.has(WRITE_SCOPE)) return scopeError(metadataUrl, WRITE_SCOPE);
-      return postMessage(db, args);
+      const denied = authorizeTool(identity, authFailure, metadataUrl, WRITE_SCOPE);
+      return denied ?? postMessage(db, args);
     }
     return toolError('Unknown tool.', 'UNKNOWN_TOOL');
   } catch (error) {
@@ -459,44 +562,23 @@ export function registerChatGptParticipantMcp(
     };
   });
 
-  async function requireAccessToken(request: FastifyRequest, reply: FastifyReply) {
+  app.get(MCP_PATH, async (_request, reply) => {
+    reply.header('Allow', 'POST');
+    return reply.status(405).send({ error: 'STREAMABLE_HTTP_POST_REQUIRED' });
+  });
+
+  app.post(MCP_PATH, async (request, reply) => {
     if (!auth || !verifyAccessToken) {
       return reply.status(503).send({
         error: 'CHATGPT_PARTICIPANT_AUTH_NOT_CONFIGURED',
         message: authConfigurationError ?? 'OAuth resource-server configuration is unavailable',
       });
     }
-    const token = bearer(request);
-    if (!token) {
-      reply.header('WWW-Authenticate', authChallenge(metadataUrl));
-      return reply.status(401).send({ error: 'OAUTH_ACCESS_TOKEN_REQUIRED' });
-    }
-    try {
-      const identity = await verifyAccessToken(token);
-      if (!identity.subject) throw new Error('ACCESS_TOKEN_SUBJECT_REQUIRED');
-      (request as FastifyRequest & { chatGptParticipantIdentity?: ChatGptParticipantIdentity })
-        .chatGptParticipantIdentity = identity;
-    } catch {
-      reply.header('WWW-Authenticate', authChallenge(metadataUrl));
-      return reply.status(401).send({ error: 'OAUTH_ACCESS_TOKEN_INVALID' });
-    }
-  }
 
-  app.get(MCP_PATH, { preHandler: requireAccessToken }, async (_request, reply) => {
-    reply.header('Allow', 'POST');
-    return reply.status(405).send({ error: 'STREAMABLE_HTTP_POST_REQUIRED' });
-  });
-
-  app.post(MCP_PATH, { preHandler: requireAccessToken }, async (request, reply) => {
     const parsed = jsonRpcSchema.safeParse(request.body);
     if (!parsed.success) return reply.status(400).send(jsonRpcError(null, -32600, 'Invalid Request'));
     const message = parsed.data;
     if (message.id === undefined) return reply.status(202).send();
-
-    const identity = (request as FastifyRequest & {
-      chatGptParticipantIdentity?: ChatGptParticipantIdentity;
-    }).chatGptParticipantIdentity;
-    if (!identity) return reply.status(401).send({ error: 'OAUTH_ACCESS_TOKEN_REQUIRED' });
 
     if (message.method === 'initialize') {
       const requestedVersion = message.params?.protocolVersion;
@@ -515,9 +597,25 @@ export function registerChatGptParticipantMcp(
         arguments: z.record(z.string(), z.unknown()).optional(),
       }).strict().safeParse(message.params ?? {});
       if (!params.success) return reply.send(jsonRpcError(message.id, -32602, 'Invalid params'));
+
+      const token = bearer(request);
+      let identity: ChatGptParticipantIdentity | null = null;
+      let authFailure: AuthFailure = token ? 'invalid' : 'missing';
+      if (token) {
+        try {
+          identity = await verifyAccessToken(token);
+          if (!identity.subject) throw new Error('ACCESS_TOKEN_SUBJECT_REQUIRED');
+          authFailure = null;
+        } catch {
+          identity = null;
+          authFailure = 'invalid';
+        }
+      }
+
       const result = await handleToolCall(
         db,
         identity,
+        authFailure,
         metadataUrl,
         params.data.name,
         params.data.arguments ?? {},
