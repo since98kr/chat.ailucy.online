@@ -75,13 +75,13 @@ async function callTool(
   app: Awaited<ReturnType<typeof fixture>>['app'],
   name: string,
   args: Record<string, unknown>,
-  token = 'full',
+  token: string | null = 'full',
   id = 10,
 ) {
   return app.inject({
     method: 'POST',
     url: '/mcp/chatgpt-participant',
-    headers: headers(token),
+    headers: token ? headers(token) : { accept: 'application/json, text/event-stream' },
     payload: { jsonrpc: '2.0', id, method: 'tools/call', params: { name, arguments: args } },
   });
 }
@@ -107,7 +107,7 @@ describe('ChatGPT Lucy participant MCP', () => {
     await closeFixture(value);
   });
 
-  it('publishes protected-resource metadata and fails closed without a valid OAuth bearer', async () => {
+  it('publishes OAuth metadata and lets ChatGPT discover tools before linking while private calls fail closed', async () => {
     const value = await fixture();
     const metadata = await value.app.inject({
       method: 'GET',
@@ -120,30 +120,38 @@ describe('ChatGPT Lucy participant MCP', () => {
       scopes_supported: ['chat:read', 'chat:write'],
     });
 
-    const missing = await value.app.inject({
+    const initialize = await value.app.inject({
       method: 'POST',
       url: '/mcp/chatgpt-participant',
-      payload: { jsonrpc: '2.0', id: 1, method: 'initialize', params: {} },
+      payload: { jsonrpc: '2.0', id: 1, method: 'initialize', params: { protocolVersion: '2025-06-18' } },
     });
-    expect(missing.statusCode).toBe(401);
-    expect(missing.headers['www-authenticate']).toContain('oauth-protected-resource/mcp/chatgpt-participant');
+    expect(initialize.statusCode).toBe(200);
 
-    const invalid = await value.app.inject({
-      method: 'POST',
-      url: '/mcp/chatgpt-participant',
-      headers: headers('invalid'),
-      payload: { jsonrpc: '2.0', id: 2, method: 'ping', params: {} },
+    const missing = await callTool(value.app, 'read_chat_room', { conversationId: value.room.id }, null);
+    expect(missing.statusCode).toBe(200);
+    expect(missing.json().result).toMatchObject({
+      isError: true,
+      structuredContent: { error: 'OAUTH_ACCESS_TOKEN_REQUIRED' },
     });
-    expect(invalid.statusCode).toBe(401);
+    const missingChallenge = missing.json().result._meta['mcp/www_authenticate'][0];
+    expect(missingChallenge).toContain('resource_metadata=');
+    expect(missingChallenge).toContain('scope="chat:read"');
+    expect(missingChallenge).toContain('error="invalid_token"');
+    expect(missingChallenge).toContain('error_description=');
+
+    const invalid = await callTool(value.app, 'read_chat_room', { conversationId: value.room.id }, 'invalid');
+    expect(invalid.statusCode).toBe(200);
+    expect(invalid.json().result.structuredContent.error).toBe('OAUTH_ACCESS_TOKEN_REQUIRED');
+    expect(invalid.json().result._meta['mcp/www_authenticate'][0]).toContain('error="invalid_token"');
     await closeFixture(value);
   });
 
-  it('implements stateless MCP lifecycle with correctly annotated read/write tools', async () => {
+  it('implements stateless MCP lifecycle with explicit schemas and correctly annotated read/write tools', async () => {
     const value = await fixture();
     const initialize = await value.app.inject({
       method: 'POST',
       url: '/mcp/chatgpt-participant',
-      headers: headers(),
+      headers: { accept: 'application/json, text/event-stream' },
       payload: {
         jsonrpc: '2.0',
         id: 1,
@@ -158,7 +166,6 @@ describe('ChatGPT Lucy participant MCP', () => {
     const initialized = await value.app.inject({
       method: 'POST',
       url: '/mcp/chatgpt-participant',
-      headers: headers(),
       payload: { jsonrpc: '2.0', method: 'notifications/initialized' },
     });
     expect(initialized.statusCode).toBe(202);
@@ -166,7 +173,6 @@ describe('ChatGPT Lucy participant MCP', () => {
     const listed = await value.app.inject({
       method: 'POST',
       url: '/mcp/chatgpt-participant',
-      headers: headers(),
       payload: { jsonrpc: '2.0', id: 2, method: 'tools/list', params: {} },
     });
     const tools = listed.json().result.tools;
@@ -175,6 +181,7 @@ describe('ChatGPT Lucy participant MCP', () => {
       'read_chat_room',
       'post_chatgpt_lucy_message',
     ]);
+    expect(tools.every((tool: { outputSchema?: unknown }) => Boolean(tool.outputSchema))).toBe(true);
     expect(tools[0].annotations.readOnlyHint).toBe(true);
     expect(tools[0].securitySchemes[0].scopes).toEqual(['chat:read']);
     expect(tools[2].annotations).toMatchObject({
@@ -185,11 +192,7 @@ describe('ChatGPT Lucy participant MCP', () => {
     });
     expect(tools[2].securitySchemes[0].scopes).toEqual(['chat:write']);
 
-    const get = await value.app.inject({
-      method: 'GET',
-      url: '/mcp/chatgpt-participant',
-      headers: headers(),
-    });
+    const get = await value.app.inject({ method: 'GET', url: '/mcp/chatgpt-participant' });
     expect(get.statusCode).toBe(405);
     await closeFixture(value);
   });
@@ -242,7 +245,10 @@ describe('ChatGPT Lucy participant MCP', () => {
       isError: true,
       structuredContent: { error: 'INSUFFICIENT_SCOPE' },
     });
-    expect(denied.json().result._meta['mcp/www_authenticate'][0]).toContain('chat:write');
+    const deniedChallenge = denied.json().result._meta['mcp/www_authenticate'][0];
+    expect(deniedChallenge).toContain('scope="chat:write"');
+    expect(deniedChallenge).toContain('error="insufficient_scope"');
+    expect(deniedChallenge).toContain('error_description=');
 
     const foreignParent = await callTool(value.app, 'post_chatgpt_lucy_message', {
       conversationId: value.room.id,
