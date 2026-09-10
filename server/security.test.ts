@@ -221,4 +221,39 @@ describe('runtime security', () => {
     expect(second.json()).toEqual({ error: 'RATE_LIMITED' });
     expect(second.headers['retry-after']).toBeDefined();
   });
+
+  it('isolates MCP rate-limit buckets by bearer credential behind one shared peer', async () => {
+    const app = createApp({
+      ...defaults,
+      authMode: 'token',
+      accessToken: 'chat-private-session-secret',
+      chatRateLimit: 1,
+    });
+    app.post('/mcp/chatgpt-participant', async () => ({ ok: true }));
+
+    const attackerFirst = await app.inject({
+      method: 'POST',
+      url: '/mcp/chatgpt-participant',
+      headers: { authorization: 'Bearer attacker-token' },
+      payload: {},
+    });
+    expect(attackerFirst.statusCode).toBe(200);
+
+    const attackerSecond = await app.inject({
+      method: 'POST',
+      url: '/mcp/chatgpt-participant',
+      headers: { authorization: 'Bearer attacker-token' },
+      payload: {},
+    });
+    expect(attackerSecond.statusCode).toBe(429);
+
+    const legitimate = await app.inject({
+      method: 'POST',
+      url: '/mcp/chatgpt-participant',
+      headers: { authorization: 'Bearer legitimate-chatgpt-oauth-token' },
+      payload: {},
+    });
+    expect(legitimate.statusCode).toBe(200);
+    expect(legitimate.headers['x-ratelimit-limit']).toBe('1');
+  });
 });
