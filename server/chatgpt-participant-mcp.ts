@@ -122,6 +122,12 @@ function bearer(request: FastifyRequest) {
   return value.startsWith('Bearer ') ? value.slice(7).trim() : '';
 }
 
+function requestProtocolVersion(request: FastifyRequest) {
+  const value = request.headers['mcp-protocol-version'];
+  if (Array.isArray(value)) return value[0]?.trim() ?? '';
+  return typeof value === 'string' ? value.trim() : '';
+}
+
 function jsonRpcResult(id: string | number | null | undefined, result: unknown) {
   return { jsonrpc: '2.0', id: id ?? null, result };
 }
@@ -223,6 +229,16 @@ const messageOutputSchema = {
   additionalProperties: false,
 };
 
+const errorOutputSchema = {
+  type: 'object',
+  properties: {
+    error: { type: 'string' },
+    message: { type: 'string' },
+  },
+  required: ['error', 'message'],
+  additionalProperties: false,
+};
+
 function sha256(value: string) {
   return createHash('sha256').update(value, 'utf8').digest('hex');
 }
@@ -264,13 +280,18 @@ function mcpTools() {
         additionalProperties: false,
       },
       outputSchema: {
-        type: 'object',
-        properties: {
-          participant: { type: 'string', const: CHATGPT_LUCY_AUTHOR_ID },
-          rooms: { type: 'array', items: roomOutputSchema },
-        },
-        required: ['participant', 'rooms'],
-        additionalProperties: false,
+        oneOf: [
+          {
+            type: 'object',
+            properties: {
+              participant: { type: 'string', const: CHATGPT_LUCY_AUTHOR_ID },
+              rooms: { type: 'array', items: roomOutputSchema },
+            },
+            required: ['participant', 'rooms'],
+            additionalProperties: false,
+          },
+          errorOutputSchema,
+        ],
       },
       securitySchemes: [{ type: 'oauth2', scopes: [READ_SCOPE] }],
       annotations: {
@@ -295,16 +316,21 @@ function mcpTools() {
         additionalProperties: false,
       },
       outputSchema: {
-        type: 'object',
-        properties: {
-          participant: { type: 'string', const: CHATGPT_LUCY_AUTHOR_ID },
-          room: roomOutputSchema,
-          messages: { type: 'array', items: messageOutputSchema },
-          hasMore: { type: 'boolean' },
-          nextAfterMessageId: { type: ['string', 'null'] },
-        },
-        required: ['participant', 'room', 'messages', 'hasMore', 'nextAfterMessageId'],
-        additionalProperties: false,
+        oneOf: [
+          {
+            type: 'object',
+            properties: {
+              participant: { type: 'string', const: CHATGPT_LUCY_AUTHOR_ID },
+              room: roomOutputSchema,
+              messages: { type: 'array', items: messageOutputSchema },
+              hasMore: { type: 'boolean' },
+              nextAfterMessageId: { type: ['string', 'null'] },
+            },
+            required: ['participant', 'room', 'messages', 'hasMore', 'nextAfterMessageId'],
+            additionalProperties: false,
+          },
+          errorOutputSchema,
+        ],
       },
       securitySchemes: [{ type: 'oauth2', scopes: [READ_SCOPE] }],
       annotations: {
@@ -330,14 +356,19 @@ function mcpTools() {
         additionalProperties: false,
       },
       outputSchema: {
-        type: 'object',
-        properties: {
-          participant: { type: 'string', const: CHATGPT_LUCY_AUTHOR_ID },
-          created: { type: 'boolean' },
-          message: messageOutputSchema,
-        },
-        required: ['participant', 'created', 'message'],
-        additionalProperties: false,
+        oneOf: [
+          {
+            type: 'object',
+            properties: {
+              participant: { type: 'string', const: CHATGPT_LUCY_AUTHOR_ID },
+              created: { type: 'boolean' },
+              message: messageOutputSchema,
+            },
+            required: ['participant', 'created', 'message'],
+            additionalProperties: false,
+          },
+          errorOutputSchema,
+        ],
       },
       securitySchemes: [{ type: 'oauth2', scopes: [WRITE_SCOPE] }],
       annotations: {
@@ -569,6 +600,18 @@ export function registerChatGptParticipantMcp(
     const parsed = jsonRpcSchema.safeParse(request.body);
     if (!parsed.success) return reply.status(400).send(jsonRpcError(null, -32600, 'Invalid Request'));
     const message = parsed.data;
+    const requestedProtocolVersion = requestProtocolVersion(request);
+    if (
+      message.method !== 'initialize'
+      && requestedProtocolVersion
+      && requestedProtocolVersion !== DEFAULT_PROTOCOL_VERSION
+    ) {
+      return reply.status(400).send(jsonRpcError(
+        message.id,
+        -32600,
+        `Unsupported MCP-Protocol-Version: ${requestedProtocolVersion}`,
+      ));
+    }
     if (message.id === undefined) return reply.status(202).send();
 
     if (message.method === 'initialize') {
