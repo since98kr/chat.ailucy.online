@@ -27,11 +27,12 @@ import {
   uploadArtifact,
 } from './api';
 import { emitCollaborationEvent } from './collaboration-events';
+import { OPENCLAW_LUCY_ID } from './identity';
 import type { TranscriptState } from './run-transcript';
 import { emptyTranscriptState, reduceTranscript } from './run-transcript';
 
 const defaultAgent: Record<SystemId, string> = {
-  letta: '[Letta] Lucy',
+  letta: OPENCLAW_LUCY_ID,
   hermes: '[Hermes] Lucy',
   claude: '[Claude] 테이아',
 };
