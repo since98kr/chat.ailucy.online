@@ -1,4 +1,5 @@
-import { timingSafeEqual } from 'node:crypto';
+import { createHash, timingSafeEqual } from 'node:crypto';
+import { isIP } from 'node:net';
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 import {
   createCloudflareAccessVerifier,
@@ -26,9 +27,12 @@ export type SecurityConfig = {
 type RateRecord = { count: number; resetAt: number };
 
 const rateRecords = new Map<string, RateRecord>();
+const verifiedMcpCredentials = new Map<string, true>();
+const MAX_VERIFIED_MCP_CREDENTIALS = 256;
 const requestIdentities = new WeakMap<FastifyRequest, string>();
 const mutationMethods = new Set(['POST', 'PATCH', 'PUT', 'DELETE']);
 const publicApiPaths = new Set(['/api/health', '/api/auth/config', '/api/auth/login', '/api/auth/logout']);
+const chatGptParticipantMcpPath = '/mcp/chatgpt-participant';
 const sessionCookieName = 'chat_v2_session';
 
 function csv(value: string | undefined) {
@@ -84,6 +88,85 @@ function bearerToken(request: FastifyRequest) {
   return authorization.slice('Bearer '.length).trim();
 }
 
+function mcpBearerToken(request: FastifyRequest) {
+  const authorization = request.headers.authorization ?? '';
+  const match = /^Bearer\s+(.+)$/i.exec(authorization.trim());
+  return match?.[1]?.trim() ?? '';
+}
+
+function mcpCredentialFingerprint(token: string) {
+  return createHash('sha256').update(token, 'utf8').digest('hex');
+}
+
+function normalizedPeerIp(ip: string) {
+  return ip.toLowerCase().startsWith('::ffff:') ? ip.slice(7) : ip;
+}
+
+function isTrustedLocalProxyPeer(ip: string) {
+  const normalized = normalizedPeerIp(ip);
+  const version = isIP(normalized);
+  if (version === 4) {
+    const octets = normalized.split('.').map(Number);
+    return octets[0] === 127
+      || octets[0] === 10
+      || (octets[0] === 172 && octets[1] >= 16 && octets[1] <= 31)
+      || (octets[0] === 192 && octets[1] === 168);
+  }
+  if (version === 6) {
+    const lower = normalized.toLowerCase();
+    return lower === '::1'
+      || lower.startsWith('fc')
+      || lower.startsWith('fd')
+      || lower.startsWith('fe8')
+      || lower.startsWith('fe9')
+      || lower.startsWith('fea')
+      || lower.startsWith('feb');
+  }
+  return false;
+}
+
+function mcpClientIp(request: FastifyRequest) {
+  if (isTrustedLocalProxyPeer(request.ip)) {
+    const cloudflareClientIp = requestHeader(request, 'cf-connecting-ip');
+    if (isIP(cloudflareClientIp)) return cloudflareClientIp;
+  }
+  return request.ip;
+}
+
+function mcpRateIdentity(request: FastifyRequest) {
+  const token = mcpBearerToken(request);
+  if (token) {
+    const fingerprint = mcpCredentialFingerprint(token);
+    if (verifiedMcpCredentials.has(fingerprint)) return `verified:${fingerprint}`;
+  }
+  return `client:${mcpClientIp(request)}`;
+}
+
+function rememberVerifiedMcpCredential(request: FastifyRequest) {
+  const token = mcpBearerToken(request);
+  if (!token) return;
+  const fingerprint = mcpCredentialFingerprint(token);
+  if (verifiedMcpCredentials.has(fingerprint)) verifiedMcpCredentials.delete(fingerprint);
+  verifiedMcpCredentials.set(fingerprint, true);
+  while (verifiedMcpCredentials.size > MAX_VERIFIED_MCP_CREDENTIALS) {
+    const oldest = verifiedMcpCredentials.keys().next().value as string | undefined;
+    if (!oldest) break;
+    verifiedMcpCredentials.delete(oldest);
+    rateRecords.delete(`chatgpt-mcp:verified:${oldest}`);
+  }
+}
+
+function isSuccessfulMcpToolPayload(payload: unknown) {
+  if (!payload || typeof payload !== 'object' || Array.isArray(payload)) return false;
+  const result = (payload as { result?: unknown }).result;
+  return Boolean(
+    result
+    && typeof result === 'object'
+    && !Array.isArray(result)
+    && (result as { isError?: unknown }).isError === false,
+  );
+}
+
 function cookies(request: FastifyRequest) {
   const header = request.headers.cookie ?? '';
   return new Map(
@@ -132,12 +215,22 @@ function sessionCookie(value: string, request: FastifyRequest, maxAgeSeconds?: n
 }
 
 function rateLimitFor(request: FastifyRequest, config: SecurityConfig) {
+  const pathname = request.url.split('?')[0];
+  if (pathname === chatGptParticipantMcpPath) {
+    return mcpRateIdentity(request).startsWith('verified:')
+      ? config.chatRateLimit
+      : config.generalRateLimit;
+  }
   if (request.url.includes('/messages/stream')) return config.chatRateLimit;
   if (request.url.includes('/artifacts') && request.method === 'POST') return config.uploadRateLimit;
   return config.generalRateLimit;
 }
 
 function rateKey(request: FastifyRequest) {
+  const pathname = request.url.split('?')[0];
+  if (pathname === chatGptParticipantMcpPath) {
+    return `chatgpt-mcp:${mcpRateIdentity(request)}`;
+  }
   const category = request.url.includes('/messages/stream')
     ? 'chat'
     : request.url.includes('/artifacts') && request.method === 'POST'
@@ -267,11 +360,22 @@ export function registerRuntimeSecurity(app: FastifyInstance, config = securityC
     if (publicApiPaths.has(pathname)) return;
     const originResult = validateOrigin(request, reply, config);
     if (originResult) return originResult;
+    if (pathname === chatGptParticipantMcpPath) {
+      return applyRateLimit(request, reply, config);
+    }
     if (request.url.startsWith('/api/')) {
       const authResult = await authenticate(request, reply, config);
       if (authResult) return authResult;
       return applyRateLimit(request, reply, config);
     }
+  });
+
+  app.addHook('preSerialization', async (request, _reply, payload) => {
+    const pathname = request.url.split('?')[0];
+    if (pathname === chatGptParticipantMcpPath && isSuccessfulMcpToolPayload(payload)) {
+      rememberVerifiedMcpCredential(request);
+    }
+    return payload;
   });
 
   app.addHook('onSend', async (_request, reply, payload) => {
@@ -292,4 +396,5 @@ export function registerRuntimeSecurity(app: FastifyInstance, config = securityC
 
 export function clearSecurityRateState() {
   rateRecords.clear();
+  verifiedMcpCredentials.clear();
 }

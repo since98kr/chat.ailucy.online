@@ -202,4 +202,98 @@ describe('runtime security', () => {
     expect(second.statusCode).toBe(429);
     expect(second.headers['retry-after']).toBeDefined();
   });
+
+  it('rate limits the ChatGPT participant MCP without applying Chat private-session auth', async () => {
+    const app = createApp({
+      ...defaults,
+      authMode: 'token',
+      accessToken: 'correct-secret',
+      generalRateLimit: 1,
+      chatRateLimit: 1,
+    });
+    app.post('/mcp/chatgpt-participant', async () => ({ ok: true }));
+
+    const first = await app.inject({ method: 'POST', url: '/mcp/chatgpt-participant', payload: {} });
+    expect(first.statusCode).toBe(200);
+    expect(first.headers['x-ratelimit-limit']).toBe('1');
+
+    const second = await app.inject({ method: 'POST', url: '/mcp/chatgpt-participant', payload: {} });
+    expect(second.statusCode).toBe(429);
+    expect(second.json()).toEqual({ error: 'RATE_LIMITED' });
+    expect(second.headers['retry-after']).toBeDefined();
+  });
+
+  it('isolates unseen MCP credentials by trusted Cloudflare client IP while rotating invalid tokens stay bounded', async () => {
+    const app = createApp({
+      ...defaults,
+      authMode: 'token',
+      accessToken: 'chat-private-session-secret',
+      generalRateLimit: 1,
+      chatRateLimit: 1,
+    });
+    app.post('/mcp/chatgpt-participant', async (request) => {
+      const authorization = request.headers.authorization ?? '';
+      if (authorization === 'Bearer legitimate-chatgpt-oauth-token') {
+        return { jsonrpc: '2.0', id: 1, result: { isError: false, structuredContent: { ok: true } } };
+      }
+      return { jsonrpc: '2.0', id: 1, result: { isError: true, structuredContent: { error: 'invalid_token' } } };
+    });
+
+    const attackerFirst = await app.inject({
+      method: 'POST',
+      url: '/mcp/chatgpt-participant',
+      headers: {
+        authorization: 'Bearer fresh-invalid-token-a',
+        'cf-connecting-ip': '203.0.113.10',
+      },
+      payload: {},
+    });
+    expect(attackerFirst.statusCode).toBe(200);
+
+    const attackerSecond = await app.inject({
+      method: 'POST',
+      url: '/mcp/chatgpt-participant',
+      headers: {
+        authorization: 'Bearer fresh-invalid-token-b',
+        'cf-connecting-ip': '203.0.113.10',
+      },
+      payload: {},
+    });
+    expect(attackerSecond.statusCode).toBe(429);
+
+    const legitimateFirst = await app.inject({
+      method: 'POST',
+      url: '/mcp/chatgpt-participant',
+      headers: {
+        authorization: 'Bearer legitimate-chatgpt-oauth-token',
+        'cf-connecting-ip': '203.0.113.11',
+      },
+      payload: {},
+    });
+    expect(legitimateFirst.statusCode).toBe(200);
+    expect(legitimateFirst.headers['x-ratelimit-limit']).toBe('1');
+
+    const legitimateSecond = await app.inject({
+      method: 'POST',
+      url: '/mcp/chatgpt-participant',
+      headers: {
+        authorization: 'Bearer legitimate-chatgpt-oauth-token',
+        'cf-connecting-ip': '203.0.113.11',
+      },
+      payload: {},
+    });
+    expect(legitimateSecond.statusCode).toBe(200);
+    expect(legitimateSecond.headers['x-ratelimit-limit']).toBe('1');
+
+    const legitimateThird = await app.inject({
+      method: 'POST',
+      url: '/mcp/chatgpt-participant',
+      headers: {
+        authorization: 'Bearer legitimate-chatgpt-oauth-token',
+        'cf-connecting-ip': '203.0.113.11',
+      },
+      payload: {},
+    });
+    expect(legitimateThird.statusCode).toBe(429);
+  });
 });
