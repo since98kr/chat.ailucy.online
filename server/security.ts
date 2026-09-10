@@ -29,6 +29,7 @@ const rateRecords = new Map<string, RateRecord>();
 const requestIdentities = new WeakMap<FastifyRequest, string>();
 const mutationMethods = new Set(['POST', 'PATCH', 'PUT', 'DELETE']);
 const publicApiPaths = new Set(['/api/health', '/api/auth/config', '/api/auth/login', '/api/auth/logout']);
+const chatGptParticipantMcpPath = '/mcp/chatgpt-participant';
 const sessionCookieName = 'chat_v2_session';
 
 function csv(value: string | undefined) {
@@ -132,17 +133,22 @@ function sessionCookie(value: string, request: FastifyRequest, maxAgeSeconds?: n
 }
 
 function rateLimitFor(request: FastifyRequest, config: SecurityConfig) {
+  const pathname = request.url.split('?')[0];
+  if (pathname === chatGptParticipantMcpPath) return config.chatRateLimit;
   if (request.url.includes('/messages/stream')) return config.chatRateLimit;
   if (request.url.includes('/artifacts') && request.method === 'POST') return config.uploadRateLimit;
   return config.generalRateLimit;
 }
 
 function rateKey(request: FastifyRequest) {
-  const category = request.url.includes('/messages/stream')
-    ? 'chat'
-    : request.url.includes('/artifacts') && request.method === 'POST'
-      ? 'upload'
-      : 'general';
+  const pathname = request.url.split('?')[0];
+  const category = pathname === chatGptParticipantMcpPath
+    ? 'chatgpt-mcp'
+    : request.url.includes('/messages/stream')
+      ? 'chat'
+      : request.url.includes('/artifacts') && request.method === 'POST'
+        ? 'upload'
+        : 'general';
   return `${request.ip}:${category}`;
 }
 
@@ -267,6 +273,9 @@ export function registerRuntimeSecurity(app: FastifyInstance, config = securityC
     if (publicApiPaths.has(pathname)) return;
     const originResult = validateOrigin(request, reply, config);
     if (originResult) return originResult;
+    if (pathname === chatGptParticipantMcpPath) {
+      return applyRateLimit(request, reply, config);
+    }
     if (request.url.startsWith('/api/')) {
       const authResult = await authenticate(request, reply, config);
       if (authResult) return authResult;
