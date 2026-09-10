@@ -71,7 +71,7 @@ describe('Federated Conversation controller', () => {
       url: `/api/conversations/${conversationId}/messages/stream`,
       payload: {
         content: '구현 관점과 개인 우선순위를 병렬 검토하고 최종 결론을 내려줘.',
-        targetAgentIds: ['Xixi', '[Letta] Lucy'],
+        targetAgentIds: ['Xixi', '[OpenClaw] Lucy'],
         workflowMode: 'federated',
         idempotencyKey,
       },
@@ -83,13 +83,13 @@ describe('Federated Conversation controller', () => {
     const detail = await app.inject({ method: 'GET', url: `/api/conversations/${conversationId}` });
     const messages = detail.json().conversation.messages as Array<{ authorId: string; content: string }>;
     expect(messages.some((message) => message.authorId === 'Xixi' && message.content.includes('Xixi 원문 결과'))).toBe(true);
-    expect(messages.some((message) => message.authorId === '[Letta] Lucy' && message.content.includes('승인된 장기기억'))).toBe(true);
+    expect(messages.some((message) => message.authorId === '[OpenClaw] Lucy' && message.content.includes('승인된 장기기억'))).toBe(true);
     expect(messages.some((message) => message.authorId === '[Hermes] Lucy' && message.content.includes('종합응답'))).toBe(true);
 
     const snapshot = await app.inject({ method: 'GET', url: `/api/conversations/${conversationId}/federation` });
     const run = snapshot.json().federation.runs[0] as WorkflowRunRecord;
     expect(run.status).toBe('completed');
-    expect(new Set(run.requestedAgentIds)).toEqual(new Set(['Xixi', '[Letta] Lucy', '[Hermes] Lucy']));
+    expect(new Set(run.requestedAgentIds)).toEqual(new Set(['Xixi', '[OpenClaw] Lucy', '[Hermes] Lucy']));
     expect(run.requestedAgentIds.at(-1)).toBe('[Hermes] Lucy');
     expect(run.steps.filter((step) => step.agentId !== '[Hermes] Lucy').every((step) => step.parallelGroup === 0)).toBe(true);
     const coordinator = run.steps.find((step) => step.agentId === '[Hermes] Lucy');
@@ -108,7 +108,7 @@ describe('Federated Conversation controller', () => {
       url: `/api/conversations/${conversationId}/messages/stream`,
       payload: {
         content: '이 요청은 네트워크 재전송으로 간주되어야 한다.',
-        targetAgentIds: ['Xixi', '[Letta] Lucy'],
+        targetAgentIds: ['Xixi', '[OpenClaw] Lucy'],
         workflowMode: 'federated',
         idempotencyKey,
       },
