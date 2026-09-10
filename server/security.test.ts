@@ -208,6 +208,7 @@ describe('runtime security', () => {
       ...defaults,
       authMode: 'token',
       accessToken: 'correct-secret',
+      generalRateLimit: 1,
       chatRateLimit: 1,
     });
     app.post('/mcp/chatgpt-participant', async () => ({ ok: true }));
@@ -222,19 +223,35 @@ describe('runtime security', () => {
     expect(second.headers['retry-after']).toBeDefined();
   });
 
-  it('isolates MCP rate-limit buckets by bearer credential behind one shared peer', async () => {
+  it('keeps fresh invalid tokens in one bounded pre-auth bucket and reserves a bucket for a verified credential', async () => {
     const app = createApp({
       ...defaults,
       authMode: 'token',
       accessToken: 'chat-private-session-secret',
+      generalRateLimit: 2,
       chatRateLimit: 1,
     });
-    app.post('/mcp/chatgpt-participant', async () => ({ ok: true }));
+    app.post('/mcp/chatgpt-participant', async (request) => {
+      const authorization = request.headers.authorization ?? '';
+      if (authorization === 'Bearer legitimate-chatgpt-oauth-token') {
+        return { jsonrpc: '2.0', id: 1, result: { isError: false, structuredContent: { ok: true } } };
+      }
+      return { jsonrpc: '2.0', id: 1, result: { isError: true, structuredContent: { error: 'invalid_token' } } };
+    });
+
+    const legitimateFirst = await app.inject({
+      method: 'POST',
+      url: '/mcp/chatgpt-participant',
+      headers: { authorization: 'Bearer legitimate-chatgpt-oauth-token' },
+      payload: {},
+    });
+    expect(legitimateFirst.statusCode).toBe(200);
+    expect(legitimateFirst.headers['x-ratelimit-limit']).toBe('2');
 
     const attackerFirst = await app.inject({
       method: 'POST',
       url: '/mcp/chatgpt-participant',
-      headers: { authorization: 'Bearer attacker-token' },
+      headers: { authorization: 'Bearer fresh-invalid-token-a' },
       payload: {},
     });
     expect(attackerFirst.statusCode).toBe(200);
@@ -242,18 +259,26 @@ describe('runtime security', () => {
     const attackerSecond = await app.inject({
       method: 'POST',
       url: '/mcp/chatgpt-participant',
-      headers: { authorization: 'Bearer attacker-token' },
+      headers: { authorization: 'Bearer fresh-invalid-token-b' },
       payload: {},
     });
     expect(attackerSecond.statusCode).toBe(429);
 
-    const legitimate = await app.inject({
+    const legitimateSecond = await app.inject({
       method: 'POST',
       url: '/mcp/chatgpt-participant',
       headers: { authorization: 'Bearer legitimate-chatgpt-oauth-token' },
       payload: {},
     });
-    expect(legitimate.statusCode).toBe(200);
-    expect(legitimate.headers['x-ratelimit-limit']).toBe('1');
+    expect(legitimateSecond.statusCode).toBe(200);
+    expect(legitimateSecond.headers['x-ratelimit-limit']).toBe('1');
+
+    const legitimateThird = await app.inject({
+      method: 'POST',
+      url: '/mcp/chatgpt-participant',
+      headers: { authorization: 'Bearer legitimate-chatgpt-oauth-token' },
+      payload: {},
+    });
+    expect(legitimateThird.statusCode).toBe(429);
   });
 });
