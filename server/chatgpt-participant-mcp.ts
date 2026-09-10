@@ -582,8 +582,11 @@ export function registerChatGptParticipantMcp(
 
     if (message.method === 'initialize') {
       const requestedVersion = message.params?.protocolVersion;
+      const protocolVersion = requestedVersion === DEFAULT_PROTOCOL_VERSION
+        ? DEFAULT_PROTOCOL_VERSION
+        : DEFAULT_PROTOCOL_VERSION;
       return reply.send(jsonRpcResult(message.id, {
-        protocolVersion: typeof requestedVersion === 'string' ? requestedVersion : DEFAULT_PROTOCOL_VERSION,
+        protocolVersion,
         capabilities: { tools: { listChanged: false } },
         serverInfo: { name: 'chat-ailucy-chatgpt-participant', version: '0.1.0' },
         instructions: 'You are the active ChatGPT participant [ChatGPT] Lucy. Read the canonical room transcript before replying. Never impersonate Tei or another agent. Posting does not wake this ChatGPT conversation after the current turn ends.',
