@@ -99,7 +99,9 @@ function scopeSet(payload: JWTPayload) {
   if (typeof payload.scope === 'string') {
     for (const value of payload.scope.split(/\s+/)) if (value) result.add(value);
   }
-  if (Array.isArray(payload.scp)) {
+  if (typeof payload.scp === 'string') {
+    for (const value of payload.scp.split(/\s+/)) if (value) result.add(value);
+  } else if (Array.isArray(payload.scp)) {
     for (const value of payload.scp) if (typeof value === 'string' && value) result.add(value);
   }
   return result;
@@ -459,6 +461,10 @@ function postMessage(db: ChatDatabase, args: unknown) {
       content: input.content,
       parentMessageId: input.parentMessageId ?? null,
     });
+    // addMessage clears drafts for normal send flows. External participant posts must not
+    // erase text the user is still composing, so restore the pre-post draft atomically.
+    db.db.prepare('UPDATE conversations SET draft = ? WHERE id = ?')
+      .run(room.draft, input.conversationId);
     db.db.prepare(`
       INSERT INTO chatgpt_participant_posts (
         idempotency_key, conversation_id, request_fingerprint, message_id, created_at
