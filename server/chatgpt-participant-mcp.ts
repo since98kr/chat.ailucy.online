@@ -392,6 +392,51 @@ function listRooms(db: ChatDatabase, args: unknown) {
   }, 'Chat rooms listed.');
 }
 
+type RoomMetadataRow = {
+  id: string;
+  system_id: ReturnType<ChatDatabase['listConversations']>[number]['systemId'];
+  agent_id: string;
+  title: string;
+  preview: string;
+  status: ReturnType<ChatDatabase['listConversations']>[number]['status'];
+  pinned: number;
+  created_at: string;
+  updated_at: string;
+  last_read_message_id: string | null;
+  draft: string;
+  branched_from_conversation_id: string | null;
+  branched_from_message_id: string | null;
+};
+
+function readRoomMetadata(
+  db: ChatDatabase,
+  conversationId: string,
+): ReturnType<ChatDatabase['listConversations']>[number] | null {
+  const row = db.db.prepare(`
+    SELECT id, system_id, agent_id, title, preview, status, pinned,
+           created_at, updated_at, last_read_message_id, draft,
+           branched_from_conversation_id, branched_from_message_id
+    FROM conversations
+    WHERE id = ?
+  `).get(conversationId) as RoomMetadataRow | undefined;
+  if (!row) return null;
+  return {
+    id: row.id,
+    systemId: row.system_id,
+    agentId: row.agent_id,
+    title: row.title,
+    preview: row.preview,
+    status: row.status,
+    pinned: row.pinned === 1,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+    lastReadMessageId: row.last_read_message_id,
+    draft: row.draft,
+    branchedFromConversationId: row.branched_from_conversation_id,
+    branchedFromMessageId: row.branched_from_message_id,
+  };
+}
+
 type PagedMessageRow = {
   id: string;
   conversation_id: string;
@@ -420,7 +465,7 @@ function mapPagedMessage(row: PagedMessageRow): NonNullable<ReturnType<ChatDatab
 
 function readRoom(db: ChatDatabase, args: unknown) {
   const input = readRoomSchema.parse(args ?? {});
-  const room = db.listConversations().find((candidate) => candidate.id === input.conversationId);
+  const room = readRoomMetadata(db, input.conversationId);
   if (!room) return toolError('Conversation not found.', 'CONVERSATION_NOT_FOUND');
 
   let cursor: { conversation_id: string; created_at: string; row_id: number } | undefined;
