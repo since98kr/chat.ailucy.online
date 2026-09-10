@@ -127,4 +127,35 @@ describe('ChatGPT participant MCP compatibility', () => {
 
     await closeFixture(value);
   });
+
+  it('accepts OAuth Bearer authentication scheme names case-insensitively', async () => {
+    const value = await fixture();
+
+    for (const authorization of ['bearer lower-case-token', 'BEARER upper-case-token']) {
+      const response = await value.app.inject({
+        method: 'POST',
+        url: '/mcp/chatgpt-participant',
+        headers: {
+          authorization,
+          'mcp-protocol-version': '2025-06-18',
+        },
+        payload: {
+          jsonrpc: '2.0',
+          id: authorization.startsWith('bearer') ? 4 : 5,
+          method: 'tools/call',
+          params: { name: 'read_chat_room', arguments: { conversationId: value.room.id } },
+        },
+      });
+      expect(response.statusCode).toBe(200);
+      expect(response.json().result).toMatchObject({
+        isError: false,
+        structuredContent: {
+          participant: '[ChatGPT] Lucy',
+          room: { id: value.room.id },
+        },
+      });
+    }
+
+    await closeFixture(value);
+  });
 });
