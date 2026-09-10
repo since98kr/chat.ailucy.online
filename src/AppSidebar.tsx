@@ -1,6 +1,7 @@
 import { Archive, Bot, ChevronDown, GitMerge, LoaderCircle, Plus, Search, Settings, Sparkles, Trash2, X } from 'lucide-react';
 import type { AgentRecord, ConversationRecord, ConversationStatus, SystemId } from '../shared/contracts';
 import type { useChat } from './useChat';
+import { CHATGPT_LUCY_ID, displayAgentId, isOpenClawLucy } from './identity';
 
 type ChatController = ReturnType<typeof useChat>;
 
@@ -26,7 +27,7 @@ export default function AppSidebar({
   const conversations = search.trim()
     ? chat.searchResults.map((result) => ({ ...result.conversation, preview: result.snippet }))
     : chat.conversations;
-  const lettaAgents = agents.filter((agent) => agent.systemId === 'letta');
+  const openClawAgents = agents.filter((agent) => agent.systemId === 'letta');
   const hermesAgents = agents.filter((agent) => agent.systemId === 'hermes');
   const claudeAgents = agents.filter((agent) => agent.systemId === 'claude');
 
@@ -58,7 +59,8 @@ export default function AppSidebar({
             <span>SYSTEMS</span>
             <button className="icon-button" aria-label="시스템 설정"><Settings size={15} /></button>
           </div>
-          <SystemCard id="letta" label="Letta" accent="blue" agents={lettaAgents} selectedSystem={chat.selectedSystem} activeAgent={chat.activeAgent} onSelect={onOpenAgent} />
+          <SystemCard id="letta" label="OpenClaw" accent="blue" agents={openClawAgents} selectedSystem={chat.selectedSystem} activeAgent={chat.activeAgent} onSelect={onOpenAgent} />
+          <ConnectedParticipantCard />
           <SystemCard id="hermes" label="Hermes" accent="violet" agents={hermesAgents} selectedSystem={chat.selectedSystem} activeAgent={chat.activeAgent} onSelect={onOpenAgent} />
           <SystemCard id="claude" label="Claude" accent="amber" agents={claudeAgents} selectedSystem={chat.selectedSystem} activeAgent={chat.activeAgent} onSelect={onOpenAgent} />
         </section>
@@ -101,6 +103,25 @@ export default function AppSidebar({
   );
 }
 
+function ConnectedParticipantCard() {
+  return (
+    <div className="system-card system-card--blue" data-testid="chatgpt-participant-card">
+      <div className="system-card__header" title="ChatGPT에서 연결했을 때 이 Conversation을 읽고 [ChatGPT] Lucy로 메시지를 게시할 수 있습니다.">
+        <span className="system-card__icon"><Sparkles size={16} /></span>
+        <span><strong>ChatGPT</strong><small>Connected room participant</small></span>
+        <span aria-label="외부 연결">External</span>
+      </div>
+      <div className="agent-list">
+        <div className="agent-row" title="항상 켜진 백엔드가 아닙니다. 활성 ChatGPT 세션이 MCP 연결을 통해 참여합니다.">
+          <span className="mini-avatar"><Sparkles size={13} /></span>
+          <span className="agent-row__name">{CHATGPT_LUCY_ID}</span>
+          <em>Via ChatGPT</em>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function SystemCard({ id, label, accent, agents, selectedSystem, activeAgent, onSelect }: {
   id: SystemId;
   label: string;
@@ -116,14 +137,14 @@ function SystemCard({ id, label, accent, agents, selectedSystem, activeAgent, on
     <div className={`system-card system-card--${accent} ${selectedSystem === id ? 'is-selected' : ''}`}>
       <button className="system-card__header" onClick={() => lead && onSelect(lead)} disabled={!lead}>
         <span className="system-card__icon">{id === 'letta' ? <Sparkles size={16} /> : <Bot size={17} />}</span>
-        <span><strong>{label}</strong><small>{!lead ? 'Backend not configured' : id === 'letta' ? 'Memory-first system' : id === 'claude' ? 'Independent review system' : 'Collaborative system'}</small></span>
+        <span><strong>{label}</strong><small>{!lead ? 'Backend not configured' : id === 'letta' ? 'Personal OpenClaw runtime' : id === 'claude' ? 'Independent review system' : 'Collaborative system'}</small></span>
         <ChevronDown size={15} />
       </button>
       <div className="agent-list">
         {agents.map((agent) => (
           <button key={agent.id} className={`agent-row ${selectedSystem === id && activeAgent === agent.id ? 'is-active' : ''}`} onClick={() => agent.enabled && agent.directChatEnabled && onSelect(agent)} disabled={!agent.enabled || !agent.directChatEnabled} title={`${agent.role} · ${agent.capabilities.join(', ')}`}>
-            <span className="mini-avatar">{agent.id === '[Letta] Lucy' ? <Sparkles size={13} /> : <Bot size={14} />}</span>
-            <span className="agent-row__name">{agent.displayName}</span>
+            <span className="mini-avatar">{isOpenClawLucy(agent.id) ? <Sparkles size={13} /> : <Bot size={14} />}</span>
+            <span className="agent-row__name">{displayAgentId(agent.displayName)}</span>
             {agent.systemId === 'letta' ? <em>Personal</em> : agent.isLead ? <em>Lead</em> : <span className="presence presence--active" />}
           </button>
         ))}
@@ -151,7 +172,7 @@ function ConversationGroup({ title, conversations, activeId, onSelect }: {
         >
           <span className="conversation-row__content">
             <strong>{conversation.title}</strong>
-            <small>{conversation.agentId !== '[Hermes] Lucy' && conversation.systemId === 'hermes' ? `${conversation.agentId} · ` : ''}{conversation.preview || '아직 메시지가 없습니다.'}</small>
+            <small>{conversation.agentId !== '[Hermes] Lucy' && conversation.systemId === 'hermes' ? `${displayAgentId(conversation.agentId)} · ` : ''}{conversation.preview || '아직 메시지가 없습니다.'}</small>
           </span>
           <time>{formatRelative(conversation.updatedAt)}</time>
         </button>
