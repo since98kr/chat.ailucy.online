@@ -202,4 +202,23 @@ describe('runtime security', () => {
     expect(second.statusCode).toBe(429);
     expect(second.headers['retry-after']).toBeDefined();
   });
+
+  it('rate limits the ChatGPT participant MCP without applying Chat private-session auth', async () => {
+    const app = createApp({
+      ...defaults,
+      authMode: 'token',
+      accessToken: 'correct-secret',
+      chatRateLimit: 1,
+    });
+    app.post('/mcp/chatgpt-participant', async () => ({ ok: true }));
+
+    const first = await app.inject({ method: 'POST', url: '/mcp/chatgpt-participant', payload: {} });
+    expect(first.statusCode).toBe(200);
+    expect(first.headers['x-ratelimit-limit']).toBe('1');
+
+    const second = await app.inject({ method: 'POST', url: '/mcp/chatgpt-participant', payload: {} });
+    expect(second.statusCode).toBe(429);
+    expect(second.json()).toEqual({ error: 'RATE_LIMITED' });
+    expect(second.headers['retry-after']).toBeDefined();
+  });
 });
