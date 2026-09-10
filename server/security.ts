@@ -26,6 +26,8 @@ export type SecurityConfig = {
 type RateRecord = { count: number; resetAt: number };
 
 const rateRecords = new Map<string, RateRecord>();
+const verifiedMcpCredentials = new Map<string, true>();
+const MAX_VERIFIED_MCP_CREDENTIALS = 256;
 const requestIdentities = new WeakMap<FastifyRequest, string>();
 const mutationMethods = new Set(['POST', 'PATCH', 'PUT', 'DELETE']);
 const publicApiPaths = new Set(['/api/health', '/api/auth/config', '/api/auth/login', '/api/auth/logout']);
@@ -85,6 +87,48 @@ function bearerToken(request: FastifyRequest) {
   return authorization.slice('Bearer '.length).trim();
 }
 
+function mcpBearerToken(request: FastifyRequest) {
+  const authorization = request.headers.authorization ?? '';
+  const match = /^Bearer\s+(.+)$/i.exec(authorization.trim());
+  return match?.[1]?.trim() ?? '';
+}
+
+function mcpCredentialFingerprint(token: string) {
+  return createHash('sha256').update(token, 'utf8').digest('hex');
+}
+
+function mcpRateIdentity(request: FastifyRequest) {
+  const token = mcpBearerToken(request);
+  if (!token) return 'unverified';
+  const fingerprint = mcpCredentialFingerprint(token);
+  return verifiedMcpCredentials.has(fingerprint) ? `verified:${fingerprint}` : 'unverified';
+}
+
+function rememberVerifiedMcpCredential(request: FastifyRequest) {
+  const token = mcpBearerToken(request);
+  if (!token) return;
+  const fingerprint = mcpCredentialFingerprint(token);
+  if (verifiedMcpCredentials.has(fingerprint)) verifiedMcpCredentials.delete(fingerprint);
+  verifiedMcpCredentials.set(fingerprint, true);
+  while (verifiedMcpCredentials.size > MAX_VERIFIED_MCP_CREDENTIALS) {
+    const oldest = verifiedMcpCredentials.keys().next().value as string | undefined;
+    if (!oldest) break;
+    verifiedMcpCredentials.delete(oldest);
+    rateRecords.delete(`chatgpt-mcp:verified:${oldest}`);
+  }
+}
+
+function isSuccessfulMcpToolPayload(payload: unknown) {
+  if (!payload || typeof payload !== 'object' || Array.isArray(payload)) return false;
+  const result = (payload as { result?: unknown }).result;
+  return Boolean(
+    result
+    && typeof result === 'object'
+    && !Array.isArray(result)
+    && (result as { isError?: unknown }).isError === false,
+  );
+}
+
 function cookies(request: FastifyRequest) {
   const header = request.headers.cookie ?? '';
   return new Map(
@@ -134,24 +178,20 @@ function sessionCookie(value: string, request: FastifyRequest, maxAgeSeconds?: n
 
 function rateLimitFor(request: FastifyRequest, config: SecurityConfig) {
   const pathname = request.url.split('?')[0];
-  if (pathname === chatGptParticipantMcpPath) return config.chatRateLimit;
+  if (pathname === chatGptParticipantMcpPath) {
+    return mcpRateIdentity(request).startsWith('verified:')
+      ? config.chatRateLimit
+      : config.generalRateLimit;
+  }
   if (request.url.includes('/messages/stream')) return config.chatRateLimit;
   if (request.url.includes('/artifacts') && request.method === 'POST') return config.uploadRateLimit;
   return config.generalRateLimit;
 }
 
-function mcpCredentialRateKey(request: FastifyRequest) {
-  const authorization = request.headers.authorization ?? '';
-  const match = /^Bearer\s+(.+)$/i.exec(authorization.trim());
-  const token = match?.[1]?.trim() ?? '';
-  if (!token) return `anonymous:${request.ip}`;
-  return `bearer:${createHash('sha256').update(token, 'utf8').digest('hex')}`;
-}
-
 function rateKey(request: FastifyRequest) {
   const pathname = request.url.split('?')[0];
   if (pathname === chatGptParticipantMcpPath) {
-    return `chatgpt-mcp:${mcpCredentialRateKey(request)}`;
+    return `chatgpt-mcp:${mcpRateIdentity(request)}`;
   }
   const category = request.url.includes('/messages/stream')
     ? 'chat'
@@ -292,6 +332,14 @@ export function registerRuntimeSecurity(app: FastifyInstance, config = securityC
     }
   });
 
+  app.addHook('preSerialization', async (request, _reply, payload) => {
+    const pathname = request.url.split('?')[0];
+    if (pathname === chatGptParticipantMcpPath && isSuccessfulMcpToolPayload(payload)) {
+      rememberVerifiedMcpCredential(request);
+    }
+    return payload;
+  });
+
   app.addHook('onSend', async (_request, reply, payload) => {
     reply.header('X-Content-Type-Options', 'nosniff');
     reply.header('Referrer-Policy', 'no-referrer');
@@ -310,4 +358,5 @@ export function registerRuntimeSecurity(app: FastifyInstance, config = securityC
 
 export function clearSecurityRateState() {
   rateRecords.clear();
+  verifiedMcpCredentials.clear();
 }
