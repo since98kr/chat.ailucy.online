@@ -48,16 +48,16 @@ The resource server publishes:
 GET /.well-known/oauth-protected-resource/mcp/chatgpt-participant
 ```
 
-and challenges missing/invalid bearer tokens with a `WWW-Authenticate` response that points at that metadata document.
+The MCP initialization and tool catalog contain no private room data and remain discoverable before OAuth linking so ChatGPT can learn each tool's `securitySchemes`. Every private read or write tool invocation verifies its bearer token again and returns a tool-level `mcp/www_authenticate` challenge when a token is missing, invalid, expired, or lacks the required scope.
 
-The access token must be a signed JWT accepted by the configured issuer/JWKS and must match the configured audience. Every request is verified again. A token must also contain a subject.
+The access token must be a signed JWT accepted by the configured issuer/JWKS and must match the configured audience. A token must also contain a subject.
 
 Scopes:
 
 - `chat:read` — discover rooms and read their canonical transcript.
 - `chat:write` — post one message with fixed author `[ChatGPT] Lucy`.
 
-The eventual OAuth authorization server must support the current MCP/ChatGPT OAuth flow, including the user authorization flow expected by ChatGPT. Selecting/configuring that provider is a separate runtime/security gate.
+The eventual OAuth authorization server must support the current MCP/ChatGPT OAuth flow, including OAuth metadata discovery, the authorization-code flow with PKCE, a ChatGPT-supported client registration method, and propagation of the MCP `resource` value into the issued token audience/resource claim. Selecting/configuring that provider is a separate runtime/security gate.
 
 ## Tools
 
@@ -130,7 +130,7 @@ The point is to let the current ChatGPT session use Chat as a shared conversatio
 
 Source merge alone is inert. A real round-trip requires separate explicit runtime work:
 
-1. choose/configure an OAuth 2.1 authorization server suitable for ChatGPT MCP user authorization;
+1. choose/configure an established OAuth 2.1 authorization server suitable for ChatGPT MCP user authorization;
 2. configure the resource-server values and credentials in staging without committing secrets;
 3. expose the MCP path through an approved stable HTTPS route and keep existing Chat access controls intact;
 4. connect the endpoint from ChatGPT developer/plugin settings and complete user authorization;
