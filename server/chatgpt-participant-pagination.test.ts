@@ -136,11 +136,31 @@ describe('ChatGPT participant room pagination', () => {
     expect(emptyBody.hasMore).toBe(false);
     expect(emptyBody.nextAfterMessageId).toBe(third.id);
 
+    db.db.prepare('UPDATE conversations SET status = ? WHERE id = ?').run('archived', room.id);
+    const archivedPage = await callRead(app, { conversationId: room.id, limit: 1 }, 4);
+    expect(archivedPage.statusCode).toBe(200);
+    expect(archivedPage.json().result).toMatchObject({
+      isError: false,
+      structuredContent: {
+        room: { id: room.id, status: 'archived' },
+        messages: [{ id: first.id }],
+        hasMore: true,
+      },
+    });
+
+    db.db.prepare('UPDATE conversations SET status = ? WHERE id = ?').run('trashed', room.id);
+    const trashedPage = await callRead(app, { conversationId: room.id, limit: 1 }, 5);
+    expect(trashedPage.statusCode).toBe(200);
+    expect(trashedPage.json().result).toMatchObject({
+      isError: false,
+      structuredContent: { room: { id: room.id, status: 'trashed' } },
+    });
+
     const foreignCursor = await callRead(app, {
       conversationId: room.id,
       afterMessageId: foreign.id,
       limit: 2,
-    }, 4);
+    }, 6);
     expect(foreignCursor.statusCode).toBe(200);
     expect(foreignCursor.json().result).toMatchObject({
       isError: true,
