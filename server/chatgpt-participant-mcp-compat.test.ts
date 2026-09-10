@@ -158,4 +158,48 @@ describe('ChatGPT participant MCP compatibility', () => {
 
     await closeFixture(value);
   });
+
+  it('preserves a persisted user draft when ChatGPT Lucy posts asynchronously', async () => {
+    const value = await fixture();
+    value.db.updateConversation(value.room.id, { draft: '작성 중인 Tei draft' });
+
+    const response = await value.app.inject({
+      method: 'POST',
+      url: '/mcp/chatgpt-participant',
+      headers: {
+        authorization: 'Bearer participant-token',
+        'mcp-protocol-version': '2025-06-18',
+      },
+      payload: {
+        jsonrpc: '2.0',
+        id: 6,
+        method: 'tools/call',
+        params: {
+          name: 'post_chatgpt_lucy_message',
+          arguments: {
+            conversationId: value.room.id,
+            content: 'ChatGPT Lucy 비동기 응답',
+            idempotencyKey: 'draft-preserve-0001',
+          },
+        },
+      },
+    });
+
+    expect(response.statusCode).toBe(200);
+    expect(response.json().result).toMatchObject({
+      isError: false,
+      structuredContent: {
+        participant: '[ChatGPT] Lucy',
+        created: true,
+        message: {
+          conversationId: value.room.id,
+          authorId: '[ChatGPT] Lucy',
+          content: 'ChatGPT Lucy 비동기 응답',
+        },
+      },
+    });
+    expect(value.db.getConversation(value.room.id)?.draft).toBe('작성 중인 Tei draft');
+
+    await closeFixture(value);
+  });
 });
