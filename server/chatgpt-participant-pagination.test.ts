@@ -76,6 +76,15 @@ describe('ChatGPT participant room pagination', () => {
       authorId: 'Xixi',
       content: 'foreign',
     });
+
+    // Prove the secondary rowid key is part of the cursor contract rather than
+    // accidentally relying on timestamp uniqueness.
+    const sharedTimestamp = '2026-09-11T00:00:00.000Z';
+    db.db.prepare(`
+      UPDATE messages SET created_at = ?
+      WHERE id IN (?, ?, ?)
+    `).run(sharedTimestamp, first.id, second.id, third.id);
+
     db.addArtifact({
       conversationId: room.id,
       messageId: second.id,
