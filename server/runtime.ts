@@ -1,5 +1,6 @@
 import { buildApp } from './index.js';
 import { ChatDatabase } from './database.js';
+import { registerChatGptParticipantMcp } from './chatgpt-participant-mcp.js';
 import { registerCopilotRelayMcp } from './copilot-relay-mcp.js';
 import { createOperationalRelayOidcVerifier } from './copilot-relay-oidc.js';
 import { registerTemporaryRelayHostNormalization } from './copilot-relay-quick-tunnel.js';
@@ -13,6 +14,7 @@ async function start() {
   registerTemporaryRelayHostNormalization(app);
   const relayDb = new ChatDatabase();
   registerCopilotRelayMcp(app, relayDb, { oidcVerifier: createOperationalRelayOidcVerifier() });
+  registerChatGptParticipantMcp(app, relayDb);
   app.addHook('onClose', async () => relayDb.close());
   registerOperationsRoutes(app, security);
   registerProductionWeb(app);
