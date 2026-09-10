@@ -1,4 +1,4 @@
-import { timingSafeEqual } from 'node:crypto';
+import { createHash, timingSafeEqual } from 'node:crypto';
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 import {
   createCloudflareAccessVerifier,
@@ -140,15 +140,24 @@ function rateLimitFor(request: FastifyRequest, config: SecurityConfig) {
   return config.generalRateLimit;
 }
 
+function mcpCredentialRateKey(request: FastifyRequest) {
+  const authorization = request.headers.authorization ?? '';
+  const match = /^Bearer\s+(.+)$/i.exec(authorization.trim());
+  const token = match?.[1]?.trim() ?? '';
+  if (!token) return `anonymous:${request.ip}`;
+  return `bearer:${createHash('sha256').update(token, 'utf8').digest('hex')}`;
+}
+
 function rateKey(request: FastifyRequest) {
   const pathname = request.url.split('?')[0];
-  const category = pathname === chatGptParticipantMcpPath
-    ? 'chatgpt-mcp'
-    : request.url.includes('/messages/stream')
-      ? 'chat'
-      : request.url.includes('/artifacts') && request.method === 'POST'
-        ? 'upload'
-        : 'general';
+  if (pathname === chatGptParticipantMcpPath) {
+    return `chatgpt-mcp:${mcpCredentialRateKey(request)}`;
+  }
+  const category = request.url.includes('/messages/stream')
+    ? 'chat'
+    : request.url.includes('/artifacts') && request.method === 'POST'
+      ? 'upload'
+      : 'general';
   return `${request.ip}:${category}`;
 }
 
