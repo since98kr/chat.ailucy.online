@@ -87,20 +87,11 @@ function requireHttpsUrl(value: string, name: string) {
 }
 
 function validateAuthConfig(config: ChatGptParticipantAuthConfig) {
-  const resourceUrl = requireHttpsUrl(config.resourceUrl, 'CHATGPT_PARTICIPANT_RESOURCE_URL');
-  const issuer = requireHttpsUrl(config.issuer, 'CHATGPT_PARTICIPANT_AUTH_ISSUER');
-  const jwksUrl = requireHttpsUrl(config.jwksUrl, 'CHATGPT_PARTICIPANT_AUTH_JWKS_URL');
-  const authorizationServer = requireHttpsUrl(
-    config.authorizationServer,
-    'CHATGPT_PARTICIPANT_AUTHORIZATION_SERVER',
-  );
-  return {
-    ...config,
-    resourceUrl: resourceUrl.toString(),
-    issuer: issuer.toString().replace(/\/$/, ''),
-    jwksUrl: jwksUrl.toString(),
-    authorizationServer: authorizationServer.toString().replace(/\/$/, ''),
-  };
+  requireHttpsUrl(config.resourceUrl, 'CHATGPT_PARTICIPANT_RESOURCE_URL');
+  requireHttpsUrl(config.issuer, 'CHATGPT_PARTICIPANT_AUTH_ISSUER');
+  requireHttpsUrl(config.jwksUrl, 'CHATGPT_PARTICIPANT_AUTH_JWKS_URL');
+  requireHttpsUrl(config.authorizationServer, 'CHATGPT_PARTICIPANT_AUTHORIZATION_SERVER');
+  return { ...config };
 }
 
 function scopeSet(payload: JWTPayload) {
@@ -581,10 +572,7 @@ export function registerChatGptParticipantMcp(
     if (message.id === undefined) return reply.status(202).send();
 
     if (message.method === 'initialize') {
-      const requestedVersion = message.params?.protocolVersion;
-      const protocolVersion = requestedVersion === DEFAULT_PROTOCOL_VERSION
-        ? DEFAULT_PROTOCOL_VERSION
-        : DEFAULT_PROTOCOL_VERSION;
+      const protocolVersion = DEFAULT_PROTOCOL_VERSION;
       return reply.send(jsonRpcResult(message.id, {
         protocolVersion,
         capabilities: { tools: { listChanged: false } },
