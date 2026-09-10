@@ -392,28 +392,130 @@ function listRooms(db: ChatDatabase, args: unknown) {
   }, 'Chat rooms listed.');
 }
 
+type RoomMetadataRow = {
+  id: string;
+  system_id: ReturnType<ChatDatabase['listConversations']>[number]['systemId'];
+  agent_id: string;
+  title: string;
+  preview: string;
+  status: ReturnType<ChatDatabase['listConversations']>[number]['status'];
+  pinned: number;
+  created_at: string;
+  updated_at: string;
+  last_read_message_id: string | null;
+  draft: string;
+  branched_from_conversation_id: string | null;
+  branched_from_message_id: string | null;
+};
+
+function readRoomMetadata(
+  db: ChatDatabase,
+  conversationId: string,
+): ReturnType<ChatDatabase['listConversations']>[number] | null {
+  const row = db.db.prepare(`
+    SELECT id, system_id, agent_id, title, preview, status, pinned,
+           created_at, updated_at, last_read_message_id, draft,
+           branched_from_conversation_id, branched_from_message_id
+    FROM conversations
+    WHERE id = ?
+  `).get(conversationId) as RoomMetadataRow | undefined;
+  if (!row) return null;
+  return {
+    id: row.id,
+    systemId: row.system_id,
+    agentId: row.agent_id,
+    title: row.title,
+    preview: row.preview,
+    status: row.status,
+    pinned: row.pinned === 1,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+    lastReadMessageId: row.last_read_message_id,
+    draft: row.draft,
+    branchedFromConversationId: row.branched_from_conversation_id,
+    branchedFromMessageId: row.branched_from_message_id,
+  };
+}
+
+type PagedMessageRow = {
+  id: string;
+  conversation_id: string;
+  role: 'user' | 'assistant' | 'system';
+  author_id: string;
+  content: string;
+  state: 'complete' | 'streaming' | 'failed' | 'cancelled';
+  parent_message_id: string | null;
+  created_at: string;
+  updated_at: string;
+};
+
+function mapPagedMessage(row: PagedMessageRow): NonNullable<ReturnType<ChatDatabase['getMessage']>> {
+  return {
+    id: row.id,
+    conversationId: row.conversation_id,
+    role: row.role,
+    authorId: row.author_id,
+    content: row.content,
+    state: row.state,
+    parentMessageId: row.parent_message_id,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+  };
+}
+
 function readRoom(db: ChatDatabase, args: unknown) {
   const input = readRoomSchema.parse(args ?? {});
-  const room = db.getConversation(input.conversationId);
+  const room = readRoomMetadata(db, input.conversationId);
   if (!room) return toolError('Conversation not found.', 'CONVERSATION_NOT_FOUND');
 
-  let startIndex = 0;
+  let cursor: { conversation_id: string; created_at: string; row_id: number } | undefined;
   if (input.afterMessageId) {
-    const index = room.messages.findIndex((message) => message.id === input.afterMessageId);
-    if (index < 0) {
+    cursor = db.db.prepare(`
+      SELECT conversation_id, created_at, rowid AS row_id
+      FROM messages
+      WHERE id = ?
+    `).get(input.afterMessageId) as typeof cursor;
+    if (!cursor || cursor.conversation_id !== input.conversationId) {
       return toolError(
         'afterMessageId does not belong to this Conversation.',
         'AFTER_MESSAGE_NOT_IN_CONVERSATION',
       );
     }
-    startIndex = index + 1;
   }
-  const messages = room.messages.slice(startIndex, startIndex + input.limit).map(safeMessage);
+
+  const pageSize = input.limit + 1;
+  const rows = cursor
+    ? db.db.prepare(`
+        SELECT id, conversation_id, role, author_id, content, state,
+               parent_message_id, created_at, updated_at
+        FROM messages
+        WHERE conversation_id = ?
+          AND (created_at > ? OR (created_at = ? AND rowid > ?))
+        ORDER BY created_at ASC, rowid ASC
+        LIMIT ?
+      `).all(
+        input.conversationId,
+        cursor.created_at,
+        cursor.created_at,
+        cursor.row_id,
+        pageSize,
+      ) as PagedMessageRow[]
+    : db.db.prepare(`
+        SELECT id, conversation_id, role, author_id, content, state,
+               parent_message_id, created_at, updated_at
+        FROM messages
+        WHERE conversation_id = ?
+        ORDER BY created_at ASC, rowid ASC
+        LIMIT ?
+      `).all(input.conversationId, pageSize) as PagedMessageRow[];
+
+  const hasMore = rows.length > input.limit;
+  const messages = rows.slice(0, input.limit).map(mapPagedMessage).map(safeMessage);
   return toolResult({
     participant: CHATGPT_LUCY_AUTHOR_ID,
     room: safeRoom(room),
     messages,
-    hasMore: room.messages.length > startIndex + messages.length,
+    hasMore,
     nextAfterMessageId: messages.at(-1)?.id ?? input.afterMessageId ?? null,
   }, `Read ${messages.length} room message${messages.length === 1 ? '' : 's'}.`);
 }
