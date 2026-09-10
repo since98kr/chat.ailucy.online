@@ -119,7 +119,8 @@ function createJwtVerifier(config: ChatGptParticipantAuthConfig): ChatGptPartici
 
 function bearer(request: FastifyRequest) {
   const value = request.headers.authorization ?? '';
-  return value.startsWith('Bearer ') ? value.slice(7).trim() : '';
+  const match = /^Bearer\s+(.+)$/i.exec(value.trim());
+  return match?.[1]?.trim() ?? '';
 }
 
 function requestProtocolVersion(request: FastifyRequest) {
