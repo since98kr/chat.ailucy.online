@@ -110,10 +110,10 @@
       "forbiddenBehavior": ["Expose raw tool arguments or secrets", "Present transport events as the primary conversation"],
       "backendIdentity": "progress events correlate to current run/session",
       "observableEvidence": ["runId correlation", "safe progress summary", "sanitized transcript"],
-      "sourceAuditVerdict": "PASS",
+      "sourceAuditVerdict": "PARTIAL_SANITIZATION_PENDING",
       "acceptanceVerdict": "BLOCKED_REAL_PROVIDER",
-      "currentSourceEvidence": ["src/MessageStream.tsx", "server/collaboration-runner.ts", "existing sanitized tool lifecycle tests"],
-      "primaryGap": "Fresh exact-main real-tool/browser evidence is gated by #210."
+      "currentSourceEvidence": ["server/adapters/http.ts currently accepts native status strings verbatim", "server/collaboration-runner.ts forwards adapter status as run.status", "src/MessageStream.tsx renders progress state"],
+      "primaryGap": "Native backend status text is not yet bounded/redacted before it reaches run.status/transcript, so raw arguments, paths, or credentials could be exposed; real-provider acceptance is also gated by #210."
     },
     {
       "id": "S8",
