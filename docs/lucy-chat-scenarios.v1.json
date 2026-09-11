@@ -1,10 +1,21 @@
 {
   "schemaVersion": "lucy.chat.scenario-matrix.v1",
   "issue": 199,
-  "productMode": "personal-single-user-mobile-first-1to1",
-  "baseAuditSha": "e022f0ea39e07a4181ea7ad96b5761b9f55d971b",
-  "generatedAt": "2026-08-31T00:10:00.000Z",
+  "evidenceRefreshIssue": 232,
+  "productMode": "personal-first-single-user-mobile-first",
+  "sourceBaselineSha": "698feb660d296ef60267abe76d05a6cb9d42129b",
+  "refreshedAt": "2026-09-11T05:30:00.000Z",
   "completionRule": "Behavioral proof is required; source presence or transport health alone is insufficient.",
+  "acceptanceGate": {
+    "issue": 210,
+    "classification": "AUTH/USAGE",
+    "blocked": true,
+    "reason": "Exact-main staging run 33925249889 reached browser QA after deploy, Hermes/Letta transport and OpenClaw-backed continuity passed, then Hermes provider returned HTTP 429 usage-limit. Current main keeps the provider execution gate fail-closed until separately authorized fresh usage recovery evidence exists."
+  },
+  "verdictSemantics": {
+    "sourceAuditVerdict": "Deterministic current-source contract only; PASS does not imply real-provider staging acceptance.",
+    "acceptanceVerdict": "End-to-end current-main acceptance. BLOCKED_REAL_PROVIDER means the source contract is present but the required provider-backed proof cannot be rerun under the current AUTH/USAGE gate."
+  },
   "scenarios": [
     {
       "id": "S1",
@@ -15,8 +26,10 @@
       "forbiddenBehavior": ["Default into a team/federated workflow", "Invent prior task state", "Use deterministic fake Lucy"],
       "backendIdentity": "conversationId + backendSystem + agentId + opaque sessionIdentity",
       "observableEvidence": ["created conversation identity", "real backend turn correlation", "no fabricated status fields"],
-      "sourceAuditVerdict": "FAIL",
-      "primaryGap": "Fresh UI defaults to Hermes/team-era semantics."
+      "sourceAuditVerdict": "PASS",
+      "acceptanceVerdict": "BLOCKED_REAL_PROVIDER",
+      "currentSourceEvidence": ["e2e/product-identity.spec.ts", "e2e/chat.spec.ts", "PR #230"],
+      "primaryGap": "Real-provider exact-main browser proof is gated by #210; source now defaults personal chat to [OpenClaw] Lucy."
     },
     {
       "id": "S2",
@@ -27,8 +40,10 @@
       "forbiddenBehavior": ["Reset the task", "Switch project/agent silently", "Infer a target from prose alone"],
       "backendIdentity": "continuationTarget must match conversation runtime identity",
       "observableEvidence": ["targetRef correlation", "same conversation/session identity", "bounded continuation result"],
-      "sourceAuditVerdict": "FAIL",
-      "primaryGap": "No durable continuation binding."
+      "sourceAuditVerdict": "PASS",
+      "acceptanceVerdict": "BLOCKED_REAL_PROVIDER",
+      "currentSourceEvidence": ["e2e/chat.spec.ts: personal Lucy binds 계속해 to the same persisted task", "ConversationOperatingContext persistence"],
+      "primaryGap": "Real-provider exact-main continuation reproof is gated by #210."
     },
     {
       "id": "S3",
@@ -39,8 +54,10 @@
       "forbiddenBehavior": ["Treat transient run text as verified completion", "Hide unknowns", "Fabricate runtime evidence"],
       "backendIdentity": "status evidence must belong to current conversation/session",
       "observableEvidence": ["statusTruth records", "evidenceRef for verified facts", "blocker and nextAction"],
-      "sourceAuditVerdict": "PARTIAL",
-      "primaryGap": "Transcript/runStatus exists but no durable truth contract."
+      "sourceAuditVerdict": "PASS",
+      "acceptanceVerdict": "BLOCKED_REAL_PROVIDER",
+      "currentSourceEvidence": ["e2e/chat.spec.ts: verified status and blocker recovery", "server/adapters/mock.ts statusReply contract"],
+      "primaryGap": "Real-provider exact-main status/truth proof is gated by #210."
     },
     {
       "id": "S4",
@@ -51,8 +68,10 @@
       "forbiddenBehavior": ["Stop at commentary when safe work is available", "Manufacture completion evidence"],
       "backendIdentity": "execution must use the bound real backend/session",
       "observableEvidence": ["run/tool correlation", "result or blocker", "unchanged protected authority"],
-      "sourceAuditVerdict": "PARTIAL",
-      "primaryGap": "Execution exists but is not bound to durable task continuation state."
+      "sourceAuditVerdict": "PASS",
+      "acceptanceVerdict": "BLOCKED_REAL_PROVIDER",
+      "currentSourceEvidence": ["server/collaboration-runner.ts", "ConversationOperatingContext continuation", "exact-head V2 CI"],
+      "primaryGap": "Provider-backed executable-work acceptance cannot be rerun while #210 is blocked."
     },
     {
       "id": "S5",
@@ -63,8 +82,10 @@
       "forbiddenBehavior": ["Execute before approval", "Authorize from assistant prose", "Create an approval id client-side"],
       "backendIdentity": "pending approval must match current conversation/session identity",
       "observableEvidence": ["approvalId", "kind", "summary", "expiry when supplied", "backend policy evidence"],
-      "sourceAuditVerdict": "PARTIAL",
-      "primaryGap": "Runtime policy exists but Chat has no canonical pending approval object."
+      "sourceAuditVerdict": "PASS",
+      "acceptanceVerdict": "BLOCKED_REAL_PROVIDER",
+      "currentSourceEvidence": ["server/openclaw-approval.ts", "server/openclaw-approval.test.ts", "e2e/chat.spec.ts pending-approval browser flow"],
+      "primaryGap": "Real backend-owned approval boundary still requires current exact-main provider acceptance."
     },
     {
       "id": "S6",
@@ -75,8 +96,10 @@
       "forbiddenBehavior": ["Guess which action was approved", "Reuse stale approval", "Mark approved before backend confirmation"],
       "backendIdentity": "approval candidate and current conversation/session must match exactly",
       "observableEvidence": ["one approvalId or explicit binding failure", "no protected action before backend confirmation"],
-      "sourceAuditVerdict": "FAIL",
-      "primaryGap": "No Chat-level approval correlation contract."
+      "sourceAuditVerdict": "PASS",
+      "acceptanceVerdict": "BLOCKED_REAL_PROVIDER",
+      "currentSourceEvidence": ["e2e/chat.spec.ts: fails closed on unbound 승인", "e2e/chat.spec.ts: accepts one bound pending approval", "server/openclaw-approval.test.ts"],
+      "primaryGap": "Provider-backed approval acceptance is gated by #210."
     },
     {
       "id": "S7",
@@ -87,8 +110,10 @@
       "forbiddenBehavior": ["Expose raw tool arguments or secrets", "Present transport events as the primary conversation"],
       "backendIdentity": "progress events correlate to current run/session",
       "observableEvidence": ["runId correlation", "safe progress summary", "sanitized transcript"],
-      "sourceAuditVerdict": "PARTIAL",
-      "primaryGap": "Transport-oriented progress can dominate the user experience."
+      "sourceAuditVerdict": "PASS",
+      "acceptanceVerdict": "BLOCKED_REAL_PROVIDER",
+      "currentSourceEvidence": ["src/MessageStream.tsx", "server/collaboration-runner.ts", "existing sanitized tool lifecycle tests"],
+      "primaryGap": "Fresh exact-main real-tool/browser evidence is gated by #210."
     },
     {
       "id": "S8",
@@ -99,8 +124,10 @@
       "forbiddenBehavior": ["Generic dead-end error", "Convert failure into success text", "Lose the active task"],
       "backendIdentity": "failure evidence belongs to current run/session",
       "observableEvidence": ["blockerId", "evidenceRef", "nextAction", "retry correlation when attempted"],
-      "sourceAuditVerdict": "PARTIAL",
-      "primaryGap": "Generic error/run.failed has no durable blocker + recovery state."
+      "sourceAuditVerdict": "PASS",
+      "acceptanceVerdict": "BLOCKED_REAL_PROVIDER",
+      "currentSourceEvidence": ["e2e/chat.spec.ts: failure -> 왜 안돼? -> blocker/next action -> 계속해 recovery", "ConversationOperatingContext blocker persistence"],
+      "primaryGap": "Fresh provider-backed failure/recovery acceptance is gated by #210."
     },
     {
       "id": "S9",
@@ -110,45 +137,53 @@
       "expectedLucyBehavior": ["Return the artifact", "Bind it to the task/run that produced it", "Preserve conversation continuity"],
       "forbiddenBehavior": ["Leak storage paths", "Attach another task/agent artifact"],
       "backendIdentity": "artifact/run/conversation identity must match",
-      "observableEvidence": ["artifactId", "runId", "messageId", "conversationId"],
-      "sourceAuditVerdict": "PASS_WITH_NOTE",
-      "primaryGap": "Artifact contract is mature but not yet bound to active task context."
+      "observableEvidence": ["artifactId", "messageId", "conversationId", "delivery ownership"],
+      "sourceAuditVerdict": "PASS",
+      "acceptanceVerdict": "BLOCKED_REAL_PROVIDER",
+      "currentSourceEvidence": ["server/artifact-roundtrip.test.ts", "server/artifact-envelope-roundtrip.test.ts", "server/message-retry-artifact.test.ts"],
+      "primaryGap": "Fresh real-provider generated-artifact acceptance is gated by #210."
     },
     {
       "id": "S10",
       "name": "session-continuity",
-      "initialState": "An active task may survive reload, reconnect, retry, or duplicate send.",
-      "userTurns": ["reload", "reconnect", "retry", "duplicate send"],
-      "expectedLucyBehavior": ["Restore one logical conversation", "Preserve active task and approval binding", "Avoid duplicate protected actions"],
-      "forbiddenBehavior": ["Create a second logical task silently", "Lose approval identity", "Duplicate action execution"],
+      "initialState": "An active task may survive room navigation, reload/reconnect, retry, or duplicate send.",
+      "userTurns": ["leave and return", "reload", "reconnect", "retry", "duplicate send"],
+      "expectedLucyBehavior": ["Restore one logical conversation", "Preserve active task and approval binding", "Avoid duplicate protected actions", "Do not cancel a run merely because another room is selected"],
+      "forbiddenBehavior": ["Create a second logical task silently", "Lose approval identity", "Duplicate action execution", "Abort a response on navigation"],
       "backendIdentity": "restored context must match persisted conversation/session identity",
-      "observableEvidence": ["same conversationId/sessionIdentity", "idempotency evidence", "restored operating context"],
-      "sourceAuditVerdict": "PARTIAL",
-      "primaryGap": "Conversation persists but active task/approval semantics are not explicit."
+      "observableEvidence": ["same conversationId/sessionIdentity", "idempotency evidence", "restored operating context", "room-scoped response ownership"],
+      "sourceAuditVerdict": "PASS",
+      "acceptanceVerdict": "BLOCKED_REAL_PROVIDER",
+      "currentSourceEvidence": ["PR #231 / e2e/room-stream-navigation.spec.ts", "server/message-retry.test.ts", "server/message-retry-artifact.test.ts"],
+      "primaryGap": "Fresh exact-main real-provider continuity/browser acceptance is gated by #210."
     },
     {
       "id": "S11",
       "name": "worker-agent-identity",
       "initialState": "A visible agent/system identity is presented to the user.",
-      "userTurns": ["switch/open agent conversation"],
+      "userTurns": ["switch/open agent conversation", "@OpenClaw", "@Xixi"],
       "expectedLucyBehavior": ["Visible identity corresponds to actual routing/session identity", "Isolate state between agents/systems"],
       "forbiddenBehavior": ["Cosmetic selector with unchanged backend route", "Leak another agent's task/tool/artifact state"],
-      "backendIdentity": "visible system/agent must equal current conversation runtime identity",
-      "observableEvidence": ["routing identity", "session identity", "cross-agent isolation tests"],
-      "sourceAuditVerdict": "PARTIAL",
-      "primaryGap": "Selection and continuation state can diverge."
+      "backendIdentity": "visible system/agent must equal current conversation runtime identity while legacy transport aliases remain internal only",
+      "observableEvidence": ["routing identity", "session identity", "cross-agent isolation tests", "provider target compatibility"],
+      "sourceAuditVerdict": "PASS",
+      "acceptanceVerdict": "BLOCKED_REAL_PROVIDER",
+      "currentSourceEvidence": ["PR #230", "server/openclaw-identity-migration.test.ts", "server/provider-session-identity-compat.test.ts", "server/openclaw-federation-alias.test.ts", "e2e/product-identity.spec.ts"],
+      "primaryGap": "Current exact-main live routing proof is gated by #210; source preserves legacy transport aliases without user-facing Letta identity."
     },
     {
       "id": "S12",
       "name": "memory-behavior",
-      "initialState": "UI may expose memory-related language or controls.",
-      "userTurns": ["remember/recall/delete memory requests"],
-      "expectedLucyBehavior": ["Describe only real memory capabilities", "Use the actual configured memory architecture", "Represent unavailable recall/persistence as UNKNOWN or unsupported"],
-      "forbiddenBehavior": ["Imply automatic persistence or deletion that is not real", "Create a parallel fake memory layer"],
-      "backendIdentity": "memory operation/evidence must come from the actual memory owner",
-      "observableEvidence": ["real memory backend evidence", "no fabricated persistence claim"],
-      "sourceAuditVerdict": "FAIL_PARTIAL",
-      "primaryGap": "Legacy capsule UI semantics may exceed real personal Lucy memory behavior."
+      "initialState": "UI may expose memory-related language or explicit cross-system context capsules.",
+      "userTurns": ["remember/recall/delete memory requests", "create/revoke explicit context capsule"],
+      "expectedLucyBehavior": ["Describe only real memory capabilities", "Use the actual configured memory owner", "Represent unavailable recall/persistence as UNKNOWN or unsupported", "Treat federated Memory Capsules as explicit approved context, not implicit personal-memory persistence"],
+      "forbiddenBehavior": ["Imply automatic persistence or deletion that is not real", "Create a parallel fake memory layer", "Treat a Memory Capsule as proof of native backend memory"],
+      "backendIdentity": "memory operation/evidence must come from the actual memory owner; explicit federation capsules remain separately identified",
+      "observableEvidence": ["real memory backend evidence", "explicit capsule approval/revocation state", "no fabricated persistence claim"],
+      "sourceAuditVerdict": "PASS_WITH_RUNTIME_PROOF_PENDING",
+      "acceptanceVerdict": "BLOCKED_REAL_PROVIDER",
+      "currentSourceEvidence": ["src/FederationPanel.tsx labels capsules as explicit OpenClaw ↔ Hermes context", "ConversationOperatingContext does not implement a parallel memory store", "PR #230 canonical OpenClaw identity"],
+      "primaryGap": "Native personal Lucy memory behavior itself requires current backend/runtime proof, which cannot be refreshed while #210 is blocked."
     }
   ]
 }
