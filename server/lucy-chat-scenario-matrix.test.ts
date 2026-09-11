@@ -33,27 +33,42 @@ const matrix = JSON.parse(
   readFileSync(new URL('../docs/lucy-chat-scenarios.v1.json', import.meta.url), 'utf8'),
 ) as ScenarioMatrix;
 
+function expectNonBlankString(value: unknown) {
+  expect(typeof value).toBe('string');
+  expect((value as string).trim().length).toBeGreaterThan(0);
+}
+
+function expectNonBlankStringArray(value: unknown) {
+  expect(Array.isArray(value)).toBe(true);
+  const items = value as unknown[];
+  expect(items.length).toBeGreaterThan(0);
+  for (const item of items) expectNonBlankString(item);
+}
+
 describe('Lucy Chat scenario evidence matrix', () => {
   it('keeps one complete machine-readable contract for every S1-S12 scenario', () => {
     expect(matrix.issue).toBe(199);
     expect(matrix.evidenceRefreshIssue).toBe(232);
+    expectNonBlankString(matrix.sourceBaselineSha);
     expect(matrix.sourceBaselineSha).toMatch(/^[0-9a-f]{40}$/);
+    expect(Array.isArray(matrix.scenarios)).toBe(true);
     expect(matrix.scenarios.map((scenario) => scenario.id)).toEqual(
       Array.from({ length: 12 }, (_, index) => `S${index + 1}`),
     );
 
     for (const scenario of matrix.scenarios) {
-      expect(scenario.name).not.toBe('');
-      expect(scenario.initialState).not.toBe('');
-      expect(scenario.userTurns.length).toBeGreaterThan(0);
-      expect(scenario.expectedLucyBehavior.length).toBeGreaterThan(0);
-      expect(scenario.forbiddenBehavior.length).toBeGreaterThan(0);
-      expect(scenario.backendIdentity).not.toBe('');
-      expect(scenario.observableEvidence.length).toBeGreaterThan(0);
-      expect(scenario.sourceAuditVerdict).not.toBe('');
-      expect(scenario.acceptanceVerdict).not.toBe('');
-      expect(scenario.currentSourceEvidence.length).toBeGreaterThan(0);
-      expect(scenario.primaryGap).not.toBe('');
+      expectNonBlankString(scenario.id);
+      expectNonBlankString(scenario.name);
+      expectNonBlankString(scenario.initialState);
+      expectNonBlankStringArray(scenario.userTurns);
+      expectNonBlankStringArray(scenario.expectedLucyBehavior);
+      expectNonBlankStringArray(scenario.forbiddenBehavior);
+      expectNonBlankString(scenario.backendIdentity);
+      expectNonBlankStringArray(scenario.observableEvidence);
+      expectNonBlankString(scenario.sourceAuditVerdict);
+      expectNonBlankString(scenario.acceptanceVerdict);
+      expectNonBlankStringArray(scenario.currentSourceEvidence);
+      expectNonBlankString(scenario.primaryGap);
     }
   });
 
@@ -63,6 +78,7 @@ describe('Lucy Chat scenario evidence matrix', () => {
       classification: 'AUTH/USAGE',
       blocked: true,
     });
+    expectNonBlankString(matrix.acceptanceGate.reason);
     expect(matrix.acceptanceGate.reason).toContain('429');
     expect(matrix.scenarios.every((scenario) => scenario.acceptanceVerdict === 'BLOCKED_REAL_PROVIDER')).toBe(true);
   });
