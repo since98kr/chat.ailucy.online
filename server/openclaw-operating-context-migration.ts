@@ -62,6 +62,17 @@ export function migrateLegacyPersonalLucyOperatingContexts(
   legacyAgentId: string,
   canonicalAgentId: string,
 ) {
+  // Canonical user-facing mentions should resolve through the normal short-name
+  // index without reintroducing an enabled legacy Letta agent. CollaborationService
+  // has already created/seeded the agents table before this migration runs.
+  if (tableExists(db, 'agents')) {
+    db.prepare(`
+      UPDATE agents
+      SET short_name = 'OpenClaw', updated_at = ?
+      WHERE id = ?
+    `).run(new Date().toISOString(), canonicalAgentId);
+  }
+
   const rows = db.prepare(`
     SELECT coc.conversation_id, coc.context_json
     FROM conversation_operating_context coc
