@@ -74,6 +74,8 @@ export function useChat() {
   const draftTimerRef = useRef<number | null>(null);
   const searchTimerRef = useRef<number | null>(null);
   const activeIdRef = useRef<string | null>(null);
+  const pendingSelectionRef = useRef<string | null>(null);
+  const navigationEpochRef = useRef(0);
   const suppressNextSelectionRefreshRef = useRef(false);
 
   const activeConversationId = activeConversation?.id ?? null;
@@ -97,10 +99,15 @@ export function useChat() {
     });
   }, []);
 
-  const detachVisibleConversation = useCallback((nextConversationId: string | null = null) => {
-    // Navigation changes only which Conversation is visible. It must never
-    // cancel an in-flight backend run owned by another Conversation.
-    activeIdRef.current = nextConversationId;
+  const beginNavigation = useCallback((pendingConversationId: string | null = null) => {
+    const epoch = ++navigationEpochRef.current;
+    pendingSelectionRef.current = pendingConversationId;
+    activeIdRef.current = null;
+    setActiveConversation(null);
+    setOperatingContext(null);
+    setPendingArtifactIds([]);
+    setUploads([]);
+    return epoch;
   }, []);
 
   useEffect(() => () => {
@@ -137,8 +144,10 @@ export function useChat() {
   }, [activeConversation?.id, approvingApproval, isStreaming, selectedSystem]);
 
   const applyDetail = useCallback((detail: ConversationDetail) => {
-    // Imperative navigation publishes its identity synchronously so late
-    // events from another Conversation cannot mutate this visible transcript.
+    // This is the only place that publishes a visible Conversation owner.
+    // Pending navigation keeps the owner null, so Stop/drafts/events can never
+    // target a room whose detail is not actually rendered yet.
+    pendingSelectionRef.current = null;
     activeIdRef.current = detail.id;
     setActiveConversation(detail);
     setActiveAgent(detail.agentId);
@@ -147,31 +156,35 @@ export function useChat() {
     return detail;
   }, []);
 
-  const loadConversation = useCallback(async (id: string) => {
+  const loadConversation = useCallback(async (id: string, navigationEpoch: number) => {
     const [detail, context] = await Promise.all([getConversation(id), getConversationOperatingContext(id)]);
-    if (activeIdRef.current !== id) return null;
+    if (
+      navigationEpochRef.current !== navigationEpoch
+      || pendingSelectionRef.current !== id
+    ) return null;
     setOperatingContext(context);
     return applyDetail(detail);
   }, [applyDetail]);
 
   const refreshList = useCallback(
     async (systemId: SystemId, status: ConversationStatus, preferredId?: string | null) => {
-      const list = await listConversations(systemId, status);
-      setConversations(list);
-      const selectedId =
-        (preferredId && list.some((conversation) => conversation.id === preferredId) && preferredId) ||
-        list[0]?.id;
-      if (!selectedId) {
-        detachVisibleConversation(null);
-        setActiveConversation(null);
-        setOperatingContext(null);
-        setPendingArtifactIds([]);
-        return;
+      const navigationEpoch = beginNavigation(null);
+      setLoading(true);
+      try {
+        const list = await listConversations(systemId, status);
+        if (navigationEpochRef.current !== navigationEpoch) return;
+        setConversations(list);
+        const selectedId =
+          (preferredId && list.some((conversation) => conversation.id === preferredId) && preferredId) ||
+          list[0]?.id;
+        if (!selectedId) return;
+        pendingSelectionRef.current = selectedId;
+        await loadConversation(selectedId, navigationEpoch);
+      } finally {
+        if (navigationEpochRef.current === navigationEpoch) setLoading(false);
       }
-      detachVisibleConversation(selectedId);
-      await loadConversation(selectedId);
     },
-    [detachVisibleConversation, loadConversation],
+    [beginNavigation, loadConversation],
   );
 
   useEffect(() => {
@@ -180,84 +193,72 @@ export function useChat() {
       return;
     }
     let cancelled = false;
+    const navigationEpoch = beginNavigation(null);
     setLoading(true);
     setError(null);
     setSearchResults([]);
-    // System/status navigation detaches the visible room only. Existing room
-    // streams remain owned by streamControllersRef until completion or Stop.
-    detachVisibleConversation(null);
     listConversations(selectedSystem, selectedStatus)
       .then(async (list) => {
-        if (cancelled) return;
+        if (cancelled || navigationEpochRef.current !== navigationEpoch) return;
         setConversations(list);
         const selected = list[0];
-        if (selected) {
-          detachVisibleConversation(selected.id);
-          const [detail, context] = await Promise.all([
-            getConversation(selected.id),
-            getConversationOperatingContext(selected.id),
-          ]);
-          if (!cancelled && activeIdRef.current === selected.id) {
-            setOperatingContext(context);
-            applyDetail(detail);
-          }
-        } else if (!cancelled) {
-          detachVisibleConversation(null);
-          setActiveConversation(null);
-          setOperatingContext(null);
-          setPendingArtifactIds([]);
-        }
+        if (!selected) return;
+        pendingSelectionRef.current = selected.id;
+        await loadConversation(selected.id, navigationEpoch);
       })
       .catch((reason: unknown) => {
-        if (!cancelled) setError(reason instanceof Error ? reason.message : '대화를 불러오지 못했습니다.');
+        if (!cancelled && navigationEpochRef.current === navigationEpoch) {
+          setError(reason instanceof Error ? reason.message : '대화를 불러오지 못했습니다.');
+        }
       })
       .finally(() => {
-        if (!cancelled) setLoading(false);
+        if (!cancelled && navigationEpochRef.current === navigationEpoch) setLoading(false);
       });
     return () => { cancelled = true; };
-  }, [applyDetail, detachVisibleConversation, selectedStatus, selectedSystem]);
+  }, [beginNavigation, loadConversation, selectedStatus, selectedSystem]);
 
   const switchSystem = useCallback((systemId: SystemId, agentId = defaultAgent[systemId]) => {
-    detachVisibleConversation(null);
+    if (systemId === selectedSystem && selectedStatus === 'active' && agentId === activeAgent) return;
+    beginNavigation(null);
     setSelectedStatus('active');
     setSelectedSystem(systemId);
     setActiveAgent(agentId);
-  }, [detachVisibleConversation]);
+  }, [activeAgent, beginNavigation, selectedStatus, selectedSystem]);
 
   const switchStatus = useCallback((status: ConversationStatus) => {
-    detachVisibleConversation(null);
+    if (status === selectedStatus) return;
+    beginNavigation(null);
     setSelectedStatus(status);
-  }, [detachVisibleConversation]);
+  }, [beginNavigation, selectedStatus]);
 
   const selectConversation = useCallback(async (id: string) => {
-    // Publish the target before awaiting I/O. A late stream event from the room
-    // we just left can no longer land in the newly selected room.
-    detachVisibleConversation(id);
+    const navigationEpoch = beginNavigation(id);
     setLoading(true);
     setError(null);
     try {
-      await loadConversation(id);
+      return await loadConversation(id, navigationEpoch);
     } catch (reason) {
-      if (activeIdRef.current === id) {
+      if (navigationEpochRef.current === navigationEpoch) {
         setError(reason instanceof Error ? reason.message : '대화를 불러오지 못했습니다.');
       }
+      return null;
     } finally {
-      if (activeIdRef.current === id) setLoading(false);
+      if (navigationEpochRef.current === navigationEpoch) setLoading(false);
     }
-  }, [detachVisibleConversation, loadConversation]);
+  }, [beginNavigation, loadConversation]);
 
   const createConversation = useCallback(async (agentId = activeAgent || defaultAgent[selectedSystem], title?: string) => {
-    detachVisibleConversation(null);
+    const navigationEpoch = beginNavigation(null);
     setError(null);
     setSelectedStatus('active');
     const detail = await createConversationApi({ systemId: selectedSystem, agentId, title });
+    if (navigationEpochRef.current !== navigationEpoch) return detail;
     setConversations((current) => [detail, ...current]);
-    applyDetail(detail);
-    return detail;
-  }, [activeAgent, applyDetail, detachVisibleConversation, selectedSystem]);
+    return applyDetail(detail);
+  }, [activeAgent, applyDetail, beginNavigation, selectedSystem]);
 
   const createFederatedConversation = useCallback(async () => {
-    detachVisibleConversation(null);
+    const navigationEpoch = beginNavigation(null);
     setError(null);
     if (selectedSystem !== 'hermes' || selectedStatus !== 'active') {
       suppressNextSelectionRefreshRef.current = true;
@@ -271,12 +272,13 @@ export function useChat() {
       title: '새 교차 시스템 대화',
       federated: true,
     });
+    if (navigationEpochRef.current !== navigationEpoch) return detail;
     setConversations((current) => [detail, ...current]);
     return applyDetail(detail);
-  }, [applyDetail, detachVisibleConversation, selectedStatus, selectedSystem]);
+  }, [applyDetail, beginNavigation, selectedStatus, selectedSystem]);
 
   const openAgentConversation = useCallback(async (systemId: SystemId, agentId: string) => {
-    detachVisibleConversation(null);
+    const navigationEpoch = beginNavigation(null);
     setLoading(true);
     setError(null);
     if (selectedSystem !== systemId || selectedStatus !== 'active') {
@@ -287,59 +289,69 @@ export function useChat() {
     setActiveAgent(agentId);
     try {
       const list = await listConversations(systemId, 'active');
+      if (navigationEpochRef.current !== navigationEpoch) return null;
       setConversations(list);
       const existing = list.find((conversation) => conversation.agentId === agentId);
       if (existing) {
-        detachVisibleConversation(existing.id);
-        return await loadConversation(existing.id);
+        pendingSelectionRef.current = existing.id;
+        return await loadConversation(existing.id, navigationEpoch);
       }
       const detail = await createConversationApi({
         systemId,
         agentId,
         title: agentId.includes('Lucy') ? '새 대화' : `${agentId}와 새 대화`,
       });
+      if (navigationEpochRef.current !== navigationEpoch) return detail;
       setConversations((current) => [detail, ...current]);
       return applyDetail(detail);
     } catch (reason) {
-      setError(reason instanceof Error ? reason.message : '에이전트 대화를 열지 못했습니다.');
+      if (navigationEpochRef.current === navigationEpoch) {
+        setError(reason instanceof Error ? reason.message : '에이전트 대화를 열지 못했습니다.');
+      }
       return null;
     } finally {
-      setLoading(false);
+      if (navigationEpochRef.current === navigationEpoch) setLoading(false);
     }
-  }, [applyDetail, detachVisibleConversation, loadConversation, selectedStatus, selectedSystem]);
+  }, [applyDetail, beginNavigation, loadConversation, selectedStatus, selectedSystem]);
 
   const branchConversation = useCallback(async (fromMessageId?: string | null) => {
     const sourceId = activeIdRef.current;
     if (!sourceId) return null;
-    detachVisibleConversation(null);
+    const navigationEpoch = beginNavigation(null);
     const detail = await branchConversationApi(sourceId, { fromMessageId });
+    if (navigationEpochRef.current !== navigationEpoch) return detail;
     setSelectedSystem(detail.systemId);
     setSelectedStatus('active');
     setConversations((current) => [detail, ...current.filter((item) => item.id !== detail.id)]);
     applyDetail(detail);
     return detail;
-  }, [applyDetail, detachVisibleConversation]);
+  }, [applyDetail, beginNavigation]);
 
   const patchConversation = useCallback(async (input: UpdateConversationInput) => {
-    if (!activeIdRef.current) return null;
-    const detail = await updateConversationApi(activeIdRef.current, input);
-    if (detail.status !== selectedStatus) {
-      await refreshList(selectedSystem, selectedStatus, null);
-      return detail;
-    }
-    applyDetail(detail);
+    const conversationId = activeIdRef.current;
+    if (!conversationId) return null;
+    const detail = await updateConversationApi(conversationId, input);
     setConversations((current) =>
       current
         .map((conversation) => (conversation.id === detail.id ? detail : conversation))
         .sort((a, b) => Number(b.pinned) - Number(a.pinned) || b.updatedAt.localeCompare(a.updatedAt)),
     );
+    if (activeIdRef.current !== conversationId) return detail;
+    if (detail.status !== selectedStatus) {
+      await refreshList(selectedSystem, selectedStatus, null);
+      return detail;
+    }
+    applyDetail(detail);
     return detail;
   }, [applyDetail, refreshList, selectedStatus, selectedSystem]);
 
   const deletePermanently = useCallback(async () => {
-    if (!activeIdRef.current || selectedStatus !== 'trashed') return;
-    await permanentlyDeleteConversation(activeIdRef.current);
-    await refreshList(selectedSystem, selectedStatus, null);
+    const conversationId = activeIdRef.current;
+    if (!conversationId || selectedStatus !== 'trashed') return;
+    await permanentlyDeleteConversation(conversationId);
+    if (activeIdRef.current === conversationId) {
+      await refreshList(selectedSystem, selectedStatus, null);
+    }
   }, [refreshList, selectedStatus, selectedSystem]);
 
   const saveDraft = useCallback((draft: string) => {
