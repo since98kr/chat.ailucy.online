@@ -13,6 +13,7 @@ import type {
   UpdateParticipantsInput,
 } from '../shared/contracts.js';
 import type { ChatDatabase } from './database.js';
+import { migrateLegacyPersonalLucyOperatingContexts } from './openclaw-operating-context-migration.js';
 import { widenSystemIdCheckConstraints } from './sqlite-system-id-migration.js';
 
 type AgentRow = {
@@ -301,6 +302,12 @@ export class CollaborationService {
         UPDATE conversations SET agent_id = ?
         WHERE system_id = 'letta' AND agent_id = ?
       `).run(OPENCLAW_LUCY_ID, LEGACY_LETTA_LUCY_ID);
+      migrateLegacyPersonalLucyOperatingContexts(
+        this.database,
+        this.db,
+        LEGACY_LETTA_LUCY_ID,
+        OPENCLAW_LUCY_ID,
+      );
       this.db.prepare('UPDATE messages SET author_id = ? WHERE author_id = ?')
         .run(OPENCLAW_LUCY_ID, LEGACY_LETTA_LUCY_ID);
       if (!legacy) return;
