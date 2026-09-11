@@ -48,10 +48,10 @@ function capabilityCounts(status: string) {
   };
 }
 
-test('real Letta Lucy reports its CLI model, advertises full capability, and executes a CLI tool', async () => {
+test('canonical OpenClaw Lucy reports its CLI model, advertises full capability, and executes a CLI tool', async () => {
   const protocol = (process.env.LETTA_PROTOCOL ?? '').trim().toLowerCase();
-  test.skip(protocol === 'openclaw', 'Legacy direct Letta CLI/HMAC proof is not a release gate in OpenClaw mode.');
-  test.skip(!enabled('CHAT_LETTA_FULL_RUNTIME_QA_REQUIRED'), 'Full Letta CLI runtime QA is not activated.');
+  test.skip(protocol === 'openclaw', 'Legacy direct CLI/HMAC proof is not a release gate in OpenClaw protocol mode.');
+  test.skip(!enabled('CHAT_LETTA_FULL_RUNTIME_QA_REQUIRED'), 'Full personal Lucy CLI runtime QA is not activated.');
   test.setTimeout(300_000);
 
   const baseURL = process.env.CHAT_STAGING_BASE_URL?.trim() || 'http://127.0.0.1:14174';
@@ -65,7 +65,7 @@ test('real Letta Lucy reports its CLI model, advertises full capability, and exe
     const created = await api.post('/api/conversations', {
       data: {
         systemId: 'letta',
-        agentId: '[Letta] Lucy',
+        agentId: '[OpenClaw] Lucy',
         title: `${QA_TITLE_PREFIX}${Date.now()}`,
       },
     });
