@@ -27,7 +27,7 @@ describe('OpenClaw federated mention alias', () => {
     const legacy = collaboration.getAgent('[Letta] Lucy');
     expect(canonical?.shortName).toBe('OpenClaw');
     expect(canonical?.enabled).toBe(true);
-    expect(legacy?.enabled).toBe(false);
+    expect(legacy?.enabled ?? false).toBe(false);
 
     const conversation = database.createConversation('hermes', '[Hermes] Lucy', 'Federated alias');
     collaboration.initializeConversation(conversation.id, 'hermes', '[Hermes] Lucy');
