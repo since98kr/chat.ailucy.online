@@ -12,10 +12,9 @@ function functionBody(name: string, nextName: string) {
 }
 
 describe('room-scoped chat execution contract', () => {
-  it('does not tie navigation to AbortController lifetime', () => {
+  it('does not tie room navigation to response cancellation', () => {
     expect(source).not.toContain('cancelActiveStreamForNavigation');
-    expect(source).toContain('runControllersRef = useRef<Map<string, AbortController>>(new Map())');
-    expect(source).not.toContain('abortRef.current?.abort()');
+    expect(source).toContain('streamControllersRef = useRef<Map<string, AbortController>>(new Map())');
 
     const navigationBodies = [
       functionBody('switchSystem', 'switchStatus'),
@@ -29,19 +28,35 @@ describe('room-scoped chat execution contract', () => {
     for (const body of navigationBodies) expect(body).not.toContain('.abort()');
   });
 
-  it('binds stream events and cancellation to the owning Conversation', () => {
-    expect(source).toContain('runControllersRef.current.set(conversation.id, controller)');
-    expect(source).toContain('handleStreamEventForConversation(conversation.id, event)');
-    expect(source).toContain('activeIdRef.current === conversationId');
-
-    const stopBody = functionBody('stopStreaming', 'uploadFiles');
-    expect(stopBody).toContain('runControllersRef.current.get(conversationId)');
-    expect(stopBody).toContain('controller.abort()');
-    expect(stopBody).toContain('runControllersRef.current.delete(conversationId)');
+  it('publishes a visible action owner only after the matching room load wins', () => {
+    expect(source).toContain('pendingSelectionRef = useRef<string | null>(null)');
+    expect(source).toContain('navigationEpochRef = useRef(0)');
+    expect(source).toContain('activeIdRef.current = null');
+    expect(source).toContain('navigationEpochRef.current !== navigationEpoch');
+    expect(source).toContain('pendingSelectionRef.current !== id');
+    expect(source).toContain('activeIdRef.current = detail.id');
   });
 
-  it('derives busy/status state from the visible Conversation only', () => {
+  it('keeps same-status selection a no-op instead of detaching the visible owner', () => {
+    const body = functionBody('switchStatus', 'selectConversation');
+    expect(body).toContain('if (status === selectedStatus) return');
+    expect(body).toContain('beginNavigation(null)');
+  });
+
+  it('binds streams and explicit Stop to the owning Conversation only', () => {
+    expect(source).toContain('streamControllersRef.current.set(conversation.id, controller)');
+    expect(source).toContain('handleStreamEvent(conversation.id, event)');
+    expect(source).toContain('current?.id === conversationId');
+
+    const stopBody = functionBody('stopStreaming', 'uploadFiles');
+    expect(stopBody).toContain('streamControllersRef.current.get(conversationId)?.abort()');
+    expect(stopBody).not.toContain('beginNavigation');
+  });
+
+  it('derives busy/status/transcript state from the visible Conversation only', () => {
     expect(source).toContain('streamingConversationIds.has(activeConversationId)');
     expect(source).toContain('runStatusByConversation[activeConversationId]');
+    expect(source).toContain('transcriptsByConversation[activeConversationId]');
+    expect(source).toContain('artifactDeliveriesByConversation[activeConversationId]');
   });
 });
