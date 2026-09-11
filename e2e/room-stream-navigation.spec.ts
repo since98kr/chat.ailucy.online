@@ -84,10 +84,10 @@ test('a slow stale room load never owns visible actions or overwrites the newer 
   await page.locator(`[data-conversation-id="${roomB}"]`).click();
   await roomBRequested;
 
-  // Until B's detail is actually available, no stale room may remain the
-  // action owner and the pending B target must not pretend to be rendered.
-  await expect(page.locator(`[data-conversation-id="${roomA}"]`)).not.toHaveClass(/is-active/);
-  await expect(page.locator(`[data-conversation-id="${roomB}"]`)).not.toHaveClass(/is-active/);
+  // Until B's detail is actually available there is no visible Conversation
+  // owner. The list itself may be temporarily empty while navigation is pending,
+  // so assert the ownership contract rather than requiring stale rows to exist.
+  await expect(page.locator('.conversation-row.is-active')).toHaveCount(0);
   await expect(page.getByRole('button', { name: '응답 중단' })).toHaveCount(0);
 
   await page.locator(`[data-conversation-id="${roomC}"]`).click();
