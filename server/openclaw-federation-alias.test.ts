@@ -6,7 +6,7 @@ import { ChatDatabase } from './database.js';
 import { CollaborationService } from './collaboration.js';
 import { resolveFederatedAgents } from './federated-runner.js';
 
-describe('OpenClaw federated mention aliases', () => {
+describe('OpenClaw federated mention alias', () => {
   let directory: string;
   let database: ChatDatabase;
   let collaboration: CollaborationService;
@@ -22,14 +22,18 @@ describe('OpenClaw federated mention aliases', () => {
     rmSync(directory, { recursive: true, force: true });
   });
 
-  it('routes @OpenClaw and the legacy @Letta alias to canonical OpenClaw Lucy', () => {
-    const conversation = database.createConversation('hermes', '[Hermes] Lucy', 'Federated aliases');
-    collaboration.initializeConversation(conversation.id, 'hermes', '[Hermes] Lucy');
+  it('routes @OpenClaw to canonical OpenClaw Lucy without enabling legacy Letta', () => {
+    const canonical = collaboration.getAgent('[OpenClaw] Lucy');
+    const legacy = collaboration.getAgent('[Letta] Lucy');
+    expect(canonical?.shortName).toBe('OpenClaw');
+    expect(canonical?.enabled).toBe(true);
+    expect(legacy?.enabled).toBe(false);
 
-    for (const mention of ['@OpenClaw', '@OpenClawLucy', '@Letta', '@LettaLucy']) {
-      const resolved = resolveFederatedAgents(collaboration, conversation, `${mention} 검토해줘`, []);
-      expect(resolved.requestedAgents.map((agent) => agent.id)).toContain('[OpenClaw] Lucy');
-      expect(resolved.rejected).toEqual([]);
-    }
+    const conversation = database.createConversation('hermes', '[Hermes] Lucy', 'Federated alias');
+    collaboration.initializeConversation(conversation.id, 'hermes', '[Hermes] Lucy');
+    const resolved = resolveFederatedAgents(collaboration, conversation, '@OpenClaw 검토해줘', []);
+
+    expect(resolved.requestedAgents.map((agent) => agent.id)).toContain('[OpenClaw] Lucy');
+    expect(resolved.rejected).toEqual([]);
   });
 });
