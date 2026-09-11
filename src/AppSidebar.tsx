@@ -1,7 +1,7 @@
 import { Archive, Bot, ChevronDown, GitMerge, LoaderCircle, Plus, Search, Settings, Sparkles, Trash2, X } from 'lucide-react';
 import type { AgentRecord, ConversationRecord, ConversationStatus, SystemId } from '../shared/contracts';
 import type { useChat } from './useChat';
-import { CHATGPT_LUCY_ID, displayAgentId, isOpenClawLucy } from './identity';
+import { CHATGPT_LUCY_ID, LEGACY_LETTA_LUCY_ID, displayAgentId, isOpenClawLucy } from './identity';
 
 type ChatController = ReturnType<typeof useChat>;
 
@@ -27,7 +27,7 @@ export default function AppSidebar({
   const conversations = search.trim()
     ? chat.searchResults.map((result) => ({ ...result.conversation, preview: result.snippet }))
     : chat.conversations;
-  const openClawAgents = agents.filter((agent) => agent.systemId === 'letta');
+  const openClawAgents = agents.filter((agent) => agent.systemId === 'letta' && agent.id !== LEGACY_LETTA_LUCY_ID);
   const hermesAgents = agents.filter((agent) => agent.systemId === 'hermes');
   const claudeAgents = agents.filter((agent) => agent.systemId === 'claude');
 
@@ -106,16 +106,16 @@ export default function AppSidebar({
 function ConnectedParticipantCard() {
   return (
     <div className="system-card system-card--blue" data-testid="chatgpt-participant-card">
-      <div className="system-card__header" title="ChatGPT에서 연결했을 때 이 Conversation을 읽고 [ChatGPT] Lucy로 메시지를 게시할 수 있습니다.">
+      <div className="system-card__header" title="ChatGPT 세션이 MCP로 연결된 경우 이 Conversation을 읽고 [ChatGPT] Lucy로 메시지를 게시할 수 있습니다.">
         <span className="system-card__icon"><Sparkles size={16} /></span>
-        <span><strong>ChatGPT</strong><small>Connected room participant</small></span>
-        <span aria-label="외부 연결">External</span>
+        <span><strong>ChatGPT</strong><small>Available via ChatGPT connection</small></span>
+        <span aria-label="외부 연결 기능">External</span>
       </div>
       <div className="agent-list">
-        <div className="agent-row" title="항상 켜진 백엔드가 아닙니다. 활성 ChatGPT 세션이 MCP 연결을 통해 참여합니다.">
+        <div className="agent-row" title="항상 켜진 백엔드나 현재 온라인 상태를 뜻하지 않습니다. 실제 활성 ChatGPT 세션이 MCP로 연결된 경우에만 참여합니다.">
           <span className="mini-avatar"><Sparkles size={13} /></span>
           <span className="agent-row__name">{CHATGPT_LUCY_ID}</span>
-          <em>Via ChatGPT</em>
+          <em>Connect via ChatGPT</em>
         </div>
       </div>
     </div>
