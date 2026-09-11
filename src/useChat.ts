@@ -63,37 +63,59 @@ export function useChat() {
   const [searching, setSearching] = useState(false);
   const [uploads, setUploads] = useState<UploadProgressRecord[]>([]);
   const [pendingArtifactIds, setPendingArtifactIds] = useState<string[]>([]);
-  const [artifactDeliveries, setArtifactDeliveries] = useState<ArtifactDeliveryRecord[]>([]);
-  const [transcripts, setTranscripts] = useState<TranscriptState>(emptyTranscriptState);
+  const [artifactDeliveriesByConversation, setArtifactDeliveriesByConversation] = useState<Record<string, ArtifactDeliveryRecord[]>>({});
+  const [transcriptsByConversation, setTranscriptsByConversation] = useState<Record<string, TranscriptState>>({});
+  const [runStatusByConversation, setRunStatusByConversation] = useState<Record<string, string | null>>({});
+  const [streamingConversationIds, setStreamingConversationIds] = useState<Set<string>>(() => new Set());
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const [runStatus, setRunStatus] = useState<string | null>(null);
-  const [isStreaming, setIsStreaming] = useState(false);
   const [approvingApproval, setApprovingApproval] = useState(false);
-  const abortRef = useRef<AbortController | null>(null);
+  const streamControllersRef = useRef<Map<string, AbortController>>(new Map());
   const draftTimerRef = useRef<number | null>(null);
   const searchTimerRef = useRef<number | null>(null);
   const activeIdRef = useRef<string | null>(null);
+  const pendingSelectionRef = useRef<string | null>(null);
+  const navigationEpochRef = useRef(0);
   const suppressNextSelectionRefreshRef = useRef(false);
 
-  const cancelActiveStreamForNavigation = useCallback(() => {
-    const controller = abortRef.current;
-    if (!controller) return;
-    controller.abort();
-    abortRef.current = null;
-    setIsStreaming(false);
-    setRunStatus(null);
+  const activeConversationId = activeConversation?.id ?? null;
+  const artifactDeliveries = activeConversationId
+    ? artifactDeliveriesByConversation[activeConversationId] ?? []
+    : [];
+  const transcripts = activeConversationId
+    ? transcriptsByConversation[activeConversationId] ?? emptyTranscriptState
+    : emptyTranscriptState;
+  const runStatus = activeConversationId
+    ? runStatusByConversation[activeConversationId] ?? null
+    : null;
+  const isStreaming = activeConversationId
+    ? streamingConversationIds.has(activeConversationId)
+    : false;
+
+  const setConversationRunStatus = useCallback((conversationId: string, status: string | null) => {
+    setRunStatusByConversation((current) => {
+      if ((current[conversationId] ?? null) === status) return current;
+      return { ...current, [conversationId]: status };
+    });
   }, []);
 
-  useEffect(() => {
-    activeIdRef.current = activeConversation?.id ?? null;
-  }, [activeConversation?.id]);
+  const beginNavigation = useCallback((pendingConversationId: string | null = null) => {
+    const epoch = ++navigationEpochRef.current;
+    pendingSelectionRef.current = pendingConversationId;
+    activeIdRef.current = null;
+    setActiveConversation(null);
+    setOperatingContext(null);
+    setPendingArtifactIds([]);
+    setUploads([]);
+    return epoch;
+  }, []);
 
-  // Run transcripts belong to a single conversation. `applyDetail` also runs
-  // after every send (via refreshList), so the reset is keyed on the id itself.
-  useEffect(() => {
-    setTranscripts(emptyTranscriptState);
-  }, [activeConversation?.id]);
+  useEffect(() => () => {
+    // Component teardown/page exit is not room navigation. Abort remaining
+    // fetches to avoid leaking client work after the Chat UI itself is gone.
+    for (const controller of streamControllersRef.current.values()) controller.abort();
+    streamControllersRef.current.clear();
+  }, []);
 
   useEffect(() => {
     const conversationId = activeConversation?.id;
@@ -105,7 +127,7 @@ export function useChat() {
       refreshing = true;
       try {
         const context = await getConversationOperatingContext(conversationId);
-        if (!cancelled) setOperatingContext(context);
+        if (!cancelled && activeIdRef.current === conversationId) setOperatingContext(context);
       } catch {
         // The active response stream remains authoritative. Poll failures do not
         // fabricate an approval or interrupt safe model output.
@@ -122,40 +144,47 @@ export function useChat() {
   }, [activeConversation?.id, approvingApproval, isStreaming, selectedSystem]);
 
   const applyDetail = useCallback((detail: ConversationDetail) => {
-    // Imperative navigation must publish its identity synchronously so a
-    // selection refresh cannot race it and restore an older Conversation.
+    // This is the only place that publishes a visible Conversation owner.
+    // Pending navigation keeps the owner null, so Stop/drafts/events can never
+    // target a room whose detail is not actually rendered yet.
+    pendingSelectionRef.current = null;
     activeIdRef.current = detail.id;
     setActiveConversation(detail);
     setActiveAgent(detail.agentId);
     setPendingArtifactIds(detail.artifacts.filter((artifact) => !artifact.messageId).map((artifact) => artifact.id));
-    setArtifactDeliveries([]);
     setUploads([]);
     return detail;
   }, []);
 
-  const loadConversation = useCallback(async (id: string) => {
+  const loadConversation = useCallback(async (id: string, navigationEpoch: number) => {
     const [detail, context] = await Promise.all([getConversation(id), getConversationOperatingContext(id)]);
+    if (
+      navigationEpochRef.current !== navigationEpoch
+      || pendingSelectionRef.current !== id
+    ) return null;
     setOperatingContext(context);
     return applyDetail(detail);
   }, [applyDetail]);
 
   const refreshList = useCallback(
     async (systemId: SystemId, status: ConversationStatus, preferredId?: string | null) => {
-      const list = await listConversations(systemId, status);
-      setConversations(list);
-      const selectedId =
-        (preferredId && list.some((conversation) => conversation.id === preferredId) && preferredId) ||
-        list[0]?.id;
-      if (!selectedId) {
-        setActiveConversation(null);
-        setOperatingContext(null);
-        setPendingArtifactIds([]);
-        setArtifactDeliveries([]);
-        return;
+      const navigationEpoch = beginNavigation(null);
+      setLoading(true);
+      try {
+        const list = await listConversations(systemId, status);
+        if (navigationEpochRef.current !== navigationEpoch) return;
+        setConversations(list);
+        const selectedId =
+          (preferredId && list.some((conversation) => conversation.id === preferredId) && preferredId) ||
+          list[0]?.id;
+        if (!selectedId) return;
+        pendingSelectionRef.current = selectedId;
+        await loadConversation(selectedId, navigationEpoch);
+      } finally {
+        if (navigationEpochRef.current === navigationEpoch) setLoading(false);
       }
-      await loadConversation(selectedId);
     },
-    [loadConversation],
+    [beginNavigation, loadConversation],
   );
 
   useEffect(() => {
@@ -164,78 +193,72 @@ export function useChat() {
       return;
     }
     let cancelled = false;
+    const navigationEpoch = beginNavigation(null);
     setLoading(true);
     setError(null);
     setSearchResults([]);
-    abortRef.current?.abort();
     listConversations(selectedSystem, selectedStatus)
       .then(async (list) => {
-        if (cancelled) return;
+        if (cancelled || navigationEpochRef.current !== navigationEpoch) return;
         setConversations(list);
-        const preferred = activeIdRef.current;
-        const selected = list.find((conversation) => conversation.id === preferred) ?? list[0];
-        if (selected) {
-          const [detail, context] = await Promise.all([
-            getConversation(selected.id),
-            getConversationOperatingContext(selected.id),
-          ]);
-          if (!cancelled) {
-            setOperatingContext(context);
-            applyDetail(detail);
-          }
-        } else if (!cancelled) {
-          setActiveConversation(null);
-          setOperatingContext(null);
-          setPendingArtifactIds([]);
-          setArtifactDeliveries([]);
-        }
+        const selected = list[0];
+        if (!selected) return;
+        pendingSelectionRef.current = selected.id;
+        await loadConversation(selected.id, navigationEpoch);
       })
       .catch((reason: unknown) => {
-        if (!cancelled) setError(reason instanceof Error ? reason.message : '대화를 불러오지 못했습니다.');
+        if (!cancelled && navigationEpochRef.current === navigationEpoch) {
+          setError(reason instanceof Error ? reason.message : '대화를 불러오지 못했습니다.');
+        }
       })
       .finally(() => {
-        if (!cancelled) setLoading(false);
+        if (!cancelled && navigationEpochRef.current === navigationEpoch) setLoading(false);
       });
     return () => { cancelled = true; };
-  }, [applyDetail, selectedStatus, selectedSystem]);
+  }, [beginNavigation, loadConversation, selectedStatus, selectedSystem]);
 
   const switchSystem = useCallback((systemId: SystemId, agentId = defaultAgent[systemId]) => {
-    cancelActiveStreamForNavigation();
+    if (systemId === selectedSystem && selectedStatus === 'active' && agentId === activeAgent) return;
+    beginNavigation(null);
     setSelectedStatus('active');
     setSelectedSystem(systemId);
     setActiveAgent(agentId);
-  }, [cancelActiveStreamForNavigation]);
+  }, [activeAgent, beginNavigation, selectedStatus, selectedSystem]);
 
   const switchStatus = useCallback((status: ConversationStatus) => {
-    cancelActiveStreamForNavigation();
+    if (status === selectedStatus) return;
+    beginNavigation(null);
     setSelectedStatus(status);
-  }, [cancelActiveStreamForNavigation]);
+  }, [beginNavigation, selectedStatus]);
 
   const selectConversation = useCallback(async (id: string) => {
-    cancelActiveStreamForNavigation();
+    const navigationEpoch = beginNavigation(id);
     setLoading(true);
     setError(null);
     try {
-      await loadConversation(id);
+      return await loadConversation(id, navigationEpoch);
     } catch (reason) {
-      setError(reason instanceof Error ? reason.message : '대화를 불러오지 못했습니다.');
+      if (navigationEpochRef.current === navigationEpoch) {
+        setError(reason instanceof Error ? reason.message : '대화를 불러오지 못했습니다.');
+      }
+      return null;
     } finally {
-      setLoading(false);
+      if (navigationEpochRef.current === navigationEpoch) setLoading(false);
     }
-  }, [cancelActiveStreamForNavigation, loadConversation]);
+  }, [beginNavigation, loadConversation]);
 
   const createConversation = useCallback(async (agentId = activeAgent || defaultAgent[selectedSystem], title?: string) => {
-    cancelActiveStreamForNavigation();
+    const navigationEpoch = beginNavigation(null);
     setError(null);
     setSelectedStatus('active');
     const detail = await createConversationApi({ systemId: selectedSystem, agentId, title });
+    if (navigationEpochRef.current !== navigationEpoch) return detail;
     setConversations((current) => [detail, ...current]);
-    applyDetail(detail);
-    return detail;
-  }, [activeAgent, applyDetail, cancelActiveStreamForNavigation, selectedSystem]);
+    return applyDetail(detail);
+  }, [activeAgent, applyDetail, beginNavigation, selectedSystem]);
 
   const createFederatedConversation = useCallback(async () => {
-    cancelActiveStreamForNavigation();
+    const navigationEpoch = beginNavigation(null);
     setError(null);
     if (selectedSystem !== 'hermes' || selectedStatus !== 'active') {
       suppressNextSelectionRefreshRef.current = true;
@@ -249,12 +272,13 @@ export function useChat() {
       title: '새 교차 시스템 대화',
       federated: true,
     });
+    if (navigationEpochRef.current !== navigationEpoch) return detail;
     setConversations((current) => [detail, ...current]);
     return applyDetail(detail);
-  }, [applyDetail, cancelActiveStreamForNavigation, selectedStatus, selectedSystem]);
+  }, [applyDetail, beginNavigation, selectedStatus, selectedSystem]);
 
   const openAgentConversation = useCallback(async (systemId: SystemId, agentId: string) => {
-    cancelActiveStreamForNavigation();
+    const navigationEpoch = beginNavigation(null);
     setLoading(true);
     setError(null);
     if (selectedSystem !== systemId || selectedStatus !== 'active') {
@@ -265,56 +289,69 @@ export function useChat() {
     setActiveAgent(agentId);
     try {
       const list = await listConversations(systemId, 'active');
+      if (navigationEpochRef.current !== navigationEpoch) return null;
       setConversations(list);
       const existing = list.find((conversation) => conversation.agentId === agentId);
-      if (existing) return await loadConversation(existing.id);
+      if (existing) {
+        pendingSelectionRef.current = existing.id;
+        return await loadConversation(existing.id, navigationEpoch);
+      }
       const detail = await createConversationApi({
         systemId,
         agentId,
         title: agentId.includes('Lucy') ? '새 대화' : `${agentId}와 새 대화`,
       });
+      if (navigationEpochRef.current !== navigationEpoch) return detail;
       setConversations((current) => [detail, ...current]);
       return applyDetail(detail);
     } catch (reason) {
-      setError(reason instanceof Error ? reason.message : '에이전트 대화를 열지 못했습니다.');
+      if (navigationEpochRef.current === navigationEpoch) {
+        setError(reason instanceof Error ? reason.message : '에이전트 대화를 열지 못했습니다.');
+      }
       return null;
     } finally {
-      setLoading(false);
+      if (navigationEpochRef.current === navigationEpoch) setLoading(false);
     }
-  }, [applyDetail, cancelActiveStreamForNavigation, loadConversation, selectedStatus, selectedSystem]);
+  }, [applyDetail, beginNavigation, loadConversation, selectedStatus, selectedSystem]);
 
   const branchConversation = useCallback(async (fromMessageId?: string | null) => {
     const sourceId = activeIdRef.current;
     if (!sourceId) return null;
-    cancelActiveStreamForNavigation();
+    const navigationEpoch = beginNavigation(null);
     const detail = await branchConversationApi(sourceId, { fromMessageId });
+    if (navigationEpochRef.current !== navigationEpoch) return detail;
     setSelectedSystem(detail.systemId);
     setSelectedStatus('active');
     setConversations((current) => [detail, ...current.filter((item) => item.id !== detail.id)]);
     applyDetail(detail);
     return detail;
-  }, [applyDetail, cancelActiveStreamForNavigation]);
+  }, [applyDetail, beginNavigation]);
 
   const patchConversation = useCallback(async (input: UpdateConversationInput) => {
-    if (!activeIdRef.current) return null;
-    const detail = await updateConversationApi(activeIdRef.current, input);
-    if (detail.status !== selectedStatus) {
-      await refreshList(selectedSystem, selectedStatus, null);
-      return detail;
-    }
-    applyDetail(detail);
+    const conversationId = activeIdRef.current;
+    if (!conversationId) return null;
+    const detail = await updateConversationApi(conversationId, input);
     setConversations((current) =>
       current
         .map((conversation) => (conversation.id === detail.id ? detail : conversation))
         .sort((a, b) => Number(b.pinned) - Number(a.pinned) || b.updatedAt.localeCompare(a.updatedAt)),
     );
+    if (activeIdRef.current !== conversationId) return detail;
+    if (detail.status !== selectedStatus) {
+      await refreshList(selectedSystem, selectedStatus, null);
+      return detail;
+    }
+    applyDetail(detail);
     return detail;
   }, [applyDetail, refreshList, selectedStatus, selectedSystem]);
 
   const deletePermanently = useCallback(async () => {
-    if (!activeIdRef.current || selectedStatus !== 'trashed') return;
-    await permanentlyDeleteConversation(activeIdRef.current);
-    await refreshList(selectedSystem, selectedStatus, null);
+    const conversationId = activeIdRef.current;
+    if (!conversationId || selectedStatus !== 'trashed') return;
+    await permanentlyDeleteConversation(conversationId);
+    if (activeIdRef.current === conversationId) {
+      await refreshList(selectedSystem, selectedStatus, null);
+    }
   }, [refreshList, selectedStatus, selectedSystem]);
 
   const saveDraft = useCallback((draft: string) => {
@@ -344,10 +381,12 @@ export function useChat() {
     }, 220);
   }, [selectedStatus, selectedSystem]);
 
-  const handleStreamEvent = useCallback((event: StreamEvent) => {
-    // Keep a durable per-run execution history. `runStatus` below is a single
-    // transient line that is cleared when the stream ends.
-    setTranscripts((current) => reduceTranscript(current, event));
+  const handleStreamEvent = useCallback((conversationId: string, event: StreamEvent) => {
+    setTranscriptsByConversation((current) => ({
+      ...current,
+      [conversationId]: reduceTranscript(current[conversationId] ?? emptyTranscriptState, event),
+    }));
+
     if (
       event.type === 'routing.resolved' ||
       event.type === 'participants.updated' ||
@@ -358,57 +397,67 @@ export function useChat() {
       event.type === 'memory.capsule' ||
       event.type === 'workflow.replayed'
     ) {
-      emitCollaborationEvent(event);
+      // The collaboration event bus is scoped to the visible Conversation. An
+      // inactive room continues server-side, then reloads its persisted state
+      // when selected again instead of mutating another room's panels.
+      if (activeIdRef.current === conversationId) emitCollaborationEvent(event);
       if (event.type === 'workflow.run') {
         const statusLabel = event.run.status === 'running' ? '교차 시스템 워크플로 실행 중'
           : event.run.status === 'paused' ? '워크플로가 중단되어 재개할 수 있습니다.'
             : event.run.status === 'completed' ? '교차 시스템 워크플로 완료' : null;
-        setRunStatus(statusLabel);
+        setConversationRunStatus(conversationId, statusLabel);
       } else if (event.type === 'workflow.step' && event.step.status === 'running') {
-        setRunStatus(`${event.step.agentId} · ${event.step.systemId} 실행 중`);
+        setConversationRunStatus(conversationId, `${event.step.agentId} · ${event.step.systemId} 실행 중`);
       } else if (event.type === 'workflow.replayed') {
-        setRunStatus(`기존 워크플로 재사용 · 이벤트 ${event.eventCount}개`);
+        setConversationRunStatus(conversationId, `기존 워크플로 재사용 · 이벤트 ${event.eventCount}개`);
       }
       return;
     }
     if (event.type === 'message.accepted' || event.type === 'message.created') {
       setActiveConversation((current) =>
-        current ? { ...current, messages: upsertMessage(current.messages, event.message) } : current,
+        current?.id === conversationId
+          ? { ...current, messages: upsertMessage(current.messages, event.message) }
+          : current,
       );
       return;
     }
     if (event.type === 'artifacts.attached') {
       const attached = new Map(event.artifacts.map((artifact) => [artifact.id, artifact]));
-      setPendingArtifactIds((current) => current.filter((id) => !attached.has(id)));
-      setActiveConversation((current) => current ? {
+      if (activeIdRef.current === conversationId) {
+        setPendingArtifactIds((current) => current.filter((id) => !attached.has(id)));
+      }
+      setActiveConversation((current) => current?.id === conversationId ? {
         ...current,
         artifacts: current.artifacts.map((artifact) => attached.get(artifact.id) ?? artifact),
       } : current);
       return;
     }
     if (event.type === 'artifacts.delivery') {
-      setArtifactDeliveries((current) => upsertArtifactDelivery(current, event.delivery));
+      setArtifactDeliveriesByConversation((current) => ({
+        ...current,
+        [conversationId]: upsertArtifactDelivery(current[conversationId] ?? [], event.delivery),
+      }));
       return;
     }
     if (event.type === 'run.started') {
-      setRunStatus(event.agentId ? `${event.agentId} 응답 준비 중` : '응답을 준비하는 중');
+      setConversationRunStatus(conversationId, event.agentId ? `${event.agentId} 응답 준비 중` : '응답을 준비하는 중');
       return;
     }
     if (event.type === 'run.status') {
-      setRunStatus(event.agentId ? `${event.agentId} · ${event.status}` : event.status);
+      setConversationRunStatus(conversationId, event.agentId ? `${event.agentId} · ${event.status}` : event.status);
       return;
     }
     if (event.type === 'content.delta') {
-      setRunStatus(event.authorId ? `${event.authorId} 응답 작성 중` : '응답 작성 중');
+      setConversationRunStatus(conversationId, event.authorId ? `${event.authorId} 응답 작성 중` : '응답 작성 중');
       setActiveConversation((current) => {
-        if (!current) return current;
+        if (!current || current.id !== conversationId) return current;
         const existing = current.messages.find((message) => message.id === event.messageId);
         const updatedAt = new Date().toISOString();
         const next: MessageRecord = existing
           ? { ...existing, content: existing.content + event.delta, state: 'streaming', updatedAt }
           : {
               id: event.messageId,
-              conversationId: current.id,
+              conversationId,
               role: 'assistant',
               authorId: event.authorId ?? current.agentId,
               content: event.delta,
@@ -423,21 +472,32 @@ export function useChat() {
     }
     if (event.type === 'run.completed') {
       setActiveConversation((current) =>
-        current ? { ...current, messages: upsertMessage(current.messages, event.message) } : current,
+        current?.id === conversationId
+          ? { ...current, messages: upsertMessage(current.messages, event.message) }
+          : current,
       );
       return;
     }
     if (event.type === 'artifact.created') {
       setActiveConversation((current) =>
-        current ? { ...current, artifacts: [...current.artifacts, event.artifact] } : current,
+        current?.id === conversationId
+          ? { ...current, artifacts: [...current.artifacts, event.artifact] }
+          : current,
       );
       return;
     }
     if (event.type === 'run.failed') {
-      setError(`${event.agentId ? `${event.agentId}: ` : ''}${event.error}`);
-      setRunStatus(null);
+      if (activeIdRef.current === conversationId) {
+        setError(`${event.agentId ? `${event.agentId}: ` : ''}${event.error}`);
+      }
+      setConversationRunStatus(conversationId, null);
     }
-  }, []);
+  }, [setConversationRunStatus]);
+
+  const ingestActiveStreamEvent = useCallback((event: StreamEvent) => {
+    const conversationId = activeIdRef.current;
+    if (conversationId) handleStreamEvent(conversationId, event);
+  }, [handleStreamEvent]);
 
   const approvePending = useCallback(async () => {
     const conversationId = activeIdRef.current;
@@ -447,16 +507,18 @@ export function useChat() {
     setError(null);
     try {
       const result = await approveConversationApi(conversationId);
-      setOperatingContext(result.operatingContext);
-      setRunStatus('승인이 확인되어 실행을 계속합니다.');
+      if (activeIdRef.current === conversationId) setOperatingContext(result.operatingContext);
+      setConversationRunStatus(conversationId, '승인이 확인되어 실행을 계속합니다.');
       return true;
     } catch (reason) {
-      setError(reason instanceof Error ? reason.message : '승인 상태를 재검증하지 못했습니다.');
+      if (activeIdRef.current === conversationId) {
+        setError(reason instanceof Error ? reason.message : '승인 상태를 재검증하지 못했습니다.');
+      }
       return false;
     } finally {
       setApprovingApproval(false);
     }
-  }, [approvingApproval, operatingContext]);
+  }, [approvingApproval, operatingContext, setConversationRunStatus]);
 
   const sendMessage = useCallback(async (
     content: string,
@@ -475,6 +537,8 @@ export function useChat() {
     if (!conversation) conversation = workflowMode === 'federated'
       ? await createFederatedConversation()
       : await createConversation();
+    if (streamControllersRef.current.has(conversation.id)) return;
+
     const clientMessageId = crypto.randomUUID();
     const createdAt = new Date().toISOString();
     const optimistic: MessageRecord = {
@@ -489,16 +553,25 @@ export function useChat() {
       updatedAt: createdAt,
     };
     setActiveConversation((current) =>
-      current ? { ...current, draft: '', messages: upsertMessage(current.messages, optimistic) } : current,
+      current?.id === conversation.id
+        ? { ...current, draft: '', messages: upsertMessage(current.messages, optimistic) }
+        : current,
     );
-    setIsStreaming(true);
-    setRunStatus(workflowMode === 'federated' ? '교차 시스템 실행 계획을 만드는 중' : '메시지 전송 중');
+    setStreamingConversationIds((current) => {
+      const next = new Set(current);
+      next.add(conversation.id);
+      return next;
+    });
+    setConversationRunStatus(
+      conversation.id,
+      workflowMode === 'federated' ? '교차 시스템 실행 계획을 만드는 중' : '메시지 전송 중',
+    );
     setError(null);
     const controller = new AbortController();
-    abortRef.current = controller;
+    streamControllersRef.current.set(conversation.id, controller);
     const ingestCurrentStreamEvent = (event: StreamEvent) => {
-      if (abortRef.current !== controller || activeIdRef.current !== conversation.id) return;
-      handleStreamEvent(event);
+      if (streamControllersRef.current.get(conversation.id) !== controller) return;
+      handleStreamEvent(conversation.id, event);
     };
     try {
       await streamMessage(
@@ -518,7 +591,11 @@ export function useChat() {
         controller.signal,
       );
     } catch (reason) {
-      if (!controller.signal.aborted && abortRef.current === controller) {
+      if (
+        !controller.signal.aborted
+        && streamControllersRef.current.get(conversation.id) === controller
+        && activeIdRef.current === conversation.id
+      ) {
         setError(reason instanceof Error ? reason.message : '응답 스트림이 중단됐습니다.');
       }
     } finally {
@@ -527,26 +604,36 @@ export function useChat() {
           getConversation(conversation.id),
           getConversationOperatingContext(conversation.id),
         ]);
-        if (abortRef.current === controller && activeIdRef.current === conversation.id) {
+        setConversations((current) => current.map((item) => item.id === detail.id ? detail : item));
+        if (
+          streamControllersRef.current.get(conversation.id) === controller
+          && activeIdRef.current === conversation.id
+        ) {
           setOperatingContext(context);
           applyDetail(detail);
-          setConversations((current) => current.map((item) => item.id === detail.id ? detail : item));
         }
       } catch {
         // Keep the optimistic transcript visible when the refresh fails.
       } finally {
-        if (abortRef.current === controller) {
-          abortRef.current = null;
-          setIsStreaming(false);
-          setRunStatus(null);
+        if (streamControllersRef.current.get(conversation.id) === controller) {
+          streamControllersRef.current.delete(conversation.id);
+          setStreamingConversationIds((current) => {
+            const next = new Set(current);
+            next.delete(conversation.id);
+            return next;
+          });
+          setConversationRunStatus(conversation.id, null);
         }
       }
     }
-  }, [activeConversation, applyDetail, approvePending, createConversation, createFederatedConversation, handleStreamEvent, isStreaming, operatingContext, pendingArtifactIds, selectedStatus, selectedSystem]);
+  }, [activeConversation, applyDetail, approvePending, createConversation, createFederatedConversation, handleStreamEvent, isStreaming, operatingContext, pendingArtifactIds, selectedStatus, setConversationRunStatus]);
 
   const stopStreaming = useCallback(() => {
-    cancelActiveStreamForNavigation();
-  }, [cancelActiveStreamForNavigation]);
+    const conversationId = activeIdRef.current;
+    if (!conversationId) return;
+    // Explicit Stop is the only in-app action that aborts a Conversation run.
+    streamControllersRef.current.get(conversationId)?.abort();
+  }, []);
 
   const uploadFiles = useCallback(async (files: File[]) => {
     if (files.length === 0) return [];
@@ -566,7 +653,7 @@ export function useChat() {
           item.localId === localId ? { ...item, progress: 100, state: 'complete', artifactId: artifact.id } : item,
         ));
         setActiveConversation((current) =>
-          current ? { ...current, artifacts: [...current.artifacts, artifact] } : current,
+          current?.id === conversation.id ? { ...current, artifacts: [...current.artifacts, artifact] } : current,
         );
       } catch (reason) {
         const message = reason instanceof Error ? reason.message : '업로드 실패';
@@ -612,7 +699,7 @@ export function useChat() {
     approvePending,
     stopStreaming,
     uploadFiles,
-    ingestStreamEvent: handleStreamEvent,
+    ingestStreamEvent: ingestActiveStreamEvent,
     clearSearch: () => setSearchResults([]),
     clearError: () => setError(null),
   };
