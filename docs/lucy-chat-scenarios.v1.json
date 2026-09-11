@@ -68,10 +68,10 @@
       "forbiddenBehavior": ["Stop at commentary when safe work is available", "Manufacture completion evidence"],
       "backendIdentity": "execution must use the bound real backend/session",
       "observableEvidence": ["run/tool correlation", "result or blocker", "unchanged protected authority"],
-      "sourceAuditVerdict": "PASS",
+      "sourceAuditVerdict": "PARTIAL_EXECUTION_EVIDENCE_PENDING",
       "acceptanceVerdict": "BLOCKED_REAL_PROVIDER",
-      "currentSourceEvidence": ["server/collaboration-runner.ts", "ConversationOperatingContext continuation", "exact-head V2 CI"],
-      "primaryGap": "Provider-backed executable-work acceptance cannot be rerun while #210 is blocked."
+      "currentSourceEvidence": ["server/collaboration-runner.ts maintains run/session correlation", "ConversationOperatingContext continuation", "current completion path can record clean text-stream termination without tool/result receipt"],
+      "primaryGap": "Chat does not yet require an execution receipt, tool event, artifact, or other result evidence before treating a safe executable-work run as completed/verified; provider-backed acceptance is also gated by #210."
     },
     {
       "id": "S5",
