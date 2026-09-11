@@ -5,7 +5,7 @@ import { MAX_PROGRESS_STATUS_LENGTH, sanitizeProgressStatus, wrapProgressSanitiz
 function fakeAdapter(items: AdapterStreamItem[]): ChatBackendAdapter {
   return {
     systemId: 'hermes',
-    async health() { return { ok: true, mode: 'test', detail: 'progress sanitizer fixture' }; },
+    async health() { return { ok: true, mode: 'mock', detail: 'progress sanitizer fixture' }; },
     async *streamReply() {
       for (const item of items) yield item;
     },
