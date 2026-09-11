@@ -20,7 +20,7 @@ test('token session protects the full browser workflow and operator status', asy
   const statusPanel = page.getByRole('complementary', { name: '시스템 상태' });
   await expect(statusPanel).toBeVisible();
   await expect(statusPanel.getByText('private-session')).toBeVisible();
-  await expect(statusPanel.getByText('[Letta] Lucy')).toBeVisible();
+  await expect(statusPanel.getByText('[OpenClaw] Lucy')).toBeVisible();
   await expect(statusPanel.getByText('[Hermes] Lucy')).toBeVisible();
   await page.getByRole('button', { name: '상태 패널 닫기' }).click();
 
