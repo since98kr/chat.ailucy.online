@@ -22,14 +22,14 @@ test('desktop Conversation workflow remains aligned and usable', async ({ page }
   await page.goto('/');
   await expect(page.getByText('ailucy.online', { exact: true })).toBeVisible();
   await expect(page.locator('.conversation-row').filter({ hasText: '이번 주 업무 정리' }).first()).toBeVisible();
-  await expect(page.locator('.chat-header')).toContainText('[Letta] Lucy');
+  await expect(page.locator('.chat-header')).toContainText('[OpenClaw] Lucy');
   await expectNoHorizontalOverflow(page);
   await page.locator('.conversations-title button[aria-label="새 대화"]').click();
   const composer = page.locator('.composer textarea');
   await composer.fill('브라우저 회귀검증 아젠다를 새 Conversation으로 유지해줘.');
   await page.locator('button[aria-label="전송"]').click();
   await expect(page.getByText('브라우저 회귀검증 아젠다를 새 Conversation으로 유지해줘.')).toBeVisible();
-  await expect(page.getByText(/\[Letta\] Lucy의 승인된 장기기억은 이어집니다/)).toBeVisible();
+  await expect(page.getByText(/\[OpenClaw\] Lucy의 승인된 장기기억은 이어집니다/)).toBeVisible();
   const search = page.getByPlaceholder('제목·본문·파일 검색');
   await search.fill('회귀검증');
   await expect(page.locator('.conversation-row').filter({ hasText: '회귀검증' }).first()).toBeVisible();
@@ -79,14 +79,14 @@ test('federated Conversation approves a capsule and records a parallel workflow'
   await expect(panel).toBeVisible();
   await expect(panel.getByText('교차 시스템 활성')).toBeVisible();
   await panel.getByPlaceholder('Capsule 제목').fill('브라우저 승인 문맥');
-  await panel.getByPlaceholder('상대 시스템에 전달할 승인 가능한 문맥').fill('테스트에 필요한 최소 문맥만 Letta에 전달한다.');
+  await panel.getByPlaceholder('상대 시스템에 전달할 승인 가능한 문맥').fill('테스트에 필요한 최소 문맥만 OpenClaw에 전달한다.');
   await panel.getByRole('button', { name: 'Draft 생성' }).click();
   const capsule = panel.locator('.capsule-card').filter({ hasText: '브라우저 승인 문맥' });
   await capsule.getByRole('button', { name: '승인' }).click();
   await expect(capsule).toContainText('approved');
   await panel.getByRole('button', { name: '교차 시스템 패널 닫기' }).click();
   const targets = page.getByLabel('교차 시스템 대상 선택');
-  await targets.getByRole('button', { name: '@Letta', exact: true }).click();
+  await targets.getByRole('button', { name: '@OpenClaw', exact: true }).click();
   await targets.getByRole('button', { name: '@Xixi', exact: true }).click();
   await page.locator('.composer textarea').fill('개인 우선순위와 구현안을 병렬로 검토하고 종합해줘.');
   await page.locator('button[aria-label="전송"]').click();
@@ -108,7 +108,7 @@ test('personal Lucy binds 계속해 to the same persisted task and fails closed 
   const composer = page.locator('.composer textarea');
   await composer.fill('첫 작업을 실제 대화 문맥으로 유지해줘.');
   await page.locator('button[aria-label="전송"]').click();
-  await expect(page.getByText(/\[Letta\] Lucy의 승인된 장기기억은 이어집니다/)).toBeVisible();
+  await expect(page.getByText(/\[OpenClaw\] Lucy의 승인된 장기기억은 이어집니다/)).toBeVisible();
 
   const before = (await (await page.request.get(`/api/conversations/${id}/operating-context`)).json()).operatingContext;
   expect(before.activeTask.label).toContain('첫 작업');
@@ -147,7 +147,7 @@ test('personal Lucy accepts bare 승인 while a protected run is still waiting',
           pendingApproval: approvalPending ? {
             conversationId: id,
             backendSystem: 'letta',
-            agentId: '[Letta] Lucy',
+            agentId: '[OpenClaw] Lucy',
             sessionIdentity: initialContext.sessionIdentity,
             approvalId,
             kind: 'exec',
@@ -175,7 +175,7 @@ test('personal Lucy accepts bare 승인 while a protected run is still waiting',
           pendingApproval: {
             conversationId: id,
             backendSystem: 'letta',
-            agentId: '[Letta] Lucy',
+            agentId: '[OpenClaw] Lucy',
             sessionIdentity: initialContext.sessionIdentity,
             approvalId,
             kind: 'exec',
@@ -216,7 +216,7 @@ test('personal Lucy reports verified status and preserves blocker truth until su
   const composer = page.locator('.composer textarea');
   await composer.fill('상태 확인용 실제 작업을 이 대화에 유지해줘.');
   await page.locator('button[aria-label="전송"]').click();
-  await expect(page.locator('.message--assistant').last()).toContainText('[Letta] Lucy');
+  await expect(page.locator('.message--assistant').last()).toContainText('[OpenClaw] Lucy');
   const beforeStatus = (await (await page.request.get(`/api/conversations/${id}/operating-context`)).json()).operatingContext;
 
   await composer.fill('지금 어디까지야?');
@@ -264,9 +264,9 @@ test('mobile navigation preserves the System → Conversation hierarchy', async 
   await expect(page.locator('.sidebar')).toHaveClass(/sidebar--open/);
   await expect(page.getByText('SYSTEMS', { exact: true })).toBeVisible();
   await expect(page.getByText('CONVERSATIONS', { exact: true })).toBeVisible();
-  await page.locator('.system-card--blue .system-card__header').click();
+  await page.locator('.system-card--blue .system-card__header').first().click();
   await expect(page.locator('.sidebar')).not.toHaveClass(/sidebar--open/);
-  await expect(page.locator('.chat-header')).toContainText('[Letta] Lucy');
+  await expect(page.locator('.chat-header')).toContainText('[OpenClaw] Lucy');
   await expect(page.locator('.chat-header')).toContainText('Personal');
   await expectNoHorizontalOverflow(page);
   await page.screenshot({ path: testInfo.outputPath('mobile-390x844.png'), fullPage: false });
