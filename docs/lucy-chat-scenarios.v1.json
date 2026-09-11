@@ -82,10 +82,10 @@
       "forbiddenBehavior": ["Execute before approval", "Authorize from assistant prose", "Create an approval id client-side"],
       "backendIdentity": "pending approval must match current conversation/session identity",
       "observableEvidence": ["approvalId", "kind", "summary", "expiry when supplied", "backend policy evidence"],
-      "sourceAuditVerdict": "PASS",
+      "sourceAuditVerdict": "PARTIAL_APPROVAL_EXPLANATION_PENDING",
       "acceptanceVerdict": "BLOCKED_REAL_PROVIDER",
-      "currentSourceEvidence": ["server/openclaw-approval.ts", "server/openclaw-approval.test.ts", "e2e/chat.spec.ts pending-approval browser flow"],
-      "primaryGap": "Real backend-owned approval boundary still requires current exact-main provider acceptance."
+      "currentSourceEvidence": ["server/openclaw-approval.ts binds backend approval identity/kind/summary", "server/openclaw-approval.test.ts", "e2e/chat.spec.ts pending-approval browser flow", "src/ConversationComposer.tsx currently surfaces approval summary"],
+      "primaryGap": "Chat does not yet carry and surface structured reason, verification plan, and rollback plan for a consequential approval boundary; real-provider acceptance is also gated by #210."
     },
     {
       "id": "S6",
