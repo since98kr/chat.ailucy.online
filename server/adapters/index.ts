@@ -6,6 +6,21 @@ import { HttpAgentAdapter, httpAdapterConfig } from './http.js';
 import { OpenClawLettaAdapter, openClawLettaConfigFromEnv } from './openclaw-letta.js';
 import { augmentNativeArtifactContext } from './native-artifacts.js';
 
+const LEGACY_PERSONAL_LUCY_ID = '[Letta] Lucy';
+const OPENCLAW_PERSONAL_LUCY_ID = '[OpenClaw] Lucy';
+
+export function resolvePersonalLucyProviderTarget(
+  requestedAgentId: string,
+  configuredAgentId?: string,
+  modelMap?: Record<string, string>,
+) {
+  if (requestedAgentId !== OPENCLAW_PERSONAL_LUCY_ID) return undefined;
+  return modelMap?.[OPENCLAW_PERSONAL_LUCY_ID]
+    ?? modelMap?.[LEGACY_PERSONAL_LUCY_ID]
+    ?? configuredAgentId
+    ?? LEGACY_PERSONAL_LUCY_ID;
+}
+
 export function resolveNativeTargetAgentId(
   requestedAgentId: string,
   conversationAgentId: string,
@@ -13,7 +28,9 @@ export function resolveNativeTargetAgentId(
   modelMap?: Record<string, string>,
 ) {
   const requested = requestedAgentId || conversationAgentId;
+  const personalLucyTarget = resolvePersonalLucyProviderTarget(requested, configuredAgentId, modelMap);
   return modelMap?.[requested]
+    ?? personalLucyTarget
     ?? (configuredAgentId && requested === conversationAgentId ? configuredAgentId : requested);
 }
 
@@ -32,13 +49,12 @@ export function resolveNativeExecution(
   );
 
   // A configured native backend target is authorized only for the selected
-  // conversation lead that the wrapper itself mapped. Explicit team targets
-  // continue to require their own model-map entry and arbitrary runtime IDs
-  // never become authorized merely because they were requested.
-  const authorizationModelMap = configuredAgentId
-    && requestedAgentId === conversationAgentId
-    && targetAgentId === configuredAgentId
-    ? { ...modelMap, [selectedAgentId || requestedAgentId]: configuredAgentId }
+  // conversation lead or for the canonical personal Lucy compatibility lane.
+  // Arbitrary runtime IDs never become authorized merely because requested.
+  const mappedByWrapper = targetAgentId !== requestedAgentId
+    && (requestedAgentId === conversationAgentId || requestedAgentId === OPENCLAW_PERSONAL_LUCY_ID);
+  const authorizationModelMap = mappedByWrapper
+    ? { ...modelMap, [selectedAgentId || requestedAgentId]: targetAgentId }
     : modelMap;
 
   return { targetAgentId, authorizationModelMap };
@@ -88,6 +104,36 @@ function wrapNativeAgentMapping(
   };
 }
 
+function wrapOpenAiPersonalLucyMapping(
+  adapter: HttpAgentAdapter,
+  configuredAgentId?: string,
+  modelMap?: Record<string, string>,
+): ChatBackendAdapter {
+  return {
+    systemId: adapter.systemId,
+    health: () => adapter.health(),
+    async *streamReply(request: AdapterRequest) {
+      const selectedAgentId = request.selectedAgentId ?? request.targetAgentId;
+      const targetAgentId = resolvePersonalLucyProviderTarget(request.targetAgentId, configuredAgentId, modelMap);
+      if (!targetAgentId) {
+        yield* adapter.streamReply(request);
+        return;
+      }
+      const executionAdapter = new HttpAgentAdapter(adapter.systemId, {
+        ...adapter.config,
+        // Keep Chat V2 authorization bound to the canonical selected agent,
+        // while mapping its provider model/target to the existing runtime ID.
+        modelMap: { ...modelMap, [OPENCLAW_PERSONAL_LUCY_ID]: targetAgentId },
+      });
+      yield* executionAdapter.streamReply({
+        ...request,
+        selectedAgentId,
+        targetAgentId,
+      });
+    },
+  };
+}
+
 function createAdapter(systemId: SystemId): ChatBackendAdapter {
   if (systemId === 'letta' && protocol(process.env.LETTA_PROTOCOL) === 'openclaw') {
     return new OpenClawLettaAdapter(openClawLettaConfigFromEnv());
@@ -98,7 +144,9 @@ function createAdapter(systemId: SystemId): ChatBackendAdapter {
   const httpAdapter = new HttpAgentAdapter(systemId, config);
   const adapter = config.protocol === 'native'
     ? wrapNativeAgentMapping(httpAdapter, config.agentId, config.modelMap)
-    : httpAdapter;
+    : systemId === 'letta'
+      ? wrapOpenAiPersonalLucyMapping(httpAdapter, config.agentId, config.modelMap)
+      : httpAdapter;
   return systemId === 'hermes'
     && config.protocol === 'openai'
     && enabled(process.env.HERMES_ARTIFACT_ENVELOPE_ENABLED)
