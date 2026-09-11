@@ -61,13 +61,12 @@ test('switching rooms keeps the source run alive and isolates a second room run'
   await expect(page.getByText(promptB, { exact: true })).toHaveCount(0);
 });
 
-test('a slow stale room load never owns visible actions or overwrites the newer room', async ({ page }, testInfo) => {
+test('a slow stale room load never owns visible actions or overwrites newer system navigation', async ({ page }, testInfo) => {
   test.skip(!testInfo.project.name.startsWith('desktop'));
   await page.goto('/');
 
   const roomA = await createPersonalConversation(page);
   const roomB = await createPersonalConversation(page);
-  const roomC = await createPersonalConversation(page);
   await page.locator(`[data-conversation-id="${roomA}"]`).click();
   await expect(page.locator(`[data-conversation-id="${roomA}"]`)).toHaveClass(/is-active/);
 
@@ -85,18 +84,22 @@ test('a slow stale room load never owns visible actions or overwrites the newer 
   await roomBRequested;
 
   // Until B's detail is actually available there is no visible Conversation
-  // owner. The list itself may be temporarily empty while navigation is pending,
-  // so assert the ownership contract rather than requiring stale rows to exist.
+  // owner. The list may be replaced by the loading state, so assert ownership
+  // directly rather than requiring stale Conversation rows to remain mounted.
   await expect(page.locator('.conversation-row.is-active')).toHaveCount(0);
   await expect(page.getByRole('button', { name: '응답 중단' })).toHaveCount(0);
 
-  await page.locator(`[data-conversation-id="${roomC}"]`).click();
-  await expect(page.locator(`[data-conversation-id="${roomC}"]`)).toHaveClass(/is-active/);
+  // System cards remain navigable while a room detail is loading. A newer
+  // Hermes navigation must invalidate the held B request, and B may never
+  // overwrite the later visible system when its response finally arrives.
+  await page.locator('.system-card--violet .system-card__header').click();
+  await expect(page.locator('.system-card--violet')).toHaveClass(/is-selected/);
+  await expect(page.locator('.chat-header')).toContainText('[Hermes] Lucy');
 
   releaseRoomB();
   await page.waitForTimeout(150);
-  await expect(page.locator(`[data-conversation-id="${roomC}"]`)).toHaveClass(/is-active/);
-  await expect(page.locator(`[data-conversation-id="${roomB}"]`)).not.toHaveClass(/is-active/);
+  await expect(page.locator('.system-card--violet')).toHaveClass(/is-selected/);
+  await expect(page.locator('.chat-header')).toContainText('[Hermes] Lucy');
 });
 
 test('reselecting the current status preserves the visible run owner and Stop action', async ({ page }, testInfo) => {
