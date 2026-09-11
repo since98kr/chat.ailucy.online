@@ -60,3 +60,61 @@ test('switching rooms keeps the source run alive and isolates a second room run'
   await expect(page.locator('.message--assistant').last()).toContainText('ROOM_A_BACKGROUND_RUN');
   await expect(page.getByText(promptB, { exact: true })).toHaveCount(0);
 });
+
+test('a slow stale room load never owns visible actions or overwrites the newer room', async ({ page }, testInfo) => {
+  test.skip(!testInfo.project.name.startsWith('desktop'));
+  await page.goto('/');
+
+  const roomA = await createPersonalConversation(page);
+  const roomB = await createPersonalConversation(page);
+  const roomC = await createPersonalConversation(page);
+  await page.locator(`[data-conversation-id="${roomA}"]`).click();
+  await expect(page.locator(`[data-conversation-id="${roomA}"]`)).toHaveClass(/is-active/);
+
+  let releaseRoomB!: () => void;
+  let markRoomBRequested!: () => void;
+  const roomBGate = new Promise<void>((resolve) => { releaseRoomB = resolve; });
+  const roomBRequested = new Promise<void>((resolve) => { markRoomBRequested = resolve; });
+  await page.route(`**/api/conversations/${roomB}`, async (route) => {
+    markRoomBRequested();
+    await roomBGate;
+    await route.continue();
+  });
+
+  await page.locator(`[data-conversation-id="${roomB}"]`).click();
+  await roomBRequested;
+
+  // Until B's detail is actually available, no stale room may remain the
+  // action owner and the pending B target must not pretend to be rendered.
+  await expect(page.locator(`[data-conversation-id="${roomA}"]`)).not.toHaveClass(/is-active/);
+  await expect(page.locator(`[data-conversation-id="${roomB}"]`)).not.toHaveClass(/is-active/);
+  await expect(page.getByRole('button', { name: '응답 중단' })).toHaveCount(0);
+
+  await page.locator(`[data-conversation-id="${roomC}"]`).click();
+  await expect(page.locator(`[data-conversation-id="${roomC}"]`)).toHaveClass(/is-active/);
+
+  releaseRoomB();
+  await page.waitForTimeout(150);
+  await expect(page.locator(`[data-conversation-id="${roomC}"]`)).toHaveClass(/is-active/);
+  await expect(page.locator(`[data-conversation-id="${roomB}"]`)).not.toHaveClass(/is-active/);
+});
+
+test('reselecting the current status preserves the visible run owner and Stop action', async ({ page }, testInfo) => {
+  test.skip(!testInfo.project.name.startsWith('desktop'));
+  await page.goto('/');
+
+  const roomA = await createPersonalConversation(page);
+  const prompt = 'SAME_STATUS_STOP_OWNER 현재 활성 탭을 다시 눌러도 이 방의 실행 소유권과 중단 버튼은 그대로 유지되어야 합니다.';
+  await page.locator('.composer textarea').fill(prompt);
+  await page.getByRole('button', { name: '전송', exact: true }).click();
+  await expect(page.locator('.run-status')).toBeVisible();
+
+  await page.locator('.sidebar-footer button').filter({ hasText: '활성' }).click();
+  await expect(page.locator(`[data-conversation-id="${roomA}"]`)).toHaveClass(/is-active/);
+  const stop = page.getByRole('button', { name: '응답 중단' });
+  await expect(stop).toBeVisible();
+  await stop.click();
+
+  await expect.poll(async () => (await latestAssistantState(page, roomA))?.state, { timeout: 10_000 })
+    .toBe('cancelled');
+});
