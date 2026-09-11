@@ -31,7 +31,7 @@ import type { TranscriptState } from './run-transcript';
 import { emptyTranscriptState, reduceTranscript } from './run-transcript';
 
 const defaultAgent: Record<SystemId, string> = {
-  letta: '[Letta] Lucy',
+  letta: '[OpenClaw] Lucy',
   hermes: '[Hermes] Lucy',
   claude: '[Claude] 테이아',
 };
