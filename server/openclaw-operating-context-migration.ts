@@ -103,6 +103,8 @@ export function migrateLegacyPersonalLucyOperatingContexts(
       // will replace it rather than migration fabricating continuity.
     }
   }
+
+  migrated += migrateLegacyPersonalLucyWorkflowIdentity(db, legacyAgentId, canonicalAgentId);
   return migrated;
 }
 
