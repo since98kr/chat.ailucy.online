@@ -54,10 +54,10 @@
       "forbiddenBehavior": ["Treat transient run text as verified completion", "Hide unknowns", "Fabricate runtime evidence"],
       "backendIdentity": "status evidence must belong to current conversation/session",
       "observableEvidence": ["statusTruth records", "evidenceRef for verified facts", "blocker and nextAction"],
-      "sourceAuditVerdict": "PASS",
+      "sourceAuditVerdict": "PARTIAL_COMPLETION_TRUTH_PENDING",
       "acceptanceVerdict": "BLOCKED_REAL_PROVIDER",
-      "currentSourceEvidence": ["e2e/chat.spec.ts: verified status and blocker recovery", "server/adapters/mock.ts statusReply contract"],
-      "primaryGap": "Real-provider exact-main status/truth proof is gated by #210."
+      "currentSourceEvidence": ["e2e/chat.spec.ts verifies FACT/UNKNOWN/blocker rendering from operating context", "server/adapters/mock.ts statusReply contract", "current completion path can record clean text-stream termination as verified FACT without execution/result evidence"],
+      "primaryGap": "Status rendering is structured, but completion truth can still overclaim a clean commentary-only provider termination as verified FACT; #236 tracks the shared execution-evidence fix and real-provider acceptance is gated by #210."
     },
     {
       "id": "S4",
@@ -124,10 +124,10 @@
       "forbiddenBehavior": ["Generic dead-end error", "Convert failure into success text", "Lose the active task"],
       "backendIdentity": "failure evidence belongs to current run/session",
       "observableEvidence": ["blockerId", "evidenceRef", "nextAction", "retry correlation when attempted"],
-      "sourceAuditVerdict": "PASS",
+      "sourceAuditVerdict": "PARTIAL_RECOVERY_EVIDENCE_PENDING",
       "acceptanceVerdict": "BLOCKED_REAL_PROVIDER",
-      "currentSourceEvidence": ["e2e/chat.spec.ts: failure -> 왜 안돼? -> blocker/next action -> 계속해 recovery", "ConversationOperatingContext blocker persistence"],
-      "primaryGap": "Fresh provider-backed failure/recovery acceptance is gated by #210."
+      "currentSourceEvidence": ["e2e/chat.spec.ts covers failure -> 왜 안돼? -> blocker/next action -> 계속해 with mock success", "ConversationOperatingContext persists blocker identity", "current completion path can clear a blocker after clean text-only termination without independent result evidence"],
+      "primaryGap": "Blocker persistence and recovery UX exist, but a retry can clear the blocker on commentary-only completion without proof the underlying failure resolved; #236 tracks the shared execution-evidence fix and real-provider acceptance is gated by #210."
     },
     {
       "id": "S9",
