@@ -48,7 +48,7 @@ function buildReply(systemId: SystemId, request: AdapterRequest) {
   if (request.operatingIntent === 'status') return statusReply(request);
   const latest = request.userMessage.content;
   if (systemId === 'letta') {
-    return `Tei님, 이 Conversation은 다른 아젠다와 분리해서 유지하겠습니다. 다만 [Letta] Lucy의 승인된 장기기억은 이어집니다. 방금 요청하신 “${latest.slice(0, 80)}”를 현재 Conversation의 중심 아젠다로 잡았습니다.`;
+    return `Tei님, 이 Conversation은 다른 아젠다와 분리해서 유지하겠습니다. 다만 [OpenClaw] Lucy의 승인된 장기기억은 이어집니다. 방금 요청하신 “${latest.slice(0, 80)}”를 현재 Conversation의 중심 아젠다로 잡았습니다.`;
   }
   return hermesReply(request);
 }

@@ -71,7 +71,7 @@ describe('Chat Core API', () => {
     const created = await app.inject({
       method: 'POST',
       url: '/api/conversations',
-      payload: { systemId: 'letta', agentId: '[Letta] Lucy' },
+      payload: { systemId: 'letta', agentId: '[OpenClaw] Lucy' },
     });
     const id = created.json().conversation.id as string;
     const clientMessageId = crypto.randomUUID();
@@ -92,11 +92,11 @@ describe('Chat Core API', () => {
     const messages = detail.json().conversation.messages as Array<{ role: string; content: string; state: string }>;
     expect(messages).toHaveLength(2);
     expect(messages[0]).toMatchObject({ role: 'user', content: '이번 주 우선순위를 정리해줘.' });
-    expect(messages[1].content).toContain('[Letta] Lucy');
+    expect(messages[1].content).toContain('[OpenClaw] Lucy');
     expect(messages[1].state).toBe('complete');
   });
 
-  it('does not block ordinary Letta chat on a slow approval delivery surface', async () => {
+  it('does not block ordinary OpenClaw chat on a slow approval delivery surface', async () => {
     await app.close();
     const neverReady = new Promise<void>(() => undefined);
     const approvalBackend: ConversationApprovalBackend = {
@@ -114,7 +114,7 @@ describe('Chat Core API', () => {
     const created = await app.inject({
       method: 'POST',
       url: '/api/conversations',
-      payload: { systemId: 'letta', agentId: '[Letta] Lucy' },
+      payload: { systemId: 'letta', agentId: '[OpenClaw] Lucy' },
     });
     const id = created.json().conversation.id as string;
     const started = performance.now();
@@ -134,7 +134,7 @@ describe('Chat Core API', () => {
     const created = await app.inject({
       method: 'POST',
       url: '/api/conversations',
-      payload: { systemId: 'letta', agentId: '[Letta] Lucy' },
+      payload: { systemId: 'letta', agentId: '[OpenClaw] Lucy' },
     });
     const id = created.json().conversation.id as string;
     const clientMessageId = crypto.randomUUID();
@@ -198,7 +198,7 @@ describe('Chat Core API', () => {
     const created = await app.inject({
       method: 'POST',
       url: '/api/conversations',
-      payload: { systemId: 'letta', agentId: '[Letta] Lucy' },
+      payload: { systemId: 'letta', agentId: '[OpenClaw] Lucy' },
     });
     const id = created.json().conversation.id as string;
 
@@ -207,7 +207,7 @@ describe('Chat Core API', () => {
     expect(initial.json().operatingContext).toMatchObject({
       conversationId: id,
       backendSystem: 'letta',
-      agentId: '[Letta] Lucy',
+      agentId: '[OpenClaw] Lucy',
       activeTask: null,
       continuationTarget: null,
       pendingApproval: null,
@@ -239,7 +239,7 @@ describe('Chat Core API', () => {
     const created = await app.inject({
       method: 'POST',
       url: '/api/conversations',
-      payload: { systemId: 'letta', agentId: '[Letta] Lucy' },
+      payload: { systemId: 'letta', agentId: '[OpenClaw] Lucy' },
     });
     const id = created.json().conversation.id as string;
 
@@ -303,7 +303,7 @@ describe('Chat Core API', () => {
     const created = await app.inject({
       method: 'POST',
       url: '/api/conversations',
-      payload: { systemId: 'letta', agentId: '[Letta] Lucy' },
+      payload: { systemId: 'letta', agentId: '[OpenClaw] Lucy' },
     });
     const id = created.json().conversation.id as string;
 
@@ -357,7 +357,7 @@ describe('Chat Core API', () => {
       const created = await app.inject({
         method: 'POST',
         url: '/api/conversations',
-        payload: { systemId: 'letta', agentId: '[Letta] Lucy' },
+        payload: { systemId: 'letta', agentId: '[OpenClaw] Lucy' },
       });
       const id = created.json().conversation.id as string;
 
@@ -425,7 +425,7 @@ describe('Chat Core API', () => {
       const created = await app.inject({
         method: 'POST',
         url: '/api/conversations',
-        payload: { systemId: 'letta', agentId: '[Letta] Lucy' },
+        payload: { systemId: 'letta', agentId: '[OpenClaw] Lucy' },
       });
       const id = created.json().conversation.id as string;
       const approval = app.inject({ method: 'POST', url: `/api/conversations/${id}/approval` });
@@ -465,7 +465,7 @@ describe('Chat Core API', () => {
       const created = await app.inject({
         method: 'POST',
         url: '/api/conversations',
-        payload: { systemId: 'letta', agentId: '[Letta] Lucy' },
+        payload: { systemId: 'letta', agentId: '[OpenClaw] Lucy' },
       });
       const id = created.json().conversation.id as string;
 

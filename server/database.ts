@@ -250,7 +250,7 @@ export class ChatDatabase {
       {
         id: 'weekly',
         systemId: 'letta' as const,
-        agentId: '[Letta] Lucy',
+        agentId: '[OpenClaw] Lucy',
         title: '이번 주 업무 정리',
         preview: '중요 의사결정과 다음 일정',
         pinned: true,
@@ -282,7 +282,7 @@ export class ChatDatabase {
           authorId: item.agentId,
           content:
             item.systemId === 'letta'
-              ? '이 Conversation은 다른 아젠다와 분리됩니다. 기억 사용 여부와 범위는 현재 연결된 Lucy/Letta 런타임에서 검증 가능한 상태를 따릅니다.'
+              ? '이 Conversation은 다른 아젠다와 분리됩니다. 기억 사용 여부와 범위는 현재 연결된 OpenClaw Lucy 런타임에서 검증 가능한 상태를 따릅니다.'
               : '이 Conversation은 Hermes 작업 공간입니다. 필요할 때 subagent와 협업하되 최종 응답은 Lucy가 책임집니다.',
         });
       }

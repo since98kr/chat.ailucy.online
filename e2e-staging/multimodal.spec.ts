@@ -117,7 +117,7 @@ function expectDelivery(events: StreamEvent[], input: {
   expect(deliveries[1]?.delivery?.detail).toContain('model understanding is verified separately');
 }
 
-test('real Letta understands a phrase contained only in a PDF attachment', async () => {
+test('canonical OpenClaw Lucy understands a phrase contained only in a PDF attachment', async () => {
   test.skip(!enabled('CHAT_MULTIMODAL_QA_REQUIRED'), 'Real multimodal QA is not activated.');
   test.setTimeout(300_000);
 
@@ -132,12 +132,12 @@ test('real Letta understands a phrase contained only in a PDF attachment', async
     const lettaMarker = `ORANGE_CEDAR_PDF_${Date.now()}`;
     const lettaId = await createConversation(api, {
       systemId: 'letta',
-      agentId: '[Letta] Lucy',
-      title: `${QA_TITLE_PREFIX}LETTA_${Date.now()}`,
+      agentId: '[OpenClaw] Lucy',
+      title: `${QA_TITLE_PREFIX}OPENCLAW_${Date.now()}`,
     });
     conversations.push(lettaId);
     const lettaArtifactId = await upload(api, lettaId, {
-      name: 'letta-phrase.pdf',
+      name: 'openclaw-phrase.pdf',
       mimeType: 'application/pdf',
       buffer: simplePdf(lettaMarker),
     });
@@ -148,7 +148,7 @@ test('real Letta understands a phrase contained only in a PDF attachment', async
       [lettaArtifactId],
     );
     expectDelivery(lettaEvents, {
-      agentId: '[Letta] Lucy',
+      agentId: '[OpenClaw] Lucy',
       systemId: 'letta',
       artifactId: lettaArtifactId,
     });

@@ -50,8 +50,8 @@ describe('federation conversation identity guard', () => {
     db.close();
   };
 
-  it('rejects federation on a personal Letta conversation', async () => {
-    const id = await createConversation('letta', '[Letta] Lucy', 'Personal Lucy');
+  it('rejects federation on a personal OpenClaw conversation', async () => {
+    const id = await createConversation('letta', '[OpenClaw] Lucy', 'Personal Lucy');
     const enabled = await app.inject({
       method: 'POST',
       url: `/api/conversations/${id}/federation`,
@@ -63,8 +63,8 @@ describe('federation conversation identity guard', () => {
     });
   });
 
-  it('keeps a persisted stale Letta federation config inert after upgrade', async () => {
-    const id = await createConversation('letta', '[Letta] Lucy', 'Persisted personal Lucy');
+  it('keeps a persisted stale personal federation config inert after upgrade', async () => {
+    const id = await createConversation('letta', '[OpenClaw] Lucy', 'Persisted personal Lucy');
     seedStaleFederation(id);
 
     const snapshot = await app.inject({ method: 'GET', url: `/api/conversations/${id}/federation` });

@@ -1,6 +1,7 @@
 import { Archive, Bot, FileDown, FileJson, GitBranch, Menu, MoreHorizontal, Network, Pin, RotateCcw, Sparkles, Trash2, Users } from 'lucide-react';
 import type { ConversationStatus } from '../shared/contracts';
 import { conversationExportUrl } from './api';
+import { displayAgentId } from './identity';
 import type { useChat } from './useChat';
 import type { useCollaboration } from './useCollaboration';
 import type { useFederation } from './useFederation';
@@ -48,7 +49,7 @@ export default function ChatHeader({
         <div className="chat-header__text">
           <strong>{chat.activeConversation?.title ?? '새 Conversation'}</strong>
           <span>
-            {chat.activeAgent} · {federation.active ? 'Federated' : chat.selectedSystem === 'letta' ? 'Personal' : chat.activeAgent === '[Hermes] Lucy' ? 'Hermes Lead' : 'Direct Agent'}
+            {displayAgentId(chat.activeAgent)} · {federation.active ? 'Federated' : chat.selectedSystem === 'letta' ? 'OpenClaw Personal' : chat.activeAgent === '[Hermes] Lucy' ? 'Hermes Lead' : 'Direct Agent'}
             {chat.activeConversation?.branchedFromConversationId ? ' · Branched' : ''}
           </span>
         </div>

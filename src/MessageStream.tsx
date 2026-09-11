@@ -3,6 +3,7 @@ import { Bot, Check, Copy, Download, FileText, GitBranch, Image, LoaderCircle, R
 import type { ArtifactDeliveryRecord, ArtifactRecord, ConversationDetail, MessageRecord, SystemId } from '../shared/contracts';
 import { isInlineImageMime } from '../shared/artifact-mime';
 import { artifactContentUrl, artifactDownloadUrl } from './api';
+import { displayAgentId, isOpenClawLucy } from './identity';
 import { renderMessageContent } from './message-content';
 import MessageTranscript from './MessageTranscript';
 import type { RunTranscript, TranscriptState } from './run-transcript';
@@ -100,7 +101,7 @@ export default function MessageStream({
             <MessageItem
               key={message.id}
               message={message}
-              system={message.authorId === '[Letta] Lucy' ? 'letta' : selectedSystem}
+              system={isOpenClawLucy(message.authorId) ? 'letta' : selectedSystem}
               artifacts={artifacts}
               liveDeliveries={liveDeliveries}
               deliveryResponses={deliveryResponses}
@@ -151,7 +152,7 @@ function MessageItem({ message, system, artifacts, liveDeliveries, deliveryRespo
     <article className={`message ${isUser ? 'message--user' : 'message--assistant'}${agentClass}`}>
       <div className="message__meta">
         {!isUser && <div className={`agent-avatar agent-avatar--${system}`}><Bot size={15} /></div>}
-        <strong>{isUser ? 'Tei' : message.authorId}</strong>
+        <strong>{isUser ? 'Tei' : displayAgentId(message.authorId)}</strong>
         <span>{formatTime(message.createdAt)}</span>
         {message.state !== 'complete' && <em>{message.state}</em>}
         {!isUser && message.authorId !== '[Hermes] Lucy' && <small className="source-output" style={sourceBadgeStyle}>원문</small>}
@@ -210,7 +211,7 @@ function DeliveryLifecycle({ deliveries, responses }: {
               style={deliveryBadgeStyle}
               title={delivery.detail ?? undefined}
             >
-              {delivery.agentId} · {label}
+              {displayAgentId(delivery.agentId)} · {label}
             </span>
           );
         })}
@@ -238,7 +239,7 @@ function DeliveryLifecycle({ deliveries, responses }: {
               : '미지원 또는 전달 실패';
         return (
           <span key={response.id} data-state={response.state} style={deliveryBadgeStyle}>
-            {response.authorId} · {label}
+            {displayAgentId(response.authorId)} · {label}
           </span>
         );
       })}

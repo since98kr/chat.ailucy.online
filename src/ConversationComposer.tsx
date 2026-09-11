@@ -1,6 +1,7 @@
 import { useEffect, useRef } from 'react';
 import { FileText, Image, LoaderCircle, Mic, Paperclip, Plus, Send, Square, Upload } from 'lucide-react';
 import type { AgentRecord, ArtifactRecord } from '../shared/contracts';
+import { displayAgentId, displaySystemName, isOpenClawLucy } from './identity';
 import type { useChat } from './useChat';
 import type { useCollaboration } from './useCollaboration';
 import type { useFederation } from './useFederation';
@@ -92,17 +93,17 @@ export default function ConversationComposer({
         <div className="mention-toolbar mention-toolbar--federated" aria-label="교차 시스템 대상 선택">
           <span>병렬 실행:</span>
           {federatedChoices.map((agent) => (
-            <button type="button" key={agent.id} disabled={busy} className={targets.includes(agent.id) ? 'is-participant' : ''} onClick={() => toggleFederatedTarget(agent)} title={`${agent.systemId} · ${agent.role}`}>
-              {agent.id === '[Letta] Lucy' ? '@Letta' : `@${agent.shortName}`}
+            <button type="button" key={agent.id} disabled={busy} className={targets.includes(agent.id) ? 'is-participant' : ''} onClick={() => toggleFederatedTarget(agent)} title={`${displaySystemName(agent.systemId)} · ${agent.role}`}>
+              {isOpenClawLucy(agent.id) ? '@OpenClaw' : `@${agent.shortName}`}
             </button>
           ))}
-          <em>{targets.length ? `${targets.join(' + ')} → Hermes Lucy` : 'Hermes Lucy 단독'}</em>
+          <em>{targets.length ? `${targets.map(displayAgentId).join(' + ')} → Hermes Lucy` : 'Hermes Lucy 단독'}</em>
         </div>
       ) : chat.selectedSystem === 'hermes' && chat.activeAgent === '[Hermes] Lucy' && hermesMentionAgents.length > 0 ? (
         <div className="mention-toolbar" aria-label="Hermes 에이전트 멘션">
           <span>호출:</span>
           {hermesMentionAgents.map((agent) => <button type="button" disabled={busy} key={agent.id} className={collaboration.participantIds.has(agent.id) ? 'is-participant' : ''} onClick={() => addMention(agent)}>@{agent.shortName}</button>)}
-          {collaboration.routing && <em>{collaboration.routing.mode} · {collaboration.routing.targetAgentIds.join(' → ')}</em>}
+          {collaboration.routing && <em>{collaboration.routing.mode} · {collaboration.routing.targetAgentIds.map(displayAgentId).join(' → ')}</em>}
         </div>
       ) : null}
 
@@ -160,7 +161,7 @@ export default function ConversationComposer({
               event.currentTarget.form?.requestSubmit();
             }
           }}
-          placeholder={approvalTurnEnabled ? '승인이라고 입력하거나 승인 버튼을 누르세요.' : federation.active ? '교차 시스템 요청… 실행 대상은 위에서 선택' : chat.selectedSystem === 'hermes' && chat.activeAgent === '[Hermes] Lucy' ? 'Lucy에게 메시지… 필요하면 @Xixi @Lynn @Gemma' : `Message ${chat.activeAgent}...`}
+          placeholder={approvalTurnEnabled ? '승인이라고 입력하거나 승인 버튼을 누르세요.' : federation.active ? '교차 시스템 요청… 실행 대상은 위에서 선택' : chat.selectedSystem === 'hermes' && chat.activeAgent === '[Hermes] Lucy' ? 'Lucy에게 메시지… 필요하면 @Xixi @Lynn @Gemma' : `Message ${displayAgentId(chat.activeAgent)}...`}
           rows={1}
           disabled={busy}
         />
@@ -173,9 +174,9 @@ export default function ConversationComposer({
       </form>
       <p className="composer-footnote">
         {federation.active ? '선택한 시스템·에이전트는 병렬 실행되고, 승인된 Memory Capsule만 경계를 통과하며 Hermes Lucy가 마지막에 종합합니다.'
-          : chat.selectedSystem === 'letta' ? 'Letta의 Lucy는 Conversation을 넘어 승인된 개인 기억을 유지합니다.'
+          : chat.selectedSystem === 'letta' ? 'OpenClaw Lucy와 직접 대화 중입니다. 이 Conversation의 실행은 다른 방으로 이동해도 계속됩니다.'
             : chat.activeAgent === '[Hermes] Lucy' ? '명시적으로 멘션한 subagent의 원문을 보존하고 Lucy가 마지막에 종합합니다.'
-              : `${chat.activeAgent}와 직접 대화 중입니다. 이 Conversation의 문맥은 다른 에이전트와 자동 공유되지 않습니다.`}
+              : `${displayAgentId(chat.activeAgent)}와 직접 대화 중입니다. 이 Conversation의 문맥은 다른 에이전트와 자동 공유되지 않습니다.`}
       </p>
     </div>
   );
