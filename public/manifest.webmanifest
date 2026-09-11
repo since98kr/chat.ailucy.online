@@ -1,7 +1,7 @@
 {
   "name": "chat.ailucy.online V2",
   "short_name": "Lucy Chat",
-  "description": "Tei의 Letta와 Hermes를 위한 개인용 AI Conversation 인터페이스",
+  "description": "Tei의 OpenClaw와 Hermes를 위한 개인용 AI Conversation 인터페이스",
   "start_url": "/",
   "scope": "/",
   "display": "standalone",
