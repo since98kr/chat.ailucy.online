@@ -3,6 +3,7 @@ import {
   sameConversationRuntimeIdentity,
   validateConversationOperatingContext,
   type ConversationOperatingContext,
+  type ConversationRuntimeIdentity,
 } from '../shared/conversation-operating-context.js';
 import type { ChatDatabase } from './database.js';
 import { conversationRuntimeIdentity } from './provider-session-identity.js';
@@ -12,7 +13,7 @@ type StoredContextRow = {
   context_json: string;
 };
 
-function migrateBoundIdentity<T extends { conversationId: string; backendSystem: string; agentId: string; sessionIdentity: string }>(
+function migrateBoundIdentity<T extends ConversationRuntimeIdentity>(
   value: T | null,
   previous: ConversationOperatingContext,
   nextIdentity: ReturnType<typeof conversationRuntimeIdentity>,
