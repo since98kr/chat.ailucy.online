@@ -76,7 +76,7 @@ describe('runner execution evidence truth', () => {
     expect(context.blocker).toBeNull();
   });
 
-  it('clears a blocker only after the current recovery run produces correlated artifact evidence', async () => {
+  it('clears a blocker only after the current recovery run produces a correlated provider receipt', async () => {
     const id = await createPersonalConversation(app);
     await send(app, id, FAILURE_MARKER);
 
@@ -85,15 +85,15 @@ describe('runner execution evidence truth', () => {
     expect(blocked.nextAction).toBeTruthy();
 
     const recovery = await send(app, id, '계속해');
-    expect(recovery.body).toContain('artifact.created');
+    expect(recovery.body).not.toContain('artifact.created');
 
     const recovered = await operatingContext(app, id);
     expect(recovered.blocker).toBeNull();
     expect(recovered.nextAction).toBeNull();
     expect(recovered.statusTruth.at(-1)).toMatchObject({
       classification: 'FACT',
-      summary: 'The latest bound Lucy run completed.',
+      summary: 'The latest bound Lucy execution completed with verified provider result evidence.',
     });
-    expect(recovered.statusTruth.at(-1)?.evidenceRef).toMatch(/^run:/);
+    expect(recovered.statusTruth.at(-1)?.evidenceRef).toMatch(/^provider-receipt:mock-recovery:/);
   });
 });
