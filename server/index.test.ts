@@ -222,7 +222,7 @@ describe('Chat Core API', () => {
     const afterFirst = (await app.inject({ method: 'GET', url: `/api/conversations/${id}/operating-context` })).json().operatingContext;
     expect(afterFirst.activeTask.label).toContain('실제 첫 작업');
     expect(afterFirst.continuationTarget.sessionIdentity).toBe(afterFirst.sessionIdentity);
-    expect(afterFirst.statusTruth.at(-1)).toMatchObject({ classification: 'FACT' });
+    expect(afterFirst.statusTruth).toEqual([]);
 
     const continued = await app.inject({
       method: 'POST',

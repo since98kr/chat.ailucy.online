@@ -251,6 +251,12 @@ async function executeStep(input: {
         queue.push(event);
         continue;
       }
+      if (item.type === 'execution-evidence') {
+        // Direct Conversation operating-context completion truth owns provider
+        // execution receipts. Federated workflows persist their own step/run
+        // lifecycle, so opaque receipts must not become transcript content.
+        continue;
+      }
       if (item.type === 'artifact') {
         const stored = await storeGeneratedArtifact(conversation.id, item.artifact);
         const artifact = database.addArtifact({

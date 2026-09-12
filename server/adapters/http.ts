@@ -7,6 +7,7 @@ import type {
   ChatBackendAdapter,
 } from './types.js';
 import { extractArtifactText } from './document-text.js';
+import { executionCorrelationHeaders, extractExecutionReceipt } from './execution-receipt.js';
 import { OpenAiArtifactToolAccumulator, RETURN_ARTIFACT_TOOL } from './openai-artifact-tool.js';
 import { operatingContextSystemMessage, safeOperatingContextSnapshot } from './operating-context.js';
 import {
@@ -107,7 +108,12 @@ function extractDelta(payload: unknown): string | null {
   if (!payload || typeof payload !== 'object') return null;
   const object = payload as Record<string, unknown>;
   if (typeof object.delta === 'string') return object.delta;
-  if (typeof object.content === 'string' && object.type !== 'artifact' && object.type !== 'artifact.created') {
+  if (
+    typeof object.content === 'string'
+    && object.type !== 'artifact'
+    && object.type !== 'artifact.created'
+    && object.type !== 'execution-evidence'
+  ) {
     return object.content;
   }
   if (object.message && typeof object.message === 'object') {
@@ -294,6 +300,8 @@ function processPayload(
   if (backendError) throw new Error(`Backend stream error: ${backendError}`);
   toolAccumulator.ingest(payload);
   const items: AdapterStreamItem[] = [];
+  const receipt = extractExecutionReceipt(payload);
+  if (receipt) items.push({ type: 'execution-evidence', evidence: receipt });
   const artifact = extractArtifact(payload);
   if (artifact) items.push({ type: 'artifact', artifact });
   const status = extractStatus(payload);
@@ -497,7 +505,10 @@ export class HttpAgentAdapter implements ChatBackendAdapter {
       `${trimSlash(this.resolveBaseUrl(request))}${normalizePath(this.config.chatPath)}`,
       {
         method: 'POST',
-        headers: this.headers(),
+        headers: {
+          ...this.headers(),
+          ...executionCorrelationHeaders(request),
+        },
         signal: request.signal,
         body: JSON.stringify(await this.requestBody(request)),
       },
