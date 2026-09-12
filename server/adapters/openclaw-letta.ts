@@ -1,6 +1,7 @@
 import { readFile } from 'node:fs/promises';
 import type { AdapterHealthRecord, ArtifactRecord } from '../../shared/contracts.js';
 import { approvedAdapterCapabilities } from './capability-contract.js';
+import { executionCorrelationHeaders, extractExecutionReceipt } from './execution-receipt.js';
 import { operatingContextSystemMessage } from './operating-context.js';
 import { openClawConversationSessionIdentity } from '../provider-session-identity.js';
 import { extractArtifactText } from './document-text.js';
@@ -321,6 +322,7 @@ export class OpenClawLettaAdapter implements ChatBackendAdapter {
             request.conversation.id,
             this.config.sessionPrefix,
           ),
+          ...executionCorrelationHeaders(request),
         },
         signal: request.signal,
         body: JSON.stringify(body),
@@ -338,6 +340,8 @@ export class OpenClawLettaAdapter implements ChatBackendAdapter {
       const payload = await response.json().catch(() => null);
       const error = backendError(payload);
       if (error) throw new Error(`OpenClaw Gateway error: ${error}`);
+      const receipt = extractExecutionReceipt(payload);
+      if (receipt) yield { type: 'execution-evidence', evidence: receipt };
       accumulator.ingest(payload);
       const delta = responseDelta(payload);
       if (delta) yield { type: 'delta', delta };
@@ -373,6 +377,8 @@ export class OpenClawLettaAdapter implements ChatBackendAdapter {
         }
         const error = backendError(payload);
         if (error) throw new Error(`OpenClaw Gateway error: ${error}`);
+        const receipt = extractExecutionReceipt(payload);
+        if (receipt) yield { type: 'execution-evidence', evidence: receipt };
         accumulator.ingest(payload);
         const delta = responseDelta(payload);
         if (delta) yield { type: 'delta', delta };
@@ -398,6 +404,8 @@ export class OpenClawLettaAdapter implements ChatBackendAdapter {
       }
       const error = backendError(payload);
       if (error) throw new Error(`OpenClaw Gateway error: ${error}`);
+      const receipt = extractExecutionReceipt(payload);
+      if (receipt) yield { type: 'execution-evidence', evidence: receipt };
       accumulator.ingest(payload);
       const delta = responseDelta(payload);
       if (delta) yield { type: 'delta', delta };
