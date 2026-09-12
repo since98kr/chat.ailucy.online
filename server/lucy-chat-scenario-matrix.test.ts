@@ -86,6 +86,15 @@ describe('Lucy Chat scenario evidence matrix', () => {
   it('keeps source evidence and end-to-end acceptance as separate verdicts', () => {
     expect(matrix.scenarios.every((scenario) => !scenario.sourceAuditVerdict.includes('BLOCKED_REAL_PROVIDER'))).toBe(true);
     expect(matrix.scenarios.some((scenario) => scenario.sourceAuditVerdict === 'PASS')).toBe(true);
-    expect(matrix.scenarios.some((scenario) => scenario.sourceAuditVerdict.includes('RUNTIME_PROOF_PENDING'))).toBe(true);
+    expect(matrix.scenarios.some((scenario) => scenario.sourceAuditVerdict.startsWith('PARTIAL_'))).toBe(true);
+  });
+
+  it('does not overclaim artifact run ownership or personal-memory ownership', () => {
+    expect(matrix.scenarios.find((scenario) => scenario.id === 'S9')?.sourceAuditVerdict).toBe(
+      'PARTIAL_RUN_OWNERSHIP_PENDING',
+    );
+    expect(matrix.scenarios.find((scenario) => scenario.id === 'S12')?.sourceAuditVerdict).toBe(
+      'PARTIAL_MEMORY_OWNER_PENDING',
+    );
   });
 });
