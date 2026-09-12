@@ -40,10 +40,10 @@
       "forbiddenBehavior": ["Reset the task", "Switch project/agent silently", "Infer a target from prose alone"],
       "backendIdentity": "continuationTarget must match conversation runtime identity",
       "observableEvidence": ["targetRef correlation", "same conversation/session identity", "bounded continuation result"],
-      "sourceAuditVerdict": "PASS",
+      "sourceAuditVerdict": "PARTIAL_CONTINUATION_BEHAVIOR_PENDING",
       "acceptanceVerdict": "BLOCKED_REAL_PROVIDER",
-      "currentSourceEvidence": ["e2e/chat.spec.ts: personal Lucy binds 계속해 to the same persisted task", "ConversationOperatingContext persistence"],
-      "primaryGap": "Real-provider exact-main continuation reproof is gated by #210."
+      "currentSourceEvidence": ["e2e/chat.spec.ts proves 계속해 preserves the same activeTask and continuationTarget", "ConversationOperatingContext persistence", "server/adapters/mock.ts does not behaviorally continue the bound prior task for non-status continuation replies"],
+      "primaryGap": "Source proves continuation binding and fail-closed identity checks, but no deterministic behavioral test proves that a continuation turn actually advances the previously bound task and returns a bounded continuation result; real-provider proof is also gated by #210."
     },
     {
       "id": "S3",
