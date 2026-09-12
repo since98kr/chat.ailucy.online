@@ -15,10 +15,27 @@ export type RunExecutionEvidence = RunExecutionIdentity & {
   evidenceRef: string;
 };
 
+export type RunCompletionGuard = {
+  activeTaskId: string | null;
+  blockerId: string | null;
+};
+
 const SAFE_RECEIPT_ID = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,199}$/;
 
 function nonBlank(value: string) {
   return value.trim().length > 0;
+}
+
+export function runCompletionGuard(context: ConversationOperatingContext): RunCompletionGuard {
+  return {
+    activeTaskId: context.activeTask?.taskId ?? null,
+    blockerId: context.blocker?.blockerId ?? null,
+  };
+}
+
+function completionGuardMatches(context: ConversationOperatingContext, guard: RunCompletionGuard) {
+  return (context.activeTask?.taskId ?? null) === guard.activeTaskId
+    && (context.blocker?.blockerId ?? null) === guard.blockerId;
 }
 
 /**
@@ -62,18 +79,35 @@ export function applyVerifiedExecutionCompletion(
   context: ConversationOperatingContext,
   identity: RunExecutionIdentity,
   evidence: readonly RunExecutionEvidence[],
+  guard?: RunCompletionGuard,
 ) {
   const verified = verifiedExecutionEvidence(evidence, identity);
   if (!verified) {
     return {
       verified: false as const,
+      stale: false as const,
       context,
       evidence: null,
     };
   }
 
+  // A receipt proves only its own operation. It must not rewrite state created
+  // by a newer task/continuation while this run was still streaming. Requiring
+  // the exact task+blocker snapshot observed at run start makes stale
+  // completion fail closed instead of clearing a newer blocker or claiming to
+  // be the latest verified result.
+  if (!guard || !completionGuardMatches(context, guard)) {
+    return {
+      verified: false as const,
+      stale: true as const,
+      context,
+      evidence: verified,
+    };
+  }
+
   return {
     verified: true as const,
+    stale: false as const,
     context: {
       ...recordVerifiedFact(
         context,
