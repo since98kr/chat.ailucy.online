@@ -1,14 +1,16 @@
 # Lucy Chat Scenario Audit — 2026-08-30
 
+> **Historical audit notice (2026-09-11):** This document records the initial H0/H1/H2 source audit at `e022f0ea39e07a4181ea7ad96b5761b9f55d971b`. Its FAIL/PARTIAL findings are intentionally preserved as history and are **not current verdicts**. The current machine-readable S1–S12 evidence is `docs/lucy-chat-scenarios.v1.json`, refreshed against main baseline `698feb660d296ef60267abe76d05a6cb9d42129b`. Current source contracts include ConversationOperatingContext, canonical `[OpenClaw] Lucy`, room-scoped runs, approval binding, blocker/recovery, artifact/retry ownership, and identity migration. End-to-end real-provider acceptance remains blocked by #210 `AUTH/USAGE`; no source PASS below should be inferred as provider acceptance.
+
 Issue: #199
 Base truth: `main` @ `e022f0ea39e07a4181ea7ad96b5761b9f55d971b`
-Status: H0/H1/H2 audit complete; first operating-context implementation slices active — no production/runtime mutation
+Status: HISTORICAL INITIAL AUDIT — superseded for current verdicts by `docs/lucy-chat-scenarios.v1.json`
 
 ## Outcome
 
 Restore Lucy Chat as a coherent personal 1:1 working conversation with real Lucy orchestration. The user should not have to reason about backend transport, federation, worker envelopes, or internal execution events to continue normal work.
 
-## Current-source findings
+## Current-source findings at the 2026-08-30 baseline
 
 ### F1 — The root application still composes multiple product eras
 
@@ -109,7 +111,7 @@ Required behavior: visible identity must bind to the actual backend/session iden
 
 ## Scenario gap matrix — initial source audit
 
-| Scenario | Current source evidence | Initial verdict | Primary gap |
+| Scenario | Current source evidence at 2026-08-30 baseline | Initial verdict | Primary gap |
 |---|---|---|---|
 | S1 Fresh/vague request | Fresh defaults to Hermes | FAIL | wrong default product identity |
 | S2 `계속해` | no durable continuation target contract | FAIL | model-only inference |
@@ -182,6 +184,6 @@ Important boundaries:
 - treating green transport health as scenario acceptance;
 - deleting Hermes/Federation runtime code before confirming which pieces remain required by separate backend-parity work.
 
-## Current verdict
+## Baseline verdict (historical)
 
-`IMPLEMENTATION_ACTIVE`. The product-model conflict is now explicit: personal Letta Lucy is the default 1:1 entry contract, while legacy Hermes/Federation capability remains available only through explicit selection. The typed operating-context layer is being bound to the existing Conversation/backend session rather than creating a parallel controller or memory system.
+`IMPLEMENTATION_ACTIVE`. At this 2026-08-30 baseline the product-model conflict had been made explicit and the typed operating-context direction had been chosen. See `docs/lucy-chat-scenarios.v1.json` for the current source evidence and the separately tracked real-provider acceptance gate.

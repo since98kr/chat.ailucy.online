@@ -1,0 +1,162 @@
+import { readFileSync } from 'node:fs';
+import { describe, expect, it } from 'vitest';
+
+type Scenario = {
+  id: string;
+  name: string;
+  initialState: string;
+  userTurns: string[];
+  expectedLucyBehavior: string[];
+  forbiddenBehavior: string[];
+  backendIdentity: string;
+  observableEvidence: string[];
+  sourceAuditVerdict: string;
+  acceptanceVerdict: string;
+  currentSourceEvidence: string[];
+  primaryGap: string;
+};
+
+type ScenarioMatrix = {
+  schemaVersion: string;
+  issue: number;
+  evidenceRefreshIssue: number;
+  productMode: string;
+  sourceBaselineSha: string;
+  refreshedAt: string;
+  completionRule: string;
+  acceptanceGate: {
+    issue: number;
+    classification: string;
+    blocked: boolean;
+    reason: string;
+  };
+  verdictSemantics: {
+    sourceAuditVerdict: string;
+    acceptanceVerdict: string;
+  };
+  scenarios: Scenario[];
+};
+
+const matrix = JSON.parse(
+  readFileSync(new URL('../docs/lucy-chat-scenarios.v1.json', import.meta.url), 'utf8'),
+) as ScenarioMatrix;
+
+function expectNonBlankString(value: unknown) {
+  expect(typeof value).toBe('string');
+  expect((value as string).trim().length).toBeGreaterThan(0);
+}
+
+function expectNonBlankStringArray(value: unknown) {
+  expect(Array.isArray(value)).toBe(true);
+  const items = value as unknown[];
+  expect(items.length).toBeGreaterThan(0);
+  for (const item of items) expectNonBlankString(item);
+}
+
+describe('Lucy Chat scenario evidence matrix', () => {
+  it('keeps one complete machine-readable contract for every S1-S12 scenario', () => {
+    expect(matrix.schemaVersion).toBe('lucy.chat.scenario-matrix.v1');
+    expect(matrix.issue).toBe(199);
+    expect(matrix.evidenceRefreshIssue).toBe(232);
+    expectNonBlankString(matrix.productMode);
+    expectNonBlankString(matrix.sourceBaselineSha);
+    expect(matrix.sourceBaselineSha).toMatch(/^[0-9a-f]{40}$/);
+    expectNonBlankString(matrix.refreshedAt);
+    expect(Number.isFinite(Date.parse(matrix.refreshedAt))).toBe(true);
+    expectNonBlankString(matrix.completionRule);
+    expect(matrix.verdictSemantics).toEqual({
+      sourceAuditVerdict: 'Deterministic current-source contract only; PASS does not imply real-provider staging acceptance.',
+      acceptanceVerdict: 'End-to-end current-main acceptance. BLOCKED_REAL_PROVIDER means the source contract is present but the required provider-backed proof cannot be rerun under the current AUTH/USAGE gate.',
+    });
+    expect(Array.isArray(matrix.scenarios)).toBe(true);
+    expect(matrix.scenarios.map((scenario) => scenario.id)).toEqual(
+      Array.from({ length: 12 }, (_, index) => `S${index + 1}`),
+    );
+
+    for (const scenario of matrix.scenarios) {
+      expectNonBlankString(scenario.id);
+      expectNonBlankString(scenario.name);
+      expectNonBlankString(scenario.initialState);
+      expectNonBlankStringArray(scenario.userTurns);
+      expectNonBlankStringArray(scenario.expectedLucyBehavior);
+      expectNonBlankStringArray(scenario.forbiddenBehavior);
+      expectNonBlankString(scenario.backendIdentity);
+      expectNonBlankStringArray(scenario.observableEvidence);
+      expectNonBlankString(scenario.sourceAuditVerdict);
+      expectNonBlankString(scenario.acceptanceVerdict);
+      expectNonBlankStringArray(scenario.currentSourceEvidence);
+      expectNonBlankString(scenario.primaryGap);
+    }
+  });
+
+  it('cannot claim provider-backed acceptance while the canonical AUTH/USAGE gate is blocked', () => {
+    expect(matrix.acceptanceGate).toMatchObject({
+      issue: 210,
+      classification: 'AUTH/USAGE',
+      blocked: true,
+    });
+    expectNonBlankString(matrix.acceptanceGate.reason);
+    expect(matrix.acceptanceGate.reason).toContain('429');
+    expect(matrix.scenarios.every((scenario) => scenario.acceptanceVerdict === 'BLOCKED_REAL_PROVIDER')).toBe(true);
+  });
+
+  it('keeps source evidence and end-to-end acceptance as separate verdicts', () => {
+    expect(matrix.scenarios.every((scenario) => !scenario.sourceAuditVerdict.includes('BLOCKED_REAL_PROVIDER'))).toBe(true);
+    expect(matrix.scenarios.some((scenario) => scenario.sourceAuditVerdict === 'PASS')).toBe(true);
+    expect(matrix.scenarios.some((scenario) => scenario.sourceAuditVerdict.startsWith('PARTIAL_'))).toBe(true);
+  });
+
+  it('keeps a fresh vague request partial until its behavioral truth is proven', () => {
+    const scenario = matrix.scenarios.find((item) => item.id === 'S1');
+    expect(scenario?.sourceAuditVerdict).toBe('PARTIAL_VAGUE_REQUEST_BEHAVIOR_PENDING');
+    expect(scenario?.expectedLucyBehavior).toContain('Identify the task without inventing runtime/project facts');
+    expect(scenario?.expectedLucyBehavior).toContain('Represent unavailable state as UNKNOWN');
+    expect(scenario?.primaryGap).toContain('no deterministic behavioral test');
+    expect(scenario?.primaryGap).toContain('#210');
+  });
+
+  it('keeps continuation behavior partial until prior-work execution is proven', () => {
+    const scenario = matrix.scenarios.find((item) => item.id === 'S2');
+    expect(scenario?.sourceAuditVerdict).toBe('PARTIAL_CONTINUATION_BEHAVIOR_PENDING');
+    expect(scenario?.expectedLucyBehavior).toContain('Continue the same task/session');
+    expect(scenario?.observableEvidence).toContain('bounded continuation result');
+    expect(scenario?.primaryGap).toContain('no deterministic behavioral test');
+    expect(scenario?.primaryGap).toContain('previously bound task');
+    expect(scenario?.primaryGap).toContain('#210');
+  });
+
+  it('does not overclaim artifact run ownership or personal-memory ownership', () => {
+    const artifactScenario = matrix.scenarios.find((scenario) => scenario.id === 'S9');
+    const memoryScenario = matrix.scenarios.find((scenario) => scenario.id === 'S12');
+
+    expect(artifactScenario?.sourceAuditVerdict).toBe('PARTIAL_RUN_OWNERSHIP_PENDING');
+    expect(artifactScenario?.observableEvidence).toContain('durable producing run/task ownership');
+    expect(artifactScenario?.primaryGap).toContain('run/task ownership');
+    expect(artifactScenario?.primaryGap).toContain('#238');
+
+    expect(memoryScenario?.sourceAuditVerdict).toBe('PARTIAL_MEMORY_OWNER_PENDING');
+    expect(memoryScenario?.observableEvidence).toContain(
+      'verified personal-memory owner routing or explicit UNKNOWN/unsupported',
+    );
+    expect(memoryScenario?.primaryGap).toContain('verified personal-memory owner');
+    expect(memoryScenario?.primaryGap).toContain('UNKNOWN/unsupported');
+    expect(memoryScenario?.primaryGap).toContain('#239');
+  });
+
+  it('keeps durable continuity and cross-agent isolation partial until behavior is proven', () => {
+    const continuityScenario = matrix.scenarios.find((scenario) => scenario.id === 'S10');
+    const isolationScenario = matrix.scenarios.find((scenario) => scenario.id === 'S11');
+
+    expect(continuityScenario?.sourceAuditVerdict).toBe('PARTIAL_DURABLE_CONTINUITY_PENDING');
+    expect(continuityScenario?.observableEvidence).toContain('restored operating context');
+    expect(continuityScenario?.expectedLucyBehavior).toContain('Preserve active task and approval binding');
+    expect(continuityScenario?.primaryGap).toContain('no deterministic behavioral test');
+    expect(continuityScenario?.primaryGap).toContain('reload/reconnect');
+
+    expect(isolationScenario?.sourceAuditVerdict).toBe('PARTIAL_CROSS_AGENT_ISOLATION_PENDING');
+    expect(isolationScenario?.observableEvidence).toContain('cross-agent isolation tests');
+    expect(isolationScenario?.forbiddenBehavior).toContain("Leak another agent's task/tool/artifact state");
+    expect(isolationScenario?.primaryGap).toContain('no behavioral isolation test');
+    expect(isolationScenario?.primaryGap).toContain('task, tool, or artifact');
+  });
+});
