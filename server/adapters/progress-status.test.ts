@@ -62,21 +62,37 @@ describe('progress status sanitization', () => {
     expect(status).not.toContain('Signature=secret');
   });
 
-  it('redacts quoted, punctuation-wrapped Unix paths and Windows UNC paths', () => {
+  it('redacts quoted, punctuation-wrapped, colon-prefixed, drive, and UNC private paths', () => {
     const status = sanitizeProgressStatus(
-      'Reading "/data/artifacts/private/config.json" then Opening (/workspace/private/file.txt) and [`/srv/private/a.txt`] then \\\\server\\share\\private.txt',
+      'Reading "/data/customer secrets/private key.txt" then path:/data/artifacts/private/config.json and C:/Users/tei/private.txt plus Opening (/workspace/private/file.txt) and [`/srv/private/a.txt`] then \\\\server\\share\\private.txt',
     );
+    expect(status).not.toContain('/data/customer secrets/private key.txt');
     expect(status).not.toContain('/data/artifacts/private/config.json');
+    expect(status).not.toContain('C:/Users/tei/private.txt');
     expect(status).not.toContain('/workspace/private/file.txt');
     expect(status).not.toContain('/srv/private/a.txt');
     expect(status).not.toContain('\\\\server\\share\\private.txt');
-    expect(status.match(/\[path\]/g)?.length).toBe(4);
+    expect(status).toContain('path:[path]');
+    expect(status.match(/\[path\]/g)?.length).toBe(6);
   });
 
-  it('does not mistake an https URL for an absolute filesystem path', () => {
+  it('preserves complete https URLs including path-like query and hash portions', () => {
     expect(sanitizeProgressStatus('Checking https://chat.ailucy.online health')).toBe(
       'Checking https://chat.ailucy.online health',
     );
+    expect(sanitizeProgressStatus('Checking https://example.test/callback?next=/private/dashboard')).toBe(
+      'Checking https://example.test/callback?next=/private/dashboard',
+    );
+    expect(sanitizeProgressStatus('Checking https://example.test/#/settings')).toBe(
+      'Checking https://example.test/#/settings',
+    );
+  });
+
+  it('still redacts named secrets carried inside otherwise preserved URLs', () => {
+    const status = sanitizeProgressStatus('Checking https://example.test/callback?token=customer-secret&next=/private/dashboard');
+    expect(status).not.toContain('customer-secret');
+    expect(status).toContain('token=[redacted]');
+    expect(status).toContain('next=/private/dashboard');
   });
 
   it('replaces JSON and textual tool argument blobs with a bounded generic progress label', () => {
@@ -93,6 +109,10 @@ describe('progress status sanitization', () => {
     expect(sanitizeProgressStatus('tool call search(query=customer-private-info)'))
       .toBe('도구 실행 중');
     expect(sanitizeProgressStatus('tool call search query=customer-private-info'))
+      .toBe('도구 실행 중');
+    expect(sanitizeProgressStatus('tool call search with query=customer-private-info'))
+      .toBe('도구 실행 중');
+    expect(sanitizeProgressStatus('tool call exec using arguments={"command":"cat /private"}'))
       .toBe('도구 실행 중');
   });
 
