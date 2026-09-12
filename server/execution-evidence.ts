@@ -2,8 +2,7 @@ import {
   recordVerifiedFact,
   type ConversationOperatingContext,
 } from '../shared/conversation-operating-context.js';
-
-export type RunExecutionEvidenceKind = 'artifact' | 'tool-receipt' | 'result-receipt';
+import type { AdapterExecutionReceipt } from './adapters/types.js';
 
 export type RunExecutionIdentity = {
   runId: string;
@@ -12,23 +11,34 @@ export type RunExecutionIdentity = {
 };
 
 export type RunExecutionEvidence = RunExecutionIdentity & {
-  kind: RunExecutionEvidenceKind;
+  kind: AdapterExecutionReceipt['kind'];
   evidenceRef: string;
 };
+
+const SAFE_RECEIPT_ID = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,199}$/;
 
 function nonBlank(value: string) {
   return value.trim().length > 0;
 }
 
-export function artifactExecutionEvidence(
+/**
+ * Convert a provider-owned receipt into current-run evidence only after the
+ * provider echoes the exact session + operation identity. The current runId is
+ * attached after that verification; generic artifacts or locally inferred
+ * success never create execution evidence.
+ */
+export function providerExecutionEvidence(
   identity: RunExecutionIdentity,
-  artifactId: string,
-): RunExecutionEvidence {
-  if (!nonBlank(artifactId)) throw new Error('artifactId must be non-empty');
+  receipt: AdapterExecutionReceipt,
+): RunExecutionEvidence | null {
+  if (!nonBlank(identity.runId) || !nonBlank(identity.sessionId) || !nonBlank(identity.operationId)) return null;
+  if (receipt.sessionId !== identity.sessionId) return null;
+  if (receipt.operationId !== identity.operationId) return null;
+  if (!SAFE_RECEIPT_ID.test(receipt.receiptId)) return null;
   return {
     ...identity,
-    kind: 'artifact',
-    evidenceRef: `run:${identity.runId}/artifact:${artifactId}`,
+    kind: receipt.kind,
+    evidenceRef: `provider-receipt:${receipt.receiptId}`,
   };
 }
 
@@ -67,7 +77,7 @@ export function applyVerifiedExecutionCompletion(
     context: {
       ...recordVerifiedFact(
         context,
-        'The latest bound Lucy execution completed with verified result evidence.',
+        'The latest bound Lucy execution completed with verified provider result evidence.',
         verified.evidenceRef,
       ),
       blocker: null,
