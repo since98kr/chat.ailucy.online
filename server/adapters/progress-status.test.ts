@@ -24,20 +24,28 @@ describe('progress status sanitization', () => {
     expect(status.endsWith('…')).toBe(true);
   });
 
-  it('redacts bearer, prefixed named secrets, and arbitrary absolute private paths', () => {
+  it('redacts bearer, authorization, prefixed named secrets, and arbitrary absolute private paths', () => {
     const status = sanitizeProgressStatus(
-      'connecting Authorization: Bearer abcdefghijklmnop LETTA_API_KEY=super-secret CF_ACCESS_CLIENT_SECRET=cloudflare-secret path=/data/artifacts/private/config.json workspace=/workspace/private C:\\custom\\tei\\secret.txt',
+      'connecting Authorization: Basic dXNlcjpwYXNz LETTA_API_KEY=super-secret CF_ACCESS_CLIENT_SECRET=cloudflare-secret path=/data/artifacts/private/config.json workspace=/workspace/private C:\\custom\\tei\\secret.txt',
     );
-    expect(status).not.toContain('abcdefghijklmnop');
+    expect(status).not.toContain('dXNlcjpwYXNz');
     expect(status).not.toContain('super-secret');
     expect(status).not.toContain('cloudflare-secret');
     expect(status).not.toContain('/data/artifacts');
     expect(status).not.toContain('/workspace/private');
     expect(status).not.toContain('C:\\custom\\tei');
+    expect(status).toContain('Authorization=[redacted]');
     expect(status).toContain('LETTA_API_KEY=[redacted]');
     expect(status).toContain('CF_ACCESS_CLIENT_SECRET=[redacted]');
     expect(status).toContain('path=[path]');
     expect(status).toContain('workspace=[path]');
+  });
+
+  it('redacts quoted Unix paths and Windows UNC paths', () => {
+    const status = sanitizeProgressStatus('Reading "/data/artifacts/private/config.json" then \\\\server\\share\\private.txt');
+    expect(status).not.toContain('/data/artifacts/private/config.json');
+    expect(status).not.toContain('\\\\server\\share\\private.txt');
+    expect(status.match(/\[path\]/g)?.length).toBe(2);
   });
 
   it('does not mistake an https URL for an absolute filesystem path', () => {
@@ -58,6 +66,8 @@ describe('progress status sanitization', () => {
     expect(sanitizeProgressStatus('tool=exec command=cat ./data/private.txt'))
       .toBe('도구 실행 중');
     expect(sanitizeProgressStatus('tool call search(query=customer-private-info)'))
+      .toBe('도구 실행 중');
+    expect(sanitizeProgressStatus('tool call search query=customer-private-info'))
       .toBe('도구 실행 중');
   });
 
