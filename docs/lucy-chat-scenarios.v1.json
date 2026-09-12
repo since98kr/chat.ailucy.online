@@ -152,10 +152,10 @@
       "forbiddenBehavior": ["Create a second logical task silently", "Lose approval identity", "Duplicate action execution", "Abort a response on navigation"],
       "backendIdentity": "restored context must match persisted conversation/session identity",
       "observableEvidence": ["same conversationId/sessionIdentity", "idempotency evidence", "restored operating context", "room-scoped response ownership"],
-      "sourceAuditVerdict": "PASS",
+      "sourceAuditVerdict": "PARTIAL_DURABLE_CONTINUITY_PENDING",
       "acceptanceVerdict": "BLOCKED_REAL_PROVIDER",
-      "currentSourceEvidence": ["PR #231 / e2e/room-stream-navigation.spec.ts", "server/message-retry.test.ts", "server/message-retry-artifact.test.ts"],
-      "primaryGap": "Fresh exact-main real-provider continuity/browser acceptance is gated by #210."
+      "currentSourceEvidence": ["PR #231 / e2e/room-stream-navigation.spec.ts proves room-scoped run ownership across navigation", "server/message-retry.test.ts and server/message-retry-artifact.test.ts prove retry/message/artifact lineage", "current deterministic coverage does not prove activeTask/continuationTarget plus pending approval identity restoration across reload/reconnect"],
+      "primaryGap": "Source proves room-scoped run ownership and retry lineage, but no deterministic behavioral test proves persisted operating context and pending approval identity are restored across reload/reconnect; real-provider continuity acceptance is also gated by #210."
     },
     {
       "id": "S11",
@@ -166,10 +166,10 @@
       "forbiddenBehavior": ["Cosmetic selector with unchanged backend route", "Leak another agent's task/tool/artifact state"],
       "backendIdentity": "visible system/agent must equal current conversation runtime identity while legacy transport aliases remain internal only",
       "observableEvidence": ["routing identity", "session identity", "cross-agent isolation tests", "provider target compatibility"],
-      "sourceAuditVerdict": "PASS",
+      "sourceAuditVerdict": "PARTIAL_CROSS_AGENT_ISOLATION_PENDING",
       "acceptanceVerdict": "BLOCKED_REAL_PROVIDER",
-      "currentSourceEvidence": ["PR #230", "server/openclaw-identity-migration.test.ts", "server/provider-session-identity-compat.test.ts", "server/openclaw-federation-alias.test.ts", "e2e/product-identity.spec.ts"],
-      "primaryGap": "Current exact-main live routing proof is gated by #210; source preserves legacy transport aliases without user-facing Letta identity."
+      "currentSourceEvidence": ["PR #230", "server/openclaw-identity-migration.test.ts", "server/provider-session-identity-compat.test.ts", "server/openclaw-federation-alias.test.ts", "e2e/product-identity.spec.ts prove visible/routing identity contracts", "current deterministic coverage does not attempt cross-agent task/tool/artifact state leakage"],
+      "primaryGap": "Source proves canonical visible/routing identity and provider session compatibility, but no behavioral isolation test attempts and rejects cross-agent task, tool, or artifact state leakage; real-provider acceptance is also gated by #210."
     },
     {
       "id": "S12",
