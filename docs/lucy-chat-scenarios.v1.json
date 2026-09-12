@@ -137,11 +137,11 @@
       "expectedLucyBehavior": ["Return the artifact", "Bind it to the task/run that produced it", "Preserve conversation continuity"],
       "forbiddenBehavior": ["Leak storage paths", "Attach another task/agent artifact"],
       "backendIdentity": "artifact/run/conversation identity must match",
-      "observableEvidence": ["artifactId", "messageId", "conversationId", "delivery ownership"],
-      "sourceAuditVerdict": "PASS",
+      "observableEvidence": ["artifactId", "messageId", "conversationId", "durable producing run/task ownership"],
+      "sourceAuditVerdict": "PARTIAL_RUN_OWNERSHIP_PENDING",
       "acceptanceVerdict": "BLOCKED_REAL_PROVIDER",
-      "currentSourceEvidence": ["server/artifact-roundtrip.test.ts", "server/artifact-envelope-roundtrip.test.ts", "server/message-retry-artifact.test.ts"],
-      "primaryGap": "Fresh real-provider generated-artifact acceptance is gated by #210."
+      "currentSourceEvidence": ["server/artifact-roundtrip.test.ts proves persisted artifact/message/conversation identity", "server/artifact-envelope-roundtrip.test.ts and server/message-retry-artifact.test.ts cover delivery/retry ownership", "current ArtifactRecord does not persist runId/task ownership after the transient artifact.created event"],
+      "primaryGap": "Persisted artifacts do not yet retain verifiable producing run/task ownership across reload or after the response stream is gone; #238 tracks the bounded source fix. Real-provider generated-artifact acceptance is also gated by #210."
     },
     {
       "id": "S10",
@@ -179,11 +179,11 @@
       "expectedLucyBehavior": ["Describe only real memory capabilities", "Use the actual configured memory owner", "Represent unavailable recall/persistence as UNKNOWN or unsupported", "Treat federated Memory Capsules as explicit approved context, not implicit personal-memory persistence"],
       "forbiddenBehavior": ["Imply automatic persistence or deletion that is not real", "Create a parallel fake memory layer", "Treat a Memory Capsule as proof of native backend memory"],
       "backendIdentity": "memory operation/evidence must come from the actual memory owner; explicit federation capsules remain separately identified",
-      "observableEvidence": ["real memory backend evidence", "explicit capsule approval/revocation state", "no fabricated persistence claim"],
-      "sourceAuditVerdict": "PASS_WITH_RUNTIME_PROOF_PENDING",
+      "observableEvidence": ["verified personal-memory owner routing or explicit UNKNOWN/unsupported", "explicit capsule approval/revocation state", "no fabricated persistence claim"],
+      "sourceAuditVerdict": "PARTIAL_MEMORY_OWNER_PENDING",
       "acceptanceVerdict": "BLOCKED_REAL_PROVIDER",
-      "currentSourceEvidence": ["src/FederationPanel.tsx labels capsules as explicit OpenClaw ↔ Hermes context", "ConversationOperatingContext does not implement a parallel memory store", "PR #230 canonical OpenClaw identity"],
-      "primaryGap": "Native personal Lucy memory behavior itself requires current backend/runtime proof, which cannot be refreshed while #210 is blocked."
+      "currentSourceEvidence": ["src/FederationPanel.tsx labels capsules as explicit OpenClaw ↔ Hermes context", "ConversationOperatingContext does not implement a parallel memory store", "server/adapters/mock.ts can still imply long-term memory continuity without backend evidence"],
+      "primaryGap": "Chat does not yet route remember/recall/delete behavior to a verified personal-memory owner or fail closed as UNKNOWN/unsupported when that owner is unavailable; #239 tracks the source fix. Real-provider acceptance also remains gated by #210."
     }
   ]
 }
