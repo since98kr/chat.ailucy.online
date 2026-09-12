@@ -24,22 +24,26 @@ describe('progress status sanitization', () => {
     expect(status.endsWith('…')).toBe(true);
   });
 
-  it('redacts bearer tokens, named secrets, and private paths', () => {
+  it('redacts bearer tokens, named secrets, and private paths even when paths are attached to labels', () => {
     const status = sanitizeProgressStatus(
-      'connecting Authorization: Bearer abcdefghijklmnop api_key=super-secret /home/since98kr/private/config.json C:\\Users\\tei\\secret.txt',
+      'connecting Authorization: Bearer abcdefghijklmnop api_key=super-secret path=/home/since98kr/private/config.json C:\\Users\\tei\\secret.txt',
     );
     expect(status).not.toContain('abcdefghijklmnop');
     expect(status).not.toContain('super-secret');
     expect(status).not.toContain('/home/since98kr');
     expect(status).not.toContain('C:\\Users\\tei');
     expect(status).toContain('[redacted]');
-    expect(status).toContain('[path]');
+    expect(status).toContain('path=[path]');
   });
 
   it('replaces raw tool argument blobs with a bounded generic progress label', () => {
     expect(sanitizeProgressStatus('tool=exec args={"command":"cat /etc/passwd","token":"secret"}'))
       .toBe('도구 실행 중');
     expect(sanitizeProgressStatus('{"arguments":{"path":"/root/private","password":"secret"}}'))
+      .toBe('도구 실행 중');
+    expect(sanitizeProgressStatus('exec {"command":"cat /etc/passwd","query":"customer-42"}'))
+      .toBe('도구 실행 중');
+    expect(sanitizeProgressStatus('tool input=[{"path":"/root/private","op":"read"}]'))
       .toBe('도구 실행 중');
   });
 
