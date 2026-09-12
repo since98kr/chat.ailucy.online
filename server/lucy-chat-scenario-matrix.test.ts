@@ -142,4 +142,21 @@ describe('Lucy Chat scenario evidence matrix', () => {
     expect(memoryScenario?.primaryGap).toContain('UNKNOWN/unsupported');
     expect(memoryScenario?.primaryGap).toContain('#239');
   });
+
+  it('keeps durable continuity and cross-agent isolation partial until behavior is proven', () => {
+    const continuityScenario = matrix.scenarios.find((scenario) => scenario.id === 'S10');
+    const isolationScenario = matrix.scenarios.find((scenario) => scenario.id === 'S11');
+
+    expect(continuityScenario?.sourceAuditVerdict).toBe('PARTIAL_DURABLE_CONTINUITY_PENDING');
+    expect(continuityScenario?.observableEvidence).toContain('restored operating context');
+    expect(continuityScenario?.expectedLucyBehavior).toContain('Preserve active task and approval binding');
+    expect(continuityScenario?.primaryGap).toContain('no deterministic behavioral test');
+    expect(continuityScenario?.primaryGap).toContain('reload/reconnect');
+
+    expect(isolationScenario?.sourceAuditVerdict).toBe('PARTIAL_CROSS_AGENT_ISOLATION_PENDING');
+    expect(isolationScenario?.observableEvidence).toContain('cross-agent isolation tests');
+    expect(isolationScenario?.forbiddenBehavior).toContain("Leak another agent's task/tool/artifact state");
+    expect(isolationScenario?.primaryGap).toContain('no behavioral isolation test');
+    expect(isolationScenario?.primaryGap).toContain('task, tool, or artifact');
+  });
 });
