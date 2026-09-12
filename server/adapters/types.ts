@@ -22,7 +22,7 @@ export type AdapterExecutionReceipt = {
   kind: 'tool-receipt' | 'result-receipt';
   sessionId: string;
   operationId: string;
-  evidenceRef: string;
+  receiptId: string;
 };
 
 export type AdapterStreamItem =
