@@ -8,7 +8,7 @@ const BEARER_SECRET = /\bBearer\s+[A-Za-z0-9._~+/=-]{8,}/gi;
 // Once an Authorization field starts, redact the complete remainder so comma-
 // delimited schemes (Digest, AWS SigV4, etc.) cannot leak later parameters.
 const AUTHORIZATION_SECRET = /\bAuthorization\b\s*[:=]\s*.*$/gi;
-const NAMED_SECRET = /["']?\b((?:[A-Za-z][A-Za-z0-9_-]*[_-])?(?:api[_-]?key|access[_-]?token|refresh[_-]?token|session[_-]?token|token|secret|password|authorization|cookie))\b["']?\s*[:=]\s*(?:"[^"]*"|'[^']*'|[^\s,;}]+)/gi;
+const NAMED_SECRET = /["']?\b((?:[A-Za-z][A-Za-z0-9_-]*[_-])?(?:api[_-]?key|access[_-]?token|refresh[_-]?token|session[_-]?token|token|secret|password|authorization|cookie))\b["']?\s*[:=]\s*(?:"[^"]*"|'[^']*'|[^\s,;}&]+)/gi;
 const OPENAI_STYLE_SECRET = /\bsk-[A-Za-z0-9_-]{8,}\b/g;
 const URL = /https?:\/\/[^\s<>"']+/gi;
 const QUOTED_UNIX_PATH = /(["'])(\/(?!\/)[^"']*)\1/g;
