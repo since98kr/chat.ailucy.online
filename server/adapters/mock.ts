@@ -73,8 +73,10 @@ export class MockAdapter implements ChatBackendAdapter {
     yield { type: 'status', status };
     await sleep(90);
 
-    const isVerifiedTestRecovery = process.env.NODE_ENV === 'test'
-      && Boolean(failureMarker)
+    // CHAT_TEST_MOCK_FAILURE_PATTERN is a test-harness-only switch. Browser CI
+    // launches the mock server without NODE_ENV=test, so the explicit marker is
+    // the authoritative boundary for emitting deterministic recovery evidence.
+    const isVerifiedTestRecovery = Boolean(failureMarker)
       && request.operatingIntent === 'continuation'
       && request.operatingContext?.blocker?.summary.includes(failureMarker!) === true;
     if (isVerifiedTestRecovery) {
