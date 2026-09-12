@@ -26,26 +26,51 @@ describe('progress status sanitization', () => {
 
   it('redacts bearer, authorization, prefixed named secrets, and arbitrary absolute private paths', () => {
     const status = sanitizeProgressStatus(
-      'connecting Authorization: Basic dXNlcjpwYXNz LETTA_API_KEY=super-secret CF_ACCESS_CLIENT_SECRET=cloudflare-secret path=/data/artifacts/private/config.json workspace=/workspace/private C:\\custom\\tei\\secret.txt',
+      'connecting LETTA_API_KEY=super-secret CF_ACCESS_CLIENT_SECRET=cloudflare-secret path=/data/artifacts/private/config.json workspace=/workspace/private C:\\custom\\tei\\secret.txt',
     );
-    expect(status).not.toContain('dXNlcjpwYXNz');
     expect(status).not.toContain('super-secret');
     expect(status).not.toContain('cloudflare-secret');
     expect(status).not.toContain('/data/artifacts');
     expect(status).not.toContain('/workspace/private');
     expect(status).not.toContain('C:\\custom\\tei');
-    expect(status).toContain('Authorization=[redacted]');
     expect(status).toContain('LETTA_API_KEY=[redacted]');
     expect(status).toContain('CF_ACCESS_CLIENT_SECRET=[redacted]');
     expect(status).toContain('path=[path]');
     expect(status).toContain('workspace=[path]');
   });
 
-  it('redacts quoted Unix paths and Windows UNC paths', () => {
-    const status = sanitizeProgressStatus('Reading "/data/artifacts/private/config.json" then \\\\server\\share\\private.txt');
+  it('redacts bare and prefixed named secret labels', () => {
+    const status = sanitizeProgressStatus(
+      'password=hunter2 token=customer-secret api_key=abcdefghijk LETTA_API_KEY=super-secret',
+    );
+    expect(status).not.toContain('hunter2');
+    expect(status).not.toContain('customer-secret');
+    expect(status).not.toContain('abcdefghijk');
+    expect(status).not.toContain('super-secret');
+    expect(status).toContain('password=[redacted]');
+    expect(status).toContain('token=[redacted]');
+    expect(status).toContain('api_key=[redacted]');
+    expect(status).toContain('LETTA_API_KEY=[redacted]');
+  });
+
+  it('redacts the complete remainder of comma-delimited authorization values', () => {
+    const status = sanitizeProgressStatus(
+      'auth Authorization: AWS4-HMAC-SHA256 Credential=abc, SignedHeaders=host, Signature=secret',
+    );
+    expect(status).toBe('auth Authorization=[redacted]');
+    expect(status).not.toContain('Credential=abc');
+    expect(status).not.toContain('Signature=secret');
+  });
+
+  it('redacts quoted, punctuation-wrapped Unix paths and Windows UNC paths', () => {
+    const status = sanitizeProgressStatus(
+      'Reading "/data/artifacts/private/config.json" then Opening (/workspace/private/file.txt) and [`/srv/private/a.txt`] then \\\\server\\share\\private.txt',
+    );
     expect(status).not.toContain('/data/artifacts/private/config.json');
+    expect(status).not.toContain('/workspace/private/file.txt');
+    expect(status).not.toContain('/srv/private/a.txt');
     expect(status).not.toContain('\\\\server\\share\\private.txt');
-    expect(status.match(/\[path\]/g)?.length).toBe(2);
+    expect(status.match(/\[path\]/g)?.length).toBe(4);
   });
 
   it('does not mistake an https URL for an absolute filesystem path', () => {
