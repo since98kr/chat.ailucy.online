@@ -14,8 +14,8 @@ import type { CollaborationService } from './collaboration.js';
 import type { ChatDatabase } from './database.js';
 import type { ConversationOperatingIntent } from './conversation-intent.js';
 import {
-  artifactExecutionEvidence,
-  verifiedExecutionEvidence,
+  applyVerifiedExecutionCompletion,
+  providerExecutionEvidence,
   type RunExecutionEvidence,
 } from './execution-evidence.js';
 import { providerSessionIdentity } from './provider-session-identity.js';
@@ -229,6 +229,11 @@ export async function* runCollaborativeReply(input: CollaborationRunInput): Asyn
           yield { type: 'team.activity', activity: statusActivity };
           continue;
         }
+        if (item.type === 'execution-evidence') {
+          const evidence = providerExecutionEvidence(executionIdentity, item.evidence);
+          if (evidence) executionEvidence.push(evidence);
+          continue;
+        }
         if (item.type === 'artifact') {
           const artifactKey = `${item.artifact.filename}\u0000${item.artifact.mimeType}\u0000${item.artifact.contentBase64}`;
           if (deliveredArtifactKeys.has(artifactKey)) continue;
@@ -239,9 +244,8 @@ export async function* runCollaborativeReply(input: CollaborationRunInput): Asyn
             messageId: assistantMessage.id,
             ...stored,
           });
-          executionEvidence.push(artifactExecutionEvidence(executionIdentity, artifact.id));
-          // Storage locations are server-internal capability data. Persist them for
-          // download handling, but never put them on the event stream.
+          // Generated attachments remain artifacts only. They are not execution
+          // evidence unless the backend separately emits a correlated receipt.
           const { storagePath: _storagePath, ...publicArtifact } = artifact;
           yield { type: 'artifact.created', runId, artifact: publicArtifact as ArtifactRecord };
           continue;
@@ -305,8 +309,9 @@ export async function* runCollaborativeReply(input: CollaborationRunInput): Asyn
       yield { type: 'team.activity', activity: outputActivity };
       yield { type: 'participants.updated', participants };
       if (agentId === conversation.agentId && !signal.aborted && (input.operatingIntent ?? 'ordinary') !== 'status') {
-        const verified = verifiedExecutionEvidence(executionEvidence, executionIdentity);
-        if (verified) database.recordConversationRunCompleted(conversation.id, runId);
+        database.updateConversationOperatingContext(conversation.id, (context) => (
+          applyVerifiedExecutionCompletion(context, executionIdentity, executionEvidence).context
+        ));
       }
       yield { type: 'run.completed', runId, message: finalMessage, agentId };
       if (signal.aborted) return;
