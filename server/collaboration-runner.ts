@@ -13,6 +13,11 @@ import { storeGeneratedArtifact } from './artifacts.js';
 import type { CollaborationService } from './collaboration.js';
 import type { ChatDatabase } from './database.js';
 import type { ConversationOperatingIntent } from './conversation-intent.js';
+import {
+  artifactExecutionEvidence,
+  verifiedExecutionEvidence,
+  type RunExecutionEvidence,
+} from './execution-evidence.js';
 import { providerSessionIdentity } from './provider-session-identity.js';
 
 export type CollaborationRunInput = {
@@ -113,6 +118,8 @@ export async function* runCollaborativeReply(input: CollaborationRunInput): Asyn
     const runId = randomUUID();
     const sessionId = sessionIdentity(conversation, agentId, input.sessionId);
     const idempotencyKey = operationIdentity(input, agentId, sessionId);
+    const executionIdentity = { runId, sessionId, operationId: idempotencyKey };
+    const executionEvidence: RunExecutionEvidence[] = [];
     const state = participantWorkState(agentId);
     const retryLabel = input.regeneratedFromMessageId
       ? `${input.retryMode === 'retry' ? 'Retry' : 'Regeneration'} requested from response ${input.regeneratedFromMessageId}.`
@@ -232,6 +239,7 @@ export async function* runCollaborativeReply(input: CollaborationRunInput): Asyn
             messageId: assistantMessage.id,
             ...stored,
           });
+          executionEvidence.push(artifactExecutionEvidence(executionIdentity, artifact.id));
           // Storage locations are server-internal capability data. Persist them for
           // download handling, but never put them on the event stream.
           const { storagePath: _storagePath, ...publicArtifact } = artifact;
@@ -297,7 +305,8 @@ export async function* runCollaborativeReply(input: CollaborationRunInput): Asyn
       yield { type: 'team.activity', activity: outputActivity };
       yield { type: 'participants.updated', participants };
       if (agentId === conversation.agentId && !signal.aborted && (input.operatingIntent ?? 'ordinary') !== 'status') {
-        database.recordConversationRunCompleted(conversation.id, runId);
+        const verified = verifiedExecutionEvidence(executionEvidence, executionIdentity);
+        if (verified) database.recordConversationRunCompleted(conversation.id, runId);
       }
       yield { type: 'run.completed', runId, message: finalMessage, agentId };
       if (signal.aborted) return;
