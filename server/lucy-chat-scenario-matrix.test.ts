@@ -90,11 +90,20 @@ describe('Lucy Chat scenario evidence matrix', () => {
   });
 
   it('does not overclaim artifact run ownership or personal-memory ownership', () => {
-    expect(matrix.scenarios.find((scenario) => scenario.id === 'S9')?.sourceAuditVerdict).toBe(
-      'PARTIAL_RUN_OWNERSHIP_PENDING',
+    const artifactScenario = matrix.scenarios.find((scenario) => scenario.id === 'S9');
+    const memoryScenario = matrix.scenarios.find((scenario) => scenario.id === 'S12');
+
+    expect(artifactScenario?.sourceAuditVerdict).toBe('PARTIAL_RUN_OWNERSHIP_PENDING');
+    expect(artifactScenario?.observableEvidence).toContain('durable producing run/task ownership');
+    expect(artifactScenario?.primaryGap).toContain('run/task ownership');
+    expect(artifactScenario?.primaryGap).toContain('#238');
+
+    expect(memoryScenario?.sourceAuditVerdict).toBe('PARTIAL_MEMORY_OWNER_PENDING');
+    expect(memoryScenario?.observableEvidence).toContain(
+      'verified personal-memory owner routing or explicit UNKNOWN/unsupported',
     );
-    expect(matrix.scenarios.find((scenario) => scenario.id === 'S12')?.sourceAuditVerdict).toBe(
-      'PARTIAL_MEMORY_OWNER_PENDING',
-    );
+    expect(memoryScenario?.primaryGap).toContain('verified personal-memory owner');
+    expect(memoryScenario?.primaryGap).toContain('UNKNOWN/unsupported');
+    expect(memoryScenario?.primaryGap).toContain('#239');
   });
 });
