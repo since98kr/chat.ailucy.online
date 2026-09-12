@@ -26,10 +26,10 @@
       "forbiddenBehavior": ["Default into a team/federated workflow", "Invent prior task state", "Use deterministic fake Lucy"],
       "backendIdentity": "conversationId + backendSystem + agentId + opaque sessionIdentity",
       "observableEvidence": ["created conversation identity", "real backend turn correlation", "no fabricated status fields"],
-      "sourceAuditVerdict": "PASS",
+      "sourceAuditVerdict": "PARTIAL_VAGUE_REQUEST_BEHAVIOR_PENDING",
       "acceptanceVerdict": "BLOCKED_REAL_PROVIDER",
-      "currentSourceEvidence": ["e2e/product-identity.spec.ts", "e2e/chat.spec.ts", "PR #230"],
-      "primaryGap": "Real-provider exact-main browser proof is gated by #210; source now defaults personal chat to [OpenClaw] Lucy."
+      "currentSourceEvidence": ["e2e/product-identity.spec.ts proves personal conversation identity", "e2e/chat.spec.ts exercises only deterministic mock behavior", "PR #230"],
+      "primaryGap": "Source proves the personal OpenClaw routing identity, but no deterministic behavioral test proves that a fresh vague request identifies the task without invented prior state and represents unavailable state as UNKNOWN; real-provider proof is also gated by #210."
     },
     {
       "id": "S2",
