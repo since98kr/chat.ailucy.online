@@ -115,6 +115,16 @@ describe('Lucy Chat scenario evidence matrix', () => {
     expect(scenario?.primaryGap).toContain('#210');
   });
 
+  it('keeps continuation behavior partial until prior-work execution is proven', () => {
+    const scenario = matrix.scenarios.find((item) => item.id === 'S2');
+    expect(scenario?.sourceAuditVerdict).toBe('PARTIAL_CONTINUATION_BEHAVIOR_PENDING');
+    expect(scenario?.expectedLucyBehavior).toContain('Continue the same task/session');
+    expect(scenario?.observableEvidence).toContain('bounded continuation result');
+    expect(scenario?.primaryGap).toContain('no deterministic behavioral test');
+    expect(scenario?.primaryGap).toContain('previously bound task');
+    expect(scenario?.primaryGap).toContain('#210');
+  });
+
   it('does not overclaim artifact run ownership or personal-memory ownership', () => {
     const artifactScenario = matrix.scenarios.find((scenario) => scenario.id === 'S9');
     const memoryScenario = matrix.scenarios.find((scenario) => scenario.id === 'S12');
