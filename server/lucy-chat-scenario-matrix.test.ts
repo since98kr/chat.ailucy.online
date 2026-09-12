@@ -64,8 +64,10 @@ describe('Lucy Chat scenario evidence matrix', () => {
     expectNonBlankString(matrix.refreshedAt);
     expect(Number.isFinite(Date.parse(matrix.refreshedAt))).toBe(true);
     expectNonBlankString(matrix.completionRule);
-    expectNonBlankString(matrix.verdictSemantics?.sourceAuditVerdict);
-    expectNonBlankString(matrix.verdictSemantics?.acceptanceVerdict);
+    expect(matrix.verdictSemantics).toEqual({
+      sourceAuditVerdict: 'Deterministic current-source contract only; PASS does not imply real-provider staging acceptance.',
+      acceptanceVerdict: 'End-to-end current-main acceptance. BLOCKED_REAL_PROVIDER means the source contract is present but the required provider-backed proof cannot be rerun under the current AUTH/USAGE gate.',
+    });
     expect(Array.isArray(matrix.scenarios)).toBe(true);
     expect(matrix.scenarios.map((scenario) => scenario.id)).toEqual(
       Array.from({ length: 12 }, (_, index) => `S${index + 1}`),
@@ -102,6 +104,15 @@ describe('Lucy Chat scenario evidence matrix', () => {
     expect(matrix.scenarios.every((scenario) => !scenario.sourceAuditVerdict.includes('BLOCKED_REAL_PROVIDER'))).toBe(true);
     expect(matrix.scenarios.some((scenario) => scenario.sourceAuditVerdict === 'PASS')).toBe(true);
     expect(matrix.scenarios.some((scenario) => scenario.sourceAuditVerdict.startsWith('PARTIAL_'))).toBe(true);
+  });
+
+  it('keeps a fresh vague request partial until its behavioral truth is proven', () => {
+    const scenario = matrix.scenarios.find((item) => item.id === 'S1');
+    expect(scenario?.sourceAuditVerdict).toBe('PARTIAL_VAGUE_REQUEST_BEHAVIOR_PENDING');
+    expect(scenario?.expectedLucyBehavior).toContain('Identify the task without inventing runtime/project facts');
+    expect(scenario?.expectedLucyBehavior).toContain('Represent unavailable state as UNKNOWN');
+    expect(scenario?.primaryGap).toContain('no deterministic behavioral test');
+    expect(scenario?.primaryGap).toContain('#210');
   });
 
   it('does not overclaim artifact run ownership or personal-memory ownership', () => {
