@@ -6,9 +6,9 @@ const CONTROL_CHARACTERS = /[\u0000-\u001f\u007f]/g;
 const BEARER_SECRET = /\bBearer\s+[A-Za-z0-9._~+/=-]{8,}/gi;
 const NAMED_SECRET = /["']?\b(api[_-]?key|access[_-]?token|refresh[_-]?token|session[_-]?token|token|secret|password|authorization|cookie)\b["']?\s*[:=]\s*(?:"[^"]*"|'[^']*'|[^\s,;}]+)/gi;
 const OPENAI_STYLE_SECRET = /\bsk-[A-Za-z0-9_-]{8,}\b/g;
-const PRIVATE_UNIX_PATH = /(?:^|\s)(\/(?:home|Users|root|etc|var|tmp|srv|opt|run)\/[^\s,;)}\]]+)/g;
+const PRIVATE_UNIX_PATH = /\/(?:home|Users|root|etc|var|tmp|srv|opt|run)(?:\/[^\s,;)}\]]*)?/g;
 const PRIVATE_WINDOWS_PATH = /\b[A-Za-z]:\\(?:Users|Windows|ProgramData|Temp)\\[^\s,;)}\]]+/g;
-const RAW_ARGUMENT_BLOB = /(?:["']?\b(?:args|arguments|parameters|input)\b["']?\s*[:=]\s*[\[{]|\btool(?:_name)?\b\s*[:=].*\b(?:args|arguments|parameters|input)\b)/i;
+const RAW_ARGUMENT_BLOB = /(?:["']?\b(?:args|arguments|parameters|input)\b["']?\s*[:=]\s*[\[{]|\btool(?:_name)?\b\s*[:=].*\b(?:args|arguments|parameters|input)\b|(?:^|[\s=:])(?:\{|\[\s*\{)\s*(?:["'][^"']+["']|[A-Za-z_][\w.-]*)\s*:)/i;
 
 function normalize(value: string) {
   return value.replace(CONTROL_CHARACTERS, ' ').replace(/\s+/g, ' ').trim();
@@ -19,7 +19,7 @@ function redactSensitiveMaterial(value: string) {
     .replace(BEARER_SECRET, 'Bearer [redacted]')
     .replace(NAMED_SECRET, (_match, key: string) => `${key}=[redacted]`)
     .replace(OPENAI_STYLE_SECRET, '[redacted]')
-    .replace(PRIVATE_UNIX_PATH, (_match) => _match.startsWith(' ') ? ' [path]' : '[path]')
+    .replace(PRIVATE_UNIX_PATH, '[path]')
     .replace(PRIVATE_WINDOWS_PATH, '[path]');
 }
 
