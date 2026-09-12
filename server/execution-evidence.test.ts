@@ -6,6 +6,7 @@ import {
 import {
   applyVerifiedExecutionCompletion,
   providerExecutionEvidence,
+  runCompletionGuard,
   type RunExecutionEvidence,
   type RunExecutionIdentity,
 } from './execution-evidence.js';
@@ -32,6 +33,17 @@ function blockedContext() {
   });
 }
 
+function matchingEvidence() {
+  const evidence = providerExecutionEvidence(executionIdentity, {
+    kind: 'result-receipt',
+    sessionId: 'session-1',
+    operationId: 'operation-1',
+    receiptId: 'provider-result-001',
+  });
+  expect(evidence).not.toBeNull();
+  return evidence!;
+}
+
 describe('execution evidence contract', () => {
   it('keeps a commentary-only clean termination non-verified', () => {
     const before = blockedContext();
@@ -44,17 +56,17 @@ describe('execution evidence contract', () => {
     expect(result.context.nextAction).toBe(before.nextAction);
   });
 
-  it('accepts an explicit provider receipt only when session and operation identities match', () => {
-    const evidence = providerExecutionEvidence(executionIdentity, {
-      kind: 'result-receipt',
-      sessionId: 'session-1',
-      operationId: 'operation-1',
-      receiptId: 'provider-result-001',
-    });
-    expect(evidence).not.toBeNull();
-
-    const result = applyVerifiedExecutionCompletion(blockedContext(), executionIdentity, [evidence!]);
+  it('accepts an explicit provider receipt only when session, operation and observed context match', () => {
+    const before = blockedContext();
+    const evidence = matchingEvidence();
+    const result = applyVerifiedExecutionCompletion(
+      before,
+      executionIdentity,
+      [evidence],
+      runCompletionGuard(before),
+    );
     expect(result.verified).toBe(true);
+    expect(result.stale).toBe(false);
     expect(result.evidence).toEqual(evidence);
     expect(result.context.statusTruth.at(-1)).toMatchObject({
       classification: 'FACT',
@@ -88,7 +100,12 @@ describe('execution evidence contract', () => {
       evidenceRef: 'provider-receipt:foreign-run',
     };
     const before = blockedContext();
-    const result = applyVerifiedExecutionCompletion(before, executionIdentity, [foreignEvidence]);
+    const result = applyVerifiedExecutionCompletion(
+      before,
+      executionIdentity,
+      [foreignEvidence],
+      runCompletionGuard(before),
+    );
     expect(result.verified).toBe(false);
     expect(result.context.statusTruth).toEqual(before.statusTruth);
     expect(result.context.blocker).toEqual(before.blocker);
@@ -116,5 +133,24 @@ describe('execution evidence contract', () => {
     expect(result.verified).toBe(false);
     expect(result.context.blocker).toEqual(before.blocker);
     expect(result.context.nextAction).toBe(before.nextAction);
+  });
+
+  it('does not let an older verified operation clear or supersede a newer blocker', () => {
+    const observed = blockedContext();
+    const guard = runCompletionGuard(observed);
+    const newer = recordFailure(observed, {
+      blockerId: 'newer-run',
+      summary: 'A newer continuation failed',
+      nextAction: 'Resolve the newer blocker first.',
+      evidenceRef: 'run:newer-run',
+    });
+
+    const result = applyVerifiedExecutionCompletion(newer, executionIdentity, [matchingEvidence()], guard);
+
+    expect(result.verified).toBe(false);
+    expect(result.stale).toBe(true);
+    expect(result.context).toEqual(newer);
+    expect(result.context.blocker?.blockerId).toBe('newer-run');
+    expect(result.context.statusTruth).toEqual(newer.statusTruth);
   });
 });
