@@ -73,6 +73,21 @@ export class MockAdapter implements ChatBackendAdapter {
     yield { type: 'status', status };
     await sleep(90);
 
+    const isVerifiedTestRecovery = process.env.NODE_ENV === 'test'
+      && Boolean(failureMarker)
+      && request.operatingIntent === 'continuation'
+      && request.operatingContext?.blocker?.summary.includes(failureMarker!) === true;
+    if (isVerifiedTestRecovery) {
+      yield {
+        type: 'artifact',
+        artifact: {
+          filename: 'verified-test-recovery.txt',
+          mimeType: 'text/plain',
+          contentBase64: Buffer.from(`Verified recovery evidence for ${failureMarker}`, 'utf8').toString('base64'),
+        },
+      };
+    }
+
     const reply = buildReply(this.systemId, request);
     const chunks = reply.match(/.{1,10}/gu) ?? [reply];
     for (const delta of chunks) {
