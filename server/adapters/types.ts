@@ -18,10 +18,18 @@ export type AdapterGeneratedArtifact = {
   contentBase64: string;
 };
 
+export type AdapterExecutionReceipt = {
+  kind: 'tool-receipt' | 'result-receipt';
+  sessionId: string;
+  operationId: string;
+  evidenceRef: string;
+};
+
 export type AdapterStreamItem =
   | { type: 'status'; status: string }
   | { type: 'delta'; delta: string }
-  | { type: 'artifact'; artifact: AdapterGeneratedArtifact };
+  | { type: 'artifact'; artifact: AdapterGeneratedArtifact }
+  | { type: 'execution-evidence'; evidence: AdapterExecutionReceipt };
 
 export interface AdapterRequest {
   conversation: ConversationRecord;
