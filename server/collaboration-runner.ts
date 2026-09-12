@@ -16,6 +16,7 @@ import type { ConversationOperatingIntent } from './conversation-intent.js';
 import {
   applyVerifiedExecutionCompletion,
   providerExecutionEvidence,
+  runCompletionGuard,
   type RunExecutionEvidence,
 } from './execution-evidence.js';
 import { providerSessionIdentity } from './provider-session-identity.js';
@@ -120,6 +121,9 @@ export async function* runCollaborativeReply(input: CollaborationRunInput): Asyn
     const idempotencyKey = operationIdentity(input, agentId, sessionId);
     const executionIdentity = { runId, sessionId, operationId: idempotencyKey };
     const executionEvidence: RunExecutionEvidence[] = [];
+    const completionGuard = agentId === conversation.agentId
+      ? runCompletionGuard(database.getConversationOperatingContext(conversation.id)!)
+      : undefined;
     const state = participantWorkState(agentId);
     const retryLabel = input.regeneratedFromMessageId
       ? `${input.retryMode === 'retry' ? 'Retry' : 'Regeneration'} requested from response ${input.regeneratedFromMessageId}.`
@@ -310,7 +314,7 @@ export async function* runCollaborativeReply(input: CollaborationRunInput): Asyn
       yield { type: 'participants.updated', participants };
       if (agentId === conversation.agentId && !signal.aborted && (input.operatingIntent ?? 'ordinary') !== 'status') {
         database.updateConversationOperatingContext(conversation.id, (context) => (
-          applyVerifiedExecutionCompletion(context, executionIdentity, executionEvidence).context
+          applyVerifiedExecutionCompletion(context, executionIdentity, executionEvidence, completionGuard).context
         ));
       }
       yield { type: 'run.completed', runId, message: finalMessage, agentId };
