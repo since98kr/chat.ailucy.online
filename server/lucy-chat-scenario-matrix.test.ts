@@ -17,14 +17,22 @@ type Scenario = {
 };
 
 type ScenarioMatrix = {
+  schemaVersion: string;
   issue: number;
   evidenceRefreshIssue: number;
+  productMode: string;
   sourceBaselineSha: string;
+  refreshedAt: string;
+  completionRule: string;
   acceptanceGate: {
     issue: number;
     classification: string;
     blocked: boolean;
     reason: string;
+  };
+  verdictSemantics: {
+    sourceAuditVerdict: string;
+    acceptanceVerdict: string;
   };
   scenarios: Scenario[];
 };
@@ -47,10 +55,17 @@ function expectNonBlankStringArray(value: unknown) {
 
 describe('Lucy Chat scenario evidence matrix', () => {
   it('keeps one complete machine-readable contract for every S1-S12 scenario', () => {
+    expect(matrix.schemaVersion).toBe('lucy.chat.scenario-matrix.v1');
     expect(matrix.issue).toBe(199);
     expect(matrix.evidenceRefreshIssue).toBe(232);
+    expectNonBlankString(matrix.productMode);
     expectNonBlankString(matrix.sourceBaselineSha);
     expect(matrix.sourceBaselineSha).toMatch(/^[0-9a-f]{40}$/);
+    expectNonBlankString(matrix.refreshedAt);
+    expect(Number.isFinite(Date.parse(matrix.refreshedAt))).toBe(true);
+    expectNonBlankString(matrix.completionRule);
+    expectNonBlankString(matrix.verdictSemantics?.sourceAuditVerdict);
+    expectNonBlankString(matrix.verdictSemantics?.acceptanceVerdict);
     expect(Array.isArray(matrix.scenarios)).toBe(true);
     expect(matrix.scenarios.map((scenario) => scenario.id)).toEqual(
       Array.from({ length: 12 }, (_, index) => `S${index + 1}`),
