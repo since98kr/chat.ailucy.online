@@ -42,7 +42,7 @@ afterEach(async () => {
 });
 
 describe('retry execution evidence boundary', () => {
-  it('preserves a prior blocker without a receipt and gives each retry attempt a distinct provider operation id', async () => {
+  it('preserves a prior blocker without a receipt and gives each retry attempt a distinct ASCII-safe provider operation id', async () => {
     const operationIds: string[] = [];
     const baseUrl = await startServer((request, response) => {
       if (request.url === '/health') {
@@ -98,7 +98,7 @@ describe('retry execution evidence boundary', () => {
     expect(blockedBeforeRetry?.blocker?.blockerId).toBe('prior-failure-run');
     directDatabase.close();
 
-    const firstKey = `retry-attempt-a-${crypto.randomUUID()}`;
+    const firstKey = `재시도-a-${crypto.randomUUID()}`;
     const firstRetry = await app.inject({
       method: 'POST',
       url: `/api/messages/${assistantMessageId}/retry/stream`,
@@ -114,7 +114,7 @@ describe('retry execution evidence boundary', () => {
     expect(afterFirst?.statusTruth).toEqual(blockedBeforeRetry?.statusTruth);
     afterFirstDatabase.close();
 
-    const secondKey = `retry-attempt-b-${crypto.randomUUID()}`;
+    const secondKey = `재시도-b-${crypto.randomUUID()}`;
     const secondRetry = await app.inject({
       method: 'POST',
       url: `/api/messages/${assistantMessageId}/retry/stream`,
@@ -125,8 +125,12 @@ describe('retry execution evidence boundary', () => {
 
     const retryOperationIds = operationIds.slice(-2);
     expect(retryOperationIds).toHaveLength(2);
-    expect(retryOperationIds[0]).toContain(`caller-operation:${firstKey}`);
-    expect(retryOperationIds[1]).toContain(`caller-operation:${secondKey}`);
+    for (const operationId of retryOperationIds) {
+      expect(operationId).toMatch(/caller-operation-sha256:[a-f0-9]{64}$/);
+      expect(operationId).toMatch(/^[\x20-\x7e]+$/);
+    }
+    expect(retryOperationIds[0]).not.toContain(firstKey);
+    expect(retryOperationIds[1]).not.toContain(secondKey);
     expect(retryOperationIds[0]).not.toBe(retryOperationIds[1]);
 
     const afterSecondDatabase = new ChatDatabase(databasePath);
