@@ -59,6 +59,8 @@ type ArtifactRow = {
   id: string;
   conversation_id: string;
   message_id: string | null;
+  producer_run_id: string | null;
+  producer_task_id: string | null;
   filename: string;
   mime_type: string;
   size_bytes: number;
@@ -115,6 +117,8 @@ function mapArtifact(row: ArtifactRow): ArtifactRecord {
     id: row.id,
     conversationId: row.conversation_id,
     messageId: row.message_id,
+    producerRunId: row.producer_run_id,
+    producerTaskId: row.producer_task_id,
     filename: row.filename,
     mimeType: row.mime_type,
     sizeBytes: row.size_bytes,
@@ -179,6 +183,8 @@ export class ChatDatabase {
         id TEXT PRIMARY KEY,
         conversation_id TEXT NOT NULL REFERENCES conversations(id) ON DELETE CASCADE,
         message_id TEXT REFERENCES messages(id) ON DELETE SET NULL,
+        producer_run_id TEXT,
+        producer_task_id TEXT,
         filename TEXT NOT NULL,
         mime_type TEXT NOT NULL,
         size_bytes INTEGER NOT NULL,
@@ -221,6 +227,12 @@ export class ChatDatabase {
     }
     if (!this.hasColumn('conversations', 'branched_from_message_id')) {
       this.db.exec('ALTER TABLE conversations ADD COLUMN branched_from_message_id TEXT');
+    }
+    if (!this.hasColumn('artifacts', 'producer_run_id')) {
+      this.db.exec('ALTER TABLE artifacts ADD COLUMN producer_run_id TEXT');
+    }
+    if (!this.hasColumn('artifacts', 'producer_task_id')) {
+      this.db.exec('ALTER TABLE artifacts ADD COLUMN producer_task_id TEXT');
     }
 
     widenSystemIdCheckConstraints(this.db, 'conversations');
@@ -567,13 +579,15 @@ export class ChatDatabase {
     const timestamp = now();
     this.db.prepare(`
       INSERT INTO artifacts (
-        id, conversation_id, message_id, filename, mime_type,
-        size_bytes, storage_path, created_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+        id, conversation_id, message_id, producer_run_id, producer_task_id,
+        filename, mime_type, size_bytes, storage_path, created_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `).run(
       id,
       input.conversationId,
       input.messageId,
+      input.producerRunId ?? null,
+      input.producerTaskId ?? null,
       input.filename,
       input.mimeType,
       input.sizeBytes,
