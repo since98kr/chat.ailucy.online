@@ -247,7 +247,7 @@ describe('generated artifact provenance edge cases', () => {
     const status = await app.inject({
       method: 'POST',
       url: `/api/conversations/${branchId}/messages/stream`,
-      payload: { content: '현황 알려줘', artifactIds: [] },
+      payload: { content: '지금 어디까지야', artifactIds: [] },
     });
     expect(status.statusCode).toBe(200);
     const statusEvents = events(status.body);
