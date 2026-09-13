@@ -245,4 +245,58 @@ describe('provider execution receipt transport', () => {
       },
     }]);
   });
+
+  it('treats DONE as the terminal OpenClaw boundary even when a trailing receipt is buffered in the same chunk', async () => {
+    const seen: Record<string, string> = {};
+    const baseUrl = await startServer((request, response) => {
+      seen.session = String(request.headers['x-lucy-execution-session-id'] ?? '');
+      seen.operation = String(request.headers['x-lucy-execution-operation-id'] ?? '');
+      request.resume();
+      request.on('end', () => {
+        response.writeHead(200, { 'Content-Type': 'text/event-stream' });
+        response.end([
+          'data: [DONE]',
+          '',
+          `data: ${JSON.stringify({
+            type: 'execution-evidence',
+            evidence: {
+              kind: 'result-receipt',
+              session_id: seen.session,
+              operation_id: seen.operation,
+              receipt_id: 'openclaw-after-done-must-be-ignored',
+            },
+          })}`,
+          '',
+        ].join('\n'));
+      });
+    });
+    const { conversation, userMessage, participant } = fixture('letta', '[OpenClaw] Lucy');
+    const adapter = new OpenClawLettaAdapter({
+      baseUrl,
+      chatPath: '/v1/chat/completions',
+      healthPath: '/health',
+      apiKey: 'gateway-test-key',
+      agentTarget: 'openclaw/main',
+      sessionPrefix: 'chat-v2',
+      timeoutMs: 2_000,
+      maxArtifactBytes: 10 * 1024 * 1024,
+      maxArtifactTotalBytes: 20 * 1024 * 1024,
+      artifactToolEnabled: false,
+    });
+
+    const items = [];
+    for await (const item of adapter.streamReply({
+      conversation,
+      userMessage,
+      history: [userMessage],
+      targetAgentId: '[OpenClaw] Lucy',
+      selectedAgentId: '[OpenClaw] Lucy',
+      routingMode: 'direct',
+      participants: [participant],
+      sessionId: 'session-openclaw-done',
+      idempotencyKey: 'operation-openclaw-done',
+    })) items.push(item);
+
+    expect(items).toEqual([]);
+  });
 });
