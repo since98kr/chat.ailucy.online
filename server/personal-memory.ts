@@ -46,9 +46,24 @@ function isExplicitEnglishDurableSave(value: string) {
 }
 
 function isExplicitKoreanDelete(value: string) {
-  if (/(?:기억|메모리).*(?:삭제해\s*(?:줘|주세요)|지워\s*(?:줘|주세요)|제거해\s*(?:줘|주세요))(?:[.!?]*)$/u.test(value)) {
-    return true;
-  }
+  const prefix = '(?:(?:제발|이제|그냥|앞으로|정말)\\s+)*';
+  const deleteVerb = '(?:삭제해\\s*(?:줘|주세요)|지워\\s*(?:줘|주세요)|제거해\\s*(?:줘|주세요))';
+
+  // Match only the thing being deleted, not a loose mention of "memory" before
+  // an unrelated technical object. This keeps "메모리 누수 로그를 삭제해줘"
+  // outside native personal-memory deletion.
+  if (new RegExp(
+    `^${prefix}(?:(?:이|그|내|제)\\s+)?(?:기억|메모리)(?:\\s+(?:내용|정보|기록))?\\s*${deleteVerb}[.!?]*$`,
+    'u',
+  ).test(value)) return true;
+
+  // Assistant-knowledge deletion is also an explicit personal-memory operation:
+  // "나에 대해 아는 모든 것을 삭제해줘" must fail closed on an unverified owner.
+  if (new RegExp(
+    `^${prefix}(?:나에\\s+대해|나에\\s+대한)\\s+(?:(?:네가|너가|당신이)\\s+)?(?:아는|기억하는)\\s+(?:모든\\s*것|전부|내용|정보)\\s*(?:을|를)?\\s*${deleteVerb}[.!?]*$`,
+    'u',
+  ).test(value)) return true;
+
   return /^(?:(?:제발|이제|그냥|앞으로|정말)\s+)*(?:이거|그거|이것|그것|방금(?:\s+말한\s+것)?|나에\s+대해|(?:내|제)\s+\S+(?:\s+\S+){0,4})\s*잊어\s*(?:줘|주세요)?[.!?]*$/u.test(value);
 }
 
@@ -96,8 +111,15 @@ function isExplicitKoreanRemember(value: string) {
 }
 
 function isExplicitEnglishRemember(value: string) {
-  return /^(?:please\s+)?remember\s+(?:this|that|it|my\b.{0,120}|what\s+i\s+(?:said|asked|told)\b.{0,80})[.!?]*$/i.test(value)
-    || /^(?:please\s+)?(?:save|store)\s+(?:this|that|it|my\b.{0,120})\s+(?:in|to)\s+(?:your\s+)?memor(?:y|ies)[.!?]*$/i.test(value);
+  const requestPrefix = '(?:(?:please)\\s+|(?:(?:could|can|would|will)\\s+you\\s+))?';
+  return new RegExp(
+    `^${requestPrefix}remember\\s+(?:this|that|it|my\\b.{0,120}|what\\s+i\\s+(?:said|asked|told)\\b.{0,80})[.!?]*$`,
+    'i',
+  ).test(value)
+    || new RegExp(
+      `^${requestPrefix}(?:save|store)\\s+(?:this|that|it|my\\b.{0,120})\\s+(?:in|to)\\s+(?:your\\s+)?memor(?:y|ies)[.!?]*$`,
+      'i',
+    ).test(value);
 }
 
 function isExplicitKoreanRecall(value: string) {
