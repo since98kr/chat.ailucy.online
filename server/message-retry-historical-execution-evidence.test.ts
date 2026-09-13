@@ -34,8 +34,9 @@ describe('historical retry execution evidence boundary', () => {
     vi.resetModules();
   });
 
-  it('does not let a valid receipt for an older retry clear a newer task blocker', async () => {
+  it('does not let an older retry success or failure mutate a newer task blocker', async () => {
     let emitReceipt = false;
+    let failRetry = false;
     server = createServer((request, response) => {
       if (request.url === '/health') {
         response.writeHead(200, { 'Content-Type': 'application/json' });
@@ -46,6 +47,11 @@ describe('historical retry execution evidence boundary', () => {
       const operationId = String(request.headers['x-lucy-execution-operation-id'] ?? '');
       request.resume();
       request.on('end', () => {
+        if (failRetry) {
+          response.writeHead(500, { 'Content-Type': 'text/plain' });
+          response.end('historical retry backend failed');
+          return;
+        }
         response.writeHead(200, { 'Content-Type': 'text/event-stream' });
         response.write('data: {"delta":"provider result"}\n\n');
         if (emitReceipt) {
@@ -127,12 +133,30 @@ describe('historical retry execution evidence boundary', () => {
     expect(retried.statusCode).toBe(200);
     expect(parseEvents(retried.body).some((event) => event.type === 'run.completed')).toBe(true);
 
-    const afterDatabase = new ChatDatabase(databasePath);
-    const afterRetry = afterDatabase.getConversationOperatingContext(conversationId)!;
-    expect(afterRetry.activeTask).toEqual(beforeRetry.activeTask);
-    expect(afterRetry.blocker).toEqual(beforeRetry.blocker);
-    expect(afterRetry.nextAction).toBe(beforeRetry.nextAction);
-    expect(afterRetry.statusTruth).toEqual(beforeRetry.statusTruth);
+    let afterDatabase = new ChatDatabase(databasePath);
+    const afterSuccess = afterDatabase.getConversationOperatingContext(conversationId)!;
+    expect(afterSuccess.activeTask).toEqual(beforeRetry.activeTask);
+    expect(afterSuccess.blocker).toEqual(beforeRetry.blocker);
+    expect(afterSuccess.nextAction).toBe(beforeRetry.nextAction);
+    expect(afterSuccess.statusTruth).toEqual(beforeRetry.statusTruth);
+    afterDatabase.close();
+
+    failRetry = true;
+    emitReceipt = false;
+    const failedRetry = await app.inject({
+      method: 'POST',
+      url: `/api/messages/${olderCompleted.message.id}/retry/stream`,
+      payload: { mode: 'retry', idempotencyKey: `historical-failure-${crypto.randomUUID()}` },
+    });
+    expect(failedRetry.statusCode).toBe(200);
+    expect(parseEvents(failedRetry.body).some((event) => event.type === 'run.failed')).toBe(true);
+
+    afterDatabase = new ChatDatabase(databasePath);
+    const afterFailure = afterDatabase.getConversationOperatingContext(conversationId)!;
+    expect(afterFailure.activeTask).toEqual(beforeRetry.activeTask);
+    expect(afterFailure.blocker).toEqual(beforeRetry.blocker);
+    expect(afterFailure.nextAction).toBe(beforeRetry.nextAction);
+    expect(afterFailure.statusTruth).toEqual(beforeRetry.statusTruth);
     afterDatabase.close();
   });
 });
