@@ -259,7 +259,10 @@
 
 .readonly-bar > span {
   min-width: 0;
+  max-height: min(28vh, 160px);
+  overflow-y: auto;
   overflow-wrap: anywhere;
+  overscroll-behavior: contain;
 }
 
 .readonly-bar button {
