@@ -35,11 +35,13 @@ describe('personal memory owner contract', () => {
     expect(classifyPersonalMemoryOperation('store my birthday for future conversations')).toBe('remember');
     expect(classifyPersonalMemoryOperation('keep my birthday long-term')).toBe('remember');
     expect(classifyPersonalMemoryOperation('please remember my birthday')).toBe('remember');
+    expect(classifyPersonalMemoryOperation('Could you remember my birthday for future conversations?')).toBe('remember');
     expect(classifyPersonalMemoryOperation('지난번에 내가 뭐라고 했는지 기억나?')).toBe('recall');
     expect(classifyPersonalMemoryOperation('내 생일 기억나?')).toBe('recall');
     expect(classifyPersonalMemoryOperation('what do you remember about my request?')).toBe('recall');
     expect(classifyPersonalMemoryOperation('recall my birthday')).toBe('recall');
     expect(classifyPersonalMemoryOperation('이 기억 삭제해줘')).toBe('delete');
+    expect(classifyPersonalMemoryOperation('나에 대해 아는 모든 것을 삭제해줘')).toBe('delete');
     expect(classifyPersonalMemoryOperation('forget this')).toBe('delete');
     expect(classifyPersonalMemoryOperation('forget my birthday')).toBe('delete');
     expect(classifyPersonalMemoryOperation('delete what you remember about me')).toBe('delete');
@@ -60,6 +62,7 @@ describe('personal memory owner contract', () => {
       '장기 프로젝트를 유지하는 방법을 설명해줘',
       '앞으로 프로젝트를 유지해줘',
       '경제 데이터를 장기 저장해줘',
+      '메모리 누수 로그를 삭제해줘',
       'why do people forget appointments?',
       'keep this project long-term',
       'Explain how delete releases memory in C++',
@@ -103,10 +106,12 @@ describe('personal memory owner contract', () => {
       '이거 기억해 줘',
       '내 생일을 장기 보관해줘',
       '다음 대화에서도 내 생일을 기억해줘',
+      'Could you remember my birthday for future conversations?',
       '지난번 기억나?',
       '내 생일 기억나?',
       'recall my birthday',
       '이 기억 삭제해줘',
+      '나에 대해 아는 모든 것을 삭제해줘',
       '제발 이거 잊어줘',
       'delete what you remember about me',
       'delete my birthday from your memory',
@@ -133,6 +138,7 @@ describe('personal memory owner contract', () => {
       '기억나는 영화 추천해줘',
       '장기 프로젝트를 유지하는 방법을 설명해줘',
       '경제 데이터를 장기 저장해줘',
+      '메모리 누수 로그를 삭제해줘',
       'Explain how delete releases memory in C++',
       'remove the memory leak from this code',
       'delete the memory leak',
