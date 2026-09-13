@@ -44,6 +44,9 @@ describe('durable Conversation operating-context continuity', () => {
     const artifactRoot = join(directory, 'artifacts');
     let app: FastifyInstance | null = null;
 
+    const onlineResolvePending = vi.fn(async () => {
+      throw new Error('approval execution is outside this continuity proof');
+    });
     const onlineApprovalBackend: ConversationApprovalBackend = {
       async listPending(context) {
         return [{
@@ -62,18 +65,17 @@ describe('durable Conversation operating-context continuity', () => {
           expiresAt: '2099-09-13T00:00:00.000Z',
         }];
       },
-      async resolvePending() {
-        throw new Error('approval execution is outside this continuity proof');
-      },
+      resolvePending: onlineResolvePending,
     };
 
+    const unavailableResolvePending = vi.fn(async () => {
+      throw new Error('approval backend temporarily unavailable');
+    });
     const unavailableApprovalBackend: ConversationApprovalBackend = {
       async listPending() {
         throw new Error('approval backend temporarily unavailable');
       },
-      async resolvePending() {
-        throw new Error('approval backend temporarily unavailable');
-      },
+      resolvePending: unavailableResolvePending,
     };
 
     try {
@@ -137,6 +139,7 @@ describe('durable Conversation operating-context continuity', () => {
           rollbackPlan: 'restore durable state',
         },
       });
+      expect(onlineResolvePending).not.toHaveBeenCalled();
 
       await app.close();
       app = null;
@@ -175,6 +178,7 @@ describe('durable Conversation operating-context continuity', () => {
       expect(afterReload.activeTask).toEqual(beforeReload.activeTask);
       expect(afterReload.continuationTarget).toEqual(beforeReload.continuationTarget);
       expect(afterReload.pendingApproval).toEqual(beforeReload.pendingApproval);
+      expect(unavailableResolvePending).not.toHaveBeenCalled();
 
       const callsBeforeContinuation = mockStreamSpy.mock.calls.length;
       const continued = await app.inject({
@@ -183,7 +187,14 @@ describe('durable Conversation operating-context continuity', () => {
         payload: { content: '계속해' },
       });
       expect(continued.statusCode).toBe(200);
-      expect(continued.body).toContain('run.completed');
+      const continuedEvents = continued.body.trim().split('\n').filter(Boolean)
+        .map((line) => JSON.parse(line) as StreamEvent);
+      expect(continuedEvents.some((event) => event.type === 'run.completed')).toBe(true);
+      expect(continuedEvents.some((event) => event.type.toLowerCase().includes('approval'))).toBe(false);
+      expect(JSON.stringify(continuedEvents)).not.toContain(`approval:${conversationId}`);
+      expect(onlineResolvePending).not.toHaveBeenCalled();
+      expect(unavailableResolvePending).not.toHaveBeenCalled();
+
       expect(mockStreamSpy.mock.calls.length).toBe(callsBeforeContinuation + 1);
       const continuationRequest = mockStreamSpy.mock.calls.at(-1)?.[0];
       expect(continuationRequest).toMatchObject({
@@ -216,6 +227,7 @@ describe('durable Conversation operating-context continuity', () => {
       expect(afterContinue.activeTask).toEqual(beforeReload.activeTask);
       expect(afterContinue.continuationTarget).toEqual(beforeReload.continuationTarget);
       expect(afterContinue.pendingApproval).toEqual(beforeReload.pendingApproval);
+      expect(unavailableResolvePending).not.toHaveBeenCalled();
     } finally {
       mockStreamSpy.mockRestore();
       if (app) await app.close();
