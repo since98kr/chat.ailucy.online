@@ -256,6 +256,8 @@ async function executeStep(input: {
         const artifact = database.addArtifact({
           conversationId: conversation.id,
           messageId: assistantMessage.id,
+          producerRunId: run.id,
+          producerTaskId: step.id,
           ...stored,
         });
         const event: StreamEvent = { type: 'artifact.created', runId: run.id, artifact };
