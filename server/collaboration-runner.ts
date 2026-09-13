@@ -99,6 +99,10 @@ export async function* runCollaborativeReply(input: CollaborationRunInput): Asyn
   if ((input.operatingIntent ?? 'ordinary') === 'ordinary' && routing.leadAgentId === conversation.agentId) {
     database.bindConversationTask(conversation.id, userMessage.id, userMessage.content);
   }
+  // Snapshot the canonical bound task before streaming/yields. Generated
+  // artifacts persist this exact task identity rather than inferring ownership
+  // later from whichever run happens to be active at artifact-write time.
+  const producerTaskId = database.getConversationOperatingContext(conversation.id)?.activeTask?.taskId ?? null;
 
   if (!input.suppressUserAccepted) yield { type: 'message.accepted', message: userMessage };
   if (attachedArtifacts.length && !input.suppressUserAccepted) {
@@ -230,6 +234,8 @@ export async function* runCollaborativeReply(input: CollaborationRunInput): Asyn
           const artifact = database.addArtifact({
             conversationId: conversation.id,
             messageId: assistantMessage.id,
+            producerRunId: runId,
+            producerTaskId,
             ...stored,
           });
           // Storage locations are server-internal capability data. Persist them for
