@@ -33,6 +33,7 @@ describe('personal memory owner contract', () => {
     expect(classifyPersonalMemoryOperation('다음 대화에서도 이 생일을 보관해줘')).toBe('remember');
     expect(classifyPersonalMemoryOperation('다음 대화에서도 내 생일을 기억해줘')).toBe('remember');
     expect(classifyPersonalMemoryOperation('store my birthday for future conversations')).toBe('remember');
+    expect(classifyPersonalMemoryOperation('Could you store my birthday for future conversations?')).toBe('remember');
     expect(classifyPersonalMemoryOperation('keep my birthday long-term')).toBe('remember');
     expect(classifyPersonalMemoryOperation('please remember my birthday')).toBe('remember');
     expect(classifyPersonalMemoryOperation('Could you remember my birthday for future conversations?')).toBe('remember');
@@ -41,6 +42,9 @@ describe('personal memory owner contract', () => {
     expect(classifyPersonalMemoryOperation('what do you remember about my request?')).toBe('recall');
     expect(classifyPersonalMemoryOperation('recall my birthday')).toBe('recall');
     expect(classifyPersonalMemoryOperation('이 기억 삭제해줘')).toBe('delete');
+    expect(classifyPersonalMemoryOperation('이 기억을 삭제해줘')).toBe('delete');
+    expect(classifyPersonalMemoryOperation('메모리를 삭제해줘')).toBe('delete');
+    expect(classifyPersonalMemoryOperation('내 기억을 지워주세요')).toBe('delete');
     expect(classifyPersonalMemoryOperation('나에 대해 아는 모든 것을 삭제해줘')).toBe('delete');
     expect(classifyPersonalMemoryOperation('forget this')).toBe('delete');
     expect(classifyPersonalMemoryOperation('forget my birthday')).toBe('delete');
@@ -107,10 +111,14 @@ describe('personal memory owner contract', () => {
       '내 생일을 장기 보관해줘',
       '다음 대화에서도 내 생일을 기억해줘',
       'Could you remember my birthday for future conversations?',
+      'Could you store my birthday for future conversations?',
       '지난번 기억나?',
       '내 생일 기억나?',
       'recall my birthday',
       '이 기억 삭제해줘',
+      '이 기억을 삭제해줘',
+      '메모리를 삭제해줘',
+      '내 기억을 지워주세요',
       '나에 대해 아는 모든 것을 삭제해줘',
       '제발 이거 잊어줘',
       'delete what you remember about me',
