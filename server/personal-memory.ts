@@ -19,17 +19,58 @@ function normalized(value: string) {
   return value.trim().toLowerCase().replace(/\s+/gu, ' ');
 }
 
+function hasKoreanPersonalSignal(value: string) {
+  return /(?:^|\s)(?:내|나의|제|저의)(?=\s|$)/u.test(value)
+    || /(?:^|\s)나에\s+대(?:해|한)(?=\s|$)/u.test(value);
+}
+
+function hasKoreanCrossConversationSignal(value: string) {
+  return /(?:다음\s*대화|다음에도|향후\s*대화|다른\s*대화에서도|대화가\s*바뀌어도)/u.test(value);
+}
+
 function isExplicitKoreanDurableSave(value: string) {
-  const imperativeSave = /(?:보관|저장|남겨)(?:해\s*(?:줘|주세요)?|해둬|해\s*둬|해주세요|해라)/u;
+  const imperativeSave = /(?:보관|저장|남겨)(?:해\s*(?:줘|주세요)|해둬|해\s*둬|해주세요|해라)(?:[.!?]*)$/u;
   if (!imperativeSave.test(value)) return false;
-  if (/(?:다음\s*대화|다음에도|향후\s*대화|대화가\s*바뀌어도)/u.test(value)) return true;
-  return /(?:내|나의|나에\s*대한|제|저의)/u.test(value) && /(?:장기|앞으로)/u.test(value);
+  if (hasKoreanCrossConversationSignal(value)) return true;
+  return hasKoreanPersonalSignal(value) && /(?:장기|앞으로)/u.test(value);
 }
 
 function isExplicitEnglishDurableSave(value: string) {
-  if (!/\b(?:save|store|keep)\b/i.test(value)) return false;
+  if (!/^(?:please\s+)?(?:save|store|keep)\b/i.test(value)) return false;
   if (/\b(?:for\s+(?:future|later|next)\s+conversations?|across\s+conversations?)\b/i.test(value)) return true;
   return /\b(?:my|me|personal)\b/i.test(value) && /\blong[- ]term\b/i.test(value);
+}
+
+function isExplicitKoreanDelete(value: string) {
+  if (/(?:기억|메모리).*(?:삭제해\s*(?:줘|주세요)|지워\s*(?:줘|주세요)|제거해\s*(?:줘|주세요))(?:[.!?]*)$/u.test(value)) {
+    return true;
+  }
+  return /^(?:(?:제발|이제|그냥|앞으로|정말)\s+)*(?:이거|그거|이것|그것|방금(?:\s+말한\s+것)?|나에\s+대해|내\s+\S+(?:\s+\S+){0,4})\s*잊어\s*(?:줘|주세요)?[.!?]*$/u.test(value);
+}
+
+function isExplicitEnglishDelete(value: string) {
+  return /^(?:please\s+)?(?:forget|delete|remove|erase)\s+(?:this|that|it|my\b.{0,80}|(?:the\s+)?memories?\b.{0,80}|what\s+you\s+remember(?:ed)?\s+about\s+me\b.{0,40})[.!?]*$/i.test(value);
+}
+
+function isExplicitKoreanRemember(value: string) {
+  if (/(?:장기기억|기억에).*(?:저장해\s*(?:줘|주세요)|남겨\s*(?:줘|주세요))(?:[.!?]*)$/u.test(value)) return true;
+  return /^(?:(?:제발|앞으로|이제)\s+)*(?:이거|그거|이것|그것|방금(?:\s+말한\s+것)?|내\s+.+|제\s+.+|나에\s+대한\s+.+)\s+기억해(?:\s*(?:줘|주세요|둬|두세요))?[.!?]*$/u.test(value);
+}
+
+function isExplicitEnglishRemember(value: string) {
+  return /^(?:please\s+)?remember\s+(?:this|that|it|my\b.{0,120}|the\b.{0,120})[.!?]*$/i.test(value)
+    || /^(?:please\s+)?(?:save|store)\s+(?:this|that|it|my\b.{0,120})\s+(?:in|to)\s+(?:your\s+)?memor(?:y|ies)[.!?]*$/i.test(value);
+}
+
+function isExplicitKoreanRecall(value: string) {
+  if (/(?:지난번|전에|지난\s*대화|이전\s*대화|우리(?:가)?\s+전에).*(?:기억나|기억하고\s+있어|기억해\s*\?)/u.test(value)) return true;
+  if (/(?:내가|나에\s+대해|내\s+\S+(?:\s+\S+){0,4}).*(?:뭐|무엇|어떤).*(?:기억|기억나)/u.test(value)) return true;
+  return false;
+}
+
+function isExplicitEnglishRecall(value: string) {
+  return /^what\s+do\s+you\s+remember\s+about\s+(?:me|my\b.{0,100}|our\b.{0,100}|the\s+(?:last|previous|earlier)\b.{0,80})[?!.]*$/i.test(value)
+    || /^do\s+you\s+remember\s+(?:me|my\b.{0,100}|what\s+i\s+(?:said|asked|told)\b.{0,80}|our\s+(?:last|previous|earlier)\b.{0,80})[?!.]*$/i.test(value);
 }
 
 /**
@@ -41,26 +82,16 @@ export function classifyPersonalMemoryOperation(content: string): PersonalMemory
   const value = normalized(content);
   if (!value) return null;
 
-  if (
-    /(?:기억|메모리).*(?:삭제|지워|지우|제거)/u.test(value)
-    || /^(?:(?:제발|이제|그냥|앞으로|정말)\s+)*(?:이거|그거|이것|그것|방금(?:\s+말한\s+것)?|나에\s+대해|내\s+\S+(?:\s+\S+){0,4})?\s*잊어\s*(?:줘|주세요)?[.!?]*$/u.test(value)
-    || /\b(?:forget|delete|remove|erase)\b.*\b(?:memory|memories|remembered)\b/i.test(value)
-    || /\bforget\b\s+(?:this|that|it|my\s+\S+(?:\s+\S+){0,4})\b/i.test(value)
-  ) return 'delete';
+  if (isExplicitKoreanDelete(value) || isExplicitEnglishDelete(value)) return 'delete';
 
   if (
-    /(?:기억해\s*(?:줘|둬|두|주세요)?|기억해두|기억해 둬|기억해 줘|장기기억.*(?:저장|기억)|기억에.*(?:저장|남겨))/u.test(value)
+    isExplicitKoreanRemember(value)
     || isExplicitKoreanDurableSave(value)
-    || /\bremember\b\s+(?:this|that|it|my|the)\b/i.test(value)
-    || /\b(?:save|store)\b.*\b(?:memory|remember)\b/i.test(value)
+    || isExplicitEnglishRemember(value)
     || isExplicitEnglishDurableSave(value)
   ) return 'remember';
 
-  if (
-    /(?:뭐|무엇|어떤|내가|전에|지난번).*(?:기억|기억나)/u.test(value)
-    || /(?:기억나|기억하고 있어|기억해\s*\?)/u.test(value)
-    || /\b(?:recall|what do you remember|do you remember)\b/i.test(value)
-  ) return 'recall';
+  if (isExplicitKoreanRecall(value) || isExplicitEnglishRecall(value)) return 'recall';
 
   return null;
 }
