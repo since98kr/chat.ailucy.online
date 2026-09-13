@@ -219,12 +219,29 @@ describe('OpenClawLettaAdapter', () => {
     expect(elapsedMs).toBeLessThan(500);
   });
 
-  it('stops at finish_reason even when a gateway omits [DONE] and keeps transport open', async () => {
-    const baseUrl = await startServer((_request, response) => {
-      response.writeHead(200, { 'Content-Type': 'text/event-stream' });
-      response.write('data: {\"choices\":[{\"delta\":{\"content\":\"FINISH_REASON_OK\"},\"finish_reason\":null}]}\n\n');
-      response.write('data: {\"choices\":[{\"delta\":{},\"finish_reason\":\"stop\"}]}\n\n');
-      setTimeout(() => response.end(), 1_500);
+  it('continues past finish_reason to collect execution evidence until the real [DONE] terminator', async () => {
+    let encodedSession = '';
+    let encodedOperation = '';
+    const baseUrl = await startServer((request, response) => {
+      encodedSession = String(request.headers['x-lucy-execution-session-id'] ?? '');
+      encodedOperation = String(request.headers['x-lucy-execution-operation-id'] ?? '');
+      request.resume();
+      request.on('end', () => {
+        response.writeHead(200, { 'Content-Type': 'text/event-stream' });
+        response.write('data: {"choices":[{"delta":{"content":"FINISH_REASON_OK"},"finish_reason":null}]}\n\n');
+        response.write('data: {"choices":[{"delta":{},"finish_reason":"stop"}]}\n\n');
+        response.write(`data: ${JSON.stringify({
+          type: 'execution-evidence',
+          evidence: {
+            kind: 'result-receipt',
+            sessionId: encodedSession,
+            operationId: encodedOperation,
+            receiptId: 'receipt-after-finish',
+          },
+        })}\n\n`);
+        response.write('data: [DONE]\n\n');
+        setTimeout(() => response.end(), 1_500);
+      });
     });
     const openClaw = adapter(baseUrl);
     const started = performance.now();
@@ -237,10 +254,23 @@ describe('OpenClawLettaAdapter', () => {
       selectedAgentId: '[Letta] Lucy',
       routingMode: 'direct',
       participants: [participant],
+      sessionId: 'session-after-finish',
+      idempotencyKey: 'operation-after-finish',
     })) items.push(item);
     const elapsedMs = performance.now() - started;
     server?.closeAllConnections();
-    expect(items).toEqual([{ type: 'delta', delta: 'FINISH_REASON_OK' }]);
+    expect(items).toEqual([
+      { type: 'delta', delta: 'FINISH_REASON_OK' },
+      {
+        type: 'execution-evidence',
+        evidence: {
+          kind: 'result-receipt',
+          sessionId: 'session-after-finish',
+          operationId: 'operation-after-finish',
+          receiptId: 'receipt-after-finish',
+        },
+      },
+    ]);
     expect(elapsedMs).toBeLessThan(500);
   });
 });
