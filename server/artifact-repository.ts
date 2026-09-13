@@ -5,6 +5,8 @@ type ArtifactRow = {
   id: string;
   conversation_id: string;
   message_id: string | null;
+  producer_run_id: string | null;
+  producer_task_id: string | null;
   filename: string;
   mime_type: string;
   size_bytes: number;
@@ -19,6 +21,8 @@ export function getArtifact(db: ChatDatabase, id: string): ArtifactRecord | null
     id: row.id,
     conversationId: row.conversation_id,
     messageId: row.message_id,
+    producerRunId: row.producer_run_id,
+    producerTaskId: row.producer_task_id,
     filename: row.filename,
     mimeType: row.mime_type,
     sizeBytes: row.size_bytes,
