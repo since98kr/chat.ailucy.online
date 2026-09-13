@@ -14,6 +14,7 @@ import type { CollaborationService } from './collaboration.js';
 import type { ChatDatabase } from './database.js';
 import type { ConversationOperatingIntent } from './conversation-intent.js';
 import { providerSessionIdentity } from './provider-session-identity.js';
+import { recordResponseTaskOwnership, taskOwnedByResponse } from './response-task-ownership.js';
 
 export type CollaborationRunInput = {
   database: ChatDatabase;
@@ -66,17 +67,6 @@ function historyForSelectedAgent(
   return history.filter((message) => message.role !== 'assistant' || message.authorId === selectedAgentId);
 }
 
-function taskOwnedBySourceResponse(artifacts: ArtifactRecord[], sourceResponseId: string) {
-  const sourceArtifacts = artifacts.filter((artifact) => artifact.messageId === sourceResponseId);
-  if (sourceArtifacts.length === 0) return null;
-  const taskIds = new Set(sourceArtifacts.map((artifact) => artifact.producerTaskId ?? null));
-  // Retry provenance must come from persisted execution evidence, never from
-  // transcript order or today's active task. Conflicting or absent evidence is
-  // deliberately UNKNOWN/null rather than guessed.
-  if (taskIds.size !== 1) return null;
-  return [...taskIds][0];
-}
-
 export function sessionIdentity(conversation: ConversationRecord, agentId: string, requestedSessionId?: string) {
   return providerSessionIdentity(conversation, agentId, requestedSessionId);
 }
@@ -111,12 +101,12 @@ export async function* runCollaborativeReply(input: CollaborationRunInput): Asyn
     database.bindConversationTask(conversation.id, userMessage.id, userMessage.content);
   }
   // Snapshot canonical ownership before streaming/yields. For retry/regeneration,
-  // replay only the task ownership actually persisted on the source response's
-  // generated artifacts. If the source response had no durable ownership proof,
-  // keep regenerated ownership UNKNOWN/null rather than inferring from history.
-  const persistedConversation = database.getConversation(conversation.id);
+  // replay only response-level task ownership that was durably recorded when the
+  // source response began. Missing legacy evidence and genuinely unbound source
+  // responses both remain UNKNOWN/null rather than being inferred from transcript
+  // order, today's active task, or whether the source happened to emit artifacts.
   const producerTaskId = input.regeneratedFromMessageId
-    ? taskOwnedBySourceResponse(persistedConversation?.artifacts ?? [], input.regeneratedFromMessageId)
+    ? taskOwnedByResponse(database, conversation.id, input.regeneratedFromMessageId)
     : database.getConversationOperatingContext(conversation.id)?.activeTask?.taskId ?? null;
 
   if (!input.suppressUserAccepted) yield { type: 'message.accepted', message: userMessage };
@@ -160,6 +150,7 @@ export async function* runCollaborativeReply(input: CollaborationRunInput): Asyn
       state: 'streaming',
       parentMessageId: userMessage.id,
     });
+    recordResponseTaskOwnership(database, conversation.id, assistantMessage.id, producerTaskId);
     yield { type: 'message.created', message: assistantMessage };
     yield { type: 'run.started', runId, agentId };
 
