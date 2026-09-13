@@ -78,7 +78,7 @@ function fixture(systemId: 'letta', agentId: string) {
 }
 
 describe('provider execution receipt transport', () => {
-  it('carries encoded correlation headers and restores an echoed receipt through HttpAgentAdapter', async () => {
+  it('carries encoded correlation headers and accepts a receipt after finish_reason but before DONE through HttpAgentAdapter', async () => {
     const seen: Record<string, string> = {};
     const baseUrl = await startServer((request, response) => {
       seen.session = String(request.headers['x-lucy-execution-session-id'] ?? '');
@@ -86,6 +86,7 @@ describe('provider execution receipt transport', () => {
       request.resume();
       request.on('end', () => {
         response.writeHead(200, { 'Content-Type': 'text/event-stream' });
+        response.write(`data: ${JSON.stringify({ choices: [{ delta: {}, finish_reason: 'stop' }] })}\n\n`);
         response.write(`data: ${JSON.stringify({
           type: 'execution-evidence',
           evidence: {
@@ -134,6 +135,53 @@ describe('provider execution receipt transport', () => {
         receiptId: 'http-result-1',
       },
     }]);
+  });
+
+  it('treats DONE as the terminal HTTP stream boundary and ignores later execution evidence', async () => {
+    const seen: Record<string, string> = {};
+    const baseUrl = await startServer((request, response) => {
+      seen.session = String(request.headers['x-lucy-execution-session-id'] ?? '');
+      seen.operation = String(request.headers['x-lucy-execution-operation-id'] ?? '');
+      request.resume();
+      request.on('end', () => {
+        response.writeHead(200, { 'Content-Type': 'text/event-stream' });
+        response.write(`data: ${JSON.stringify({ choices: [{ delta: {}, finish_reason: 'stop' }] })}\n\n`);
+        response.write('data: [DONE]\n\n');
+        response.end(`data: ${JSON.stringify({
+          type: 'execution-evidence',
+          evidence: {
+            kind: 'result-receipt',
+            sessionId: seen.session,
+            operationId: seen.operation,
+            receiptId: 'must-be-ignored',
+          },
+        })}\n\n`);
+      });
+    });
+    const { conversation, userMessage, participant } = fixture('letta', '[OpenClaw] Lucy');
+    const adapter = new HttpAgentAdapter('letta', {
+      baseUrl,
+      chatPath: '/chat',
+      healthPath: '/health',
+      agentId: '[OpenClaw] Lucy',
+      timeoutMs: 2_000,
+      protocol: 'native',
+    });
+
+    const items = [];
+    for await (const item of adapter.streamReply({
+      conversation,
+      userMessage,
+      history: [userMessage],
+      targetAgentId: '[OpenClaw] Lucy',
+      selectedAgentId: '[OpenClaw] Lucy',
+      routingMode: 'direct',
+      participants: [participant],
+      sessionId: 'session-http-done',
+      idempotencyKey: 'operation-http-done',
+    })) items.push(item);
+
+    expect(items).toEqual([]);
   });
 
   it('carries encoded correlation headers and restores an echoed receipt through OpenClawLettaAdapter', async () => {
