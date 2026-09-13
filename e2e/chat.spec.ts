@@ -29,7 +29,7 @@ test('desktop Conversation workflow remains aligned and usable', async ({ page }
   await composer.fill('브라우저 회귀검증 아젠다를 새 Conversation으로 유지해줘.');
   await page.locator('button[aria-label="전송"]').click();
   await expect(page.getByText('브라우저 회귀검증 아젠다를 새 Conversation으로 유지해줘.')).toBeVisible();
-  await expect(page.getByText(/\[OpenClaw\] Lucy의 승인된 장기기억은 이어집니다/)).toBeVisible();
+  await expect(page.getByText(/장기기억 상태는 UNKNOWN/)).toBeVisible();
   const search = page.getByPlaceholder('제목·본문·파일 검색');
   await search.fill('회귀검증');
   await expect(page.locator('.conversation-row').filter({ hasText: '회귀검증' }).first()).toBeVisible();
@@ -91,7 +91,7 @@ test('federated Conversation approves a capsule and records a parallel workflow'
   await page.locator('.composer textarea').fill('개인 우선순위와 구현안을 병렬로 검토하고 종합해줘.');
   await page.locator('button[aria-label="전송"]').click();
   await expect(page.getByText(/Xixi 원문 결과/)).toBeVisible();
-  await expect(page.getByText(/승인된 장기기억/)).toBeVisible();
+  await expect(page.getByText(/장기기억 상태는 UNKNOWN/)).toBeVisible();
   await expect(page.getByText(/\[Hermes\] Lucy 종합응답/)).toBeVisible();
   await page.locator('.federation-button').click();
   await expect(panel.locator('.workflow-run-list')).toContainText('completed');
@@ -108,7 +108,7 @@ test('personal Lucy binds 계속해 to the same persisted task and fails closed 
   const composer = page.locator('.composer textarea');
   await composer.fill('첫 작업을 실제 대화 문맥으로 유지해줘.');
   await page.locator('button[aria-label="전송"]').click();
-  await expect(page.getByText(/\[OpenClaw\] Lucy의 승인된 장기기억은 이어집니다/)).toBeVisible();
+  await expect(page.getByText(/장기기억 상태는 UNKNOWN/)).toBeVisible();
 
   const before = (await (await page.request.get(`/api/conversations/${id}/operating-context`)).json()).operatingContext;
   expect(before.activeTask.label).toContain('첫 작업');
@@ -123,6 +123,17 @@ test('personal Lucy binds 계속해 to the same persisted task and fails closed 
   await composer.fill('승인');
   await page.locator('button[aria-label="전송"]').click();
   await expect(page.locator('.error-banner')).toContainText('검증된 승인 대기가 없습니다');
+});
+
+test('personal memory requests fail closed as UNKNOWN when only the test mock is available', async ({ page }, testInfo) => {
+  test.skip(!testInfo.project.name.startsWith('desktop'));
+  await page.goto('/');
+  await createPersonalConversation(page);
+  const composer = page.locator('.composer textarea');
+  await composer.fill('이 내용은 장기기억에 저장해줘');
+  await page.locator('button[aria-label="전송"]').click();
+  await expect(page.locator('.error-banner')).toContainText('UNKNOWN: 현재 Conversation에는 검증된 native personal-memory owner가 연결되어 있지 않아');
+  await expect(page.getByText(/기억했습니다|저장했습니다|삭제했습니다/)).toHaveCount(0);
 });
 
 test('personal Lucy accepts bare 승인 while a protected run is still waiting', async ({ page }, testInfo) => {
