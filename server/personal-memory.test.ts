@@ -36,12 +36,15 @@ describe('personal memory owner contract', () => {
     expect(classifyPersonalMemoryOperation('keep my birthday long-term')).toBe('remember');
     expect(classifyPersonalMemoryOperation('please remember my birthday')).toBe('remember');
     expect(classifyPersonalMemoryOperation('지난번에 내가 뭐라고 했는지 기억나?')).toBe('recall');
+    expect(classifyPersonalMemoryOperation('내 생일 기억나?')).toBe('recall');
     expect(classifyPersonalMemoryOperation('what do you remember about my request?')).toBe('recall');
     expect(classifyPersonalMemoryOperation('recall my birthday')).toBe('recall');
     expect(classifyPersonalMemoryOperation('이 기억 삭제해줘')).toBe('delete');
     expect(classifyPersonalMemoryOperation('forget this')).toBe('delete');
     expect(classifyPersonalMemoryOperation('forget my birthday')).toBe('delete');
     expect(classifyPersonalMemoryOperation('delete what you remember about me')).toBe('delete');
+    expect(classifyPersonalMemoryOperation('delete my birthday from your memory')).toBe('delete');
+    expect(classifyPersonalMemoryOperation('erase everything you know about me')).toBe('delete');
     expect(classifyPersonalMemoryOperation('이거 잊어줘')).toBe('delete');
     expect(classifyPersonalMemoryOperation('제발 이거 잊어줘')).toBe('delete');
     expect(classifyPersonalMemoryOperation('이제 이거 잊어줘')).toBe('delete');
@@ -60,6 +63,8 @@ describe('personal memory owner contract', () => {
       'why do people forget appointments?',
       'keep this project long-term',
       'Explain how delete releases memory in C++',
+      'remove the memory leak from this code',
+      'delete the memory leak',
       'Remember the Titans is a 2000 film; summarize it.',
       'delete my project',
       'remove my file',
@@ -99,10 +104,13 @@ describe('personal memory owner contract', () => {
       '내 생일을 장기 보관해줘',
       '다음 대화에서도 내 생일을 기억해줘',
       '지난번 기억나?',
+      '내 생일 기억나?',
       'recall my birthday',
       '이 기억 삭제해줘',
       '제발 이거 잊어줘',
       'delete what you remember about me',
+      'delete my birthday from your memory',
+      'erase everything you know about me',
     ]) {
       const consume = async () => {
         for await (const _item of wrapped.streamReply(request(content))) {
@@ -126,6 +134,8 @@ describe('personal memory owner contract', () => {
       '장기 프로젝트를 유지하는 방법을 설명해줘',
       '경제 데이터를 장기 저장해줘',
       'Explain how delete releases memory in C++',
+      'remove the memory leak from this code',
+      'delete the memory leak',
       'Remember the Titans is a 2000 film; summarize it.',
       'delete my project',
       'recall the movie plot',
