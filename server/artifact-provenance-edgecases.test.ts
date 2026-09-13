@@ -161,4 +161,66 @@ describe('generated artifact provenance edge cases', () => {
     expect(retryArtifact.artifact.producerTaskId).toBe(firstAccepted.message.id);
     expect(retryArtifact.artifact.producerTaskId).not.toBe(secondAccepted.message.id);
   });
+
+  it('replays the original bound task when regenerating a continuation artifact after a newer task', async () => {
+    const created = await app.inject({
+      method: 'POST',
+      url: '/api/conversations',
+      payload: { systemId: 'hermes', agentId: '[Hermes] Lucy', title: 'Continuation artifact owner' },
+    });
+    const conversationId = created.json().conversation.id as string;
+
+    const ordinary = await app.inject({
+      method: 'POST',
+      url: `/api/conversations/${conversationId}/messages/stream`,
+      payload: { content: '기준 작업을 시작해.', artifactIds: [] },
+    });
+    const ordinaryAccepted = events(ordinary.body).find((event) => event.type === 'message.accepted');
+    expect(ordinaryAccepted?.type).toBe('message.accepted');
+    if (ordinaryAccepted?.type !== 'message.accepted') throw new Error('Expected ordinary task');
+
+    const continuation = await app.inject({
+      method: 'POST',
+      url: `/api/conversations/${conversationId}/messages/stream`,
+      payload: { content: '계속해', artifactIds: [] },
+    });
+    const continuationEvents = events(continuation.body);
+    const continuationAccepted = continuationEvents.find((event) => event.type === 'message.accepted');
+    const continuationCompleted = continuationEvents.find(
+      (event) => event.type === 'run.completed' && event.agentId === '[Hermes] Lucy',
+    );
+    const originalContinuationArtifact = continuationEvents.find((event) => event.type === 'artifact.created');
+    expect(continuationAccepted?.type).toBe('message.accepted');
+    expect(continuationCompleted?.type).toBe('run.completed');
+    expect(originalContinuationArtifact?.type).toBe('artifact.created');
+    if (
+      continuationAccepted?.type !== 'message.accepted'
+      || continuationCompleted?.type !== 'run.completed'
+      || originalContinuationArtifact?.type !== 'artifact.created'
+    ) throw new Error('Expected continuation response and artifact');
+    expect(originalContinuationArtifact.artifact.producerTaskId).toBe(ordinaryAccepted.message.id);
+    expect(originalContinuationArtifact.artifact.producerTaskId).not.toBe(continuationAccepted.message.id);
+
+    const newer = await app.inject({
+      method: 'POST',
+      url: `/api/conversations/${conversationId}/messages/stream`,
+      payload: { content: '완전히 새로운 작업을 시작해.', artifactIds: [] },
+    });
+    const newerAccepted = events(newer.body).find((event) => event.type === 'message.accepted');
+    expect(newerAccepted?.type).toBe('message.accepted');
+    if (newerAccepted?.type !== 'message.accepted') throw new Error('Expected newer task');
+
+    const retried = await app.inject({
+      method: 'POST',
+      url: `/api/messages/${continuationCompleted.message.id}/retry/stream`,
+      payload: { mode: 'regenerate', idempotencyKey: `continuation-retry-${crypto.randomUUID()}` },
+    });
+    expect(retried.statusCode).toBe(200);
+    const retryArtifact = events(retried.body).find((event) => event.type === 'artifact.created');
+    expect(retryArtifact?.type).toBe('artifact.created');
+    if (retryArtifact?.type !== 'artifact.created') throw new Error('Expected regenerated continuation artifact');
+    expect(retryArtifact.artifact.producerTaskId).toBe(ordinaryAccepted.message.id);
+    expect(retryArtifact.artifact.producerTaskId).not.toBe(continuationAccepted.message.id);
+    expect(retryArtifact.artifact.producerTaskId).not.toBe(newerAccepted.message.id);
+  });
 });
