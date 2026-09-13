@@ -31,12 +31,16 @@ describe('personal memory owner contract', () => {
     expect(classifyPersonalMemoryOperation('이거 기억해 줘')).toBe('remember');
     expect(classifyPersonalMemoryOperation('내 생일을 장기 보관해줘')).toBe('remember');
     expect(classifyPersonalMemoryOperation('다음 대화에서도 이 생일을 보관해줘')).toBe('remember');
+    expect(classifyPersonalMemoryOperation('다음 대화에서도 내 생일을 기억해줘')).toBe('remember');
     expect(classifyPersonalMemoryOperation('store my birthday for future conversations')).toBe('remember');
     expect(classifyPersonalMemoryOperation('keep my birthday long-term')).toBe('remember');
+    expect(classifyPersonalMemoryOperation('please remember my birthday')).toBe('remember');
     expect(classifyPersonalMemoryOperation('지난번에 내가 뭐라고 했는지 기억나?')).toBe('recall');
     expect(classifyPersonalMemoryOperation('what do you remember about my request?')).toBe('recall');
+    expect(classifyPersonalMemoryOperation('recall my birthday')).toBe('recall');
     expect(classifyPersonalMemoryOperation('이 기억 삭제해줘')).toBe('delete');
     expect(classifyPersonalMemoryOperation('forget this')).toBe('delete');
+    expect(classifyPersonalMemoryOperation('forget my birthday')).toBe('delete');
     expect(classifyPersonalMemoryOperation('delete what you remember about me')).toBe('delete');
     expect(classifyPersonalMemoryOperation('이거 잊어줘')).toBe('delete');
     expect(classifyPersonalMemoryOperation('제발 이거 잊어줘')).toBe('delete');
@@ -47,6 +51,7 @@ describe('personal memory owner contract', () => {
       'AI memory architecture를 검토해줘',
       '사람들이 왜 약속을 잊어버리는지 설명해줘',
       '사람들은 새로운 단어를 어떻게 기억해?',
+      '제 학생들이 단어를 어떻게 기억해?',
       '기억나는 영화 추천해줘',
       '어린 시절이 기억나는 이유를 설명해줘',
       '장기 프로젝트를 유지하는 방법을 설명해줘',
@@ -55,6 +60,10 @@ describe('personal memory owner contract', () => {
       'why do people forget appointments?',
       'keep this project long-term',
       'Explain how delete releases memory in C++',
+      'Remember the Titans is a 2000 film; summarize it.',
+      'delete my project',
+      'remove my file',
+      'recall the movie plot',
     ];
     for (const content of ordinary) expect(classifyPersonalMemoryOperation(content), content).toBeNull();
   });
@@ -88,7 +97,9 @@ describe('personal memory owner contract', () => {
     for (const content of [
       '이거 기억해 줘',
       '내 생일을 장기 보관해줘',
+      '다음 대화에서도 내 생일을 기억해줘',
       '지난번 기억나?',
+      'recall my birthday',
       '이 기억 삭제해줘',
       '제발 이거 잊어줘',
       'delete what you remember about me',
@@ -110,10 +121,14 @@ describe('personal memory owner contract', () => {
       '일반 대화 요청',
       '사람들이 왜 약속을 잊어버리는지 설명해줘',
       '사람들은 새로운 단어를 어떻게 기억해?',
+      '제 학생들이 단어를 어떻게 기억해?',
       '기억나는 영화 추천해줘',
       '장기 프로젝트를 유지하는 방법을 설명해줘',
       '경제 데이터를 장기 저장해줘',
       'Explain how delete releases memory in C++',
+      'Remember the Titans is a 2000 film; summarize it.',
+      'delete my project',
+      'recall the movie plot',
     ];
     const outputs: AdapterStreamItem[] = [];
     for await (const item of wrapped.streamReply(request('이거 기억해 줘'))) outputs.push(item);
