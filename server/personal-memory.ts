@@ -14,6 +14,7 @@ export type PersonalMemoryOwnerResolution =
   | { ok: false; operation: PersonalMemoryOperation; reason: 'OWNER_UNAVAILABLE' | 'IDENTITY_MISMATCH' };
 
 const CANONICAL_PERSONAL_MEMORY_AGENT = '[OpenClaw] Lucy' as const;
+const ENGLISH_REQUEST_PREFIX = '(?:(?:please)\\s+|(?:(?:could|can|would|will)\\s+you\\s+))?';
 
 function normalized(value: string) {
   return value.trim().toLowerCase().replace(/\s+/gu, ' ');
@@ -40,10 +41,12 @@ function isExplicitKoreanDurableSave(value: string) {
 }
 
 function isExplicitEnglishDurableSave(value: string) {
-  const requestPrefix = '(?:(?:please)\\s+|(?:(?:could|can|would|will)\\s+you\\s+))?';
-  if (!new RegExp(`^${requestPrefix}(?:save|store|keep)\\b`, 'i').test(value)) return false;
+  if (!new RegExp(`^${ENGLISH_REQUEST_PREFIX}(?:save|store|keep)\\b`, 'i').test(value)) return false;
   if (/\b(?:for\s+(?:future|later|next)\s+conversations?|across\s+conversations?)\b/i.test(value)) return true;
-  return /\b(?:my|me|personal)\b/i.test(value) && /\blong[- ]term\b/i.test(value);
+  // Long-term wording alone is too broad (for example, "keep me on this project
+  // long-term"). Require a personal-fact target rather than a bare personal
+  // pronoun before classifying it as native memory persistence.
+  return /\b(?:my\s+.{1,80}|personal\s+.{1,80})\blong[- ]term\b/i.test(value);
 }
 
 function isExplicitKoreanDelete(value: string) {
@@ -69,7 +72,7 @@ function isExplicitKoreanDelete(value: string) {
 }
 
 function isExplicitEnglishDelete(value: string) {
-  if (/^(?:please\s+)?forget\s+(?:this|that|it|my\b.{0,80}|what\s+you\s+remember(?:ed)?\s+about\s+me\b.{0,40})[.!?]*$/i.test(value)) {
+  if (new RegExp(`^${ENGLISH_REQUEST_PREFIX}forget\\s+(?:this|that|it|my\\b.{0,80}|what\\s+you\\s+remember(?:ed)?\\s+about\\s+me\\b.{0,40})[.!?]*$`, 'i').test(value)) {
     return true;
   }
 
@@ -77,17 +80,17 @@ function isExplicitEnglishDelete(value: string) {
   // grammar narrow enough that technical compounds such as "memory leak" remain
   // ordinary coding requests rather than becoming personal-memory operations.
   const mutation = '(?:delete|remove|erase)';
-  if (new RegExp(`^(?:please\\s+)?${mutation}\\s+what\\s+you\\s+remember(?:ed)?\\s+about\\s+me[.!?]*$`, 'i').test(value)) {
+  if (new RegExp(`^${ENGLISH_REQUEST_PREFIX}${mutation}\\s+what\\s+you\\s+remember(?:ed)?\\s+about\\s+me[.!?]*$`, 'i').test(value)) {
     return true;
   }
-  if (new RegExp(`^(?:please\\s+)?${mutation}\\s+(?:everything|anything|all)\\s+you\\s+(?:know|remember(?:ed)?)\\s+about\\s+me[.!?]*$`, 'i').test(value)) {
+  if (new RegExp(`^${ENGLISH_REQUEST_PREFIX}${mutation}\\s+(?:everything|anything|all)\\s+you\\s+(?:know|remember(?:ed)?)\\s+about\\s+me[.!?]*$`, 'i').test(value)) {
     return true;
   }
-  if (new RegExp(`^(?:please\\s+)?${mutation}\\s+my\\s+.{1,80}\\s+from\\s+(?:your\\s+)?memor(?:y|ies)[.!?]*$`, 'i').test(value)) {
+  if (new RegExp(`^${ENGLISH_REQUEST_PREFIX}${mutation}\\s+my\\s+.{1,80}\\s+from\\s+(?:your\\s+)?memor(?:y|ies)[.!?]*$`, 'i').test(value)) {
     return true;
   }
   return new RegExp(
-    `^(?:please\\s+)?${mutation}\\s+(?:(?:my|the)\\s+)?memor(?:y|ies)(?:\\s+(?:about|of)\\s+me)?[.!?]*$`,
+    `^${ENGLISH_REQUEST_PREFIX}${mutation}\\s+(?:(?:my|the)\\s+)?memor(?:y|ies)(?:\\s+(?:about|of)\\s+me)?[.!?]*$`,
     'i',
   ).test(value);
 }
@@ -112,19 +115,21 @@ function isExplicitKoreanRemember(value: string) {
 }
 
 function isExplicitEnglishRemember(value: string) {
-  const requestPrefix = '(?:(?:please)\\s+|(?:(?:could|can|would|will)\\s+you\\s+))?';
   return new RegExp(
-    `^${requestPrefix}remember\\s+(?:this|that|it|my\\b.{0,120}|what\\s+i\\s+(?:said|asked|told)\\b.{0,80})[.!?]*$`,
+    `^${ENGLISH_REQUEST_PREFIX}remember\\s+(?:this|that|it|my\\b.{0,120}|what\\s+i\\s+(?:said|asked|told)\\b.{0,80})[.!?]*$`,
     'i',
   ).test(value)
     || new RegExp(
-      `^${requestPrefix}(?:save|store)\\s+(?:this|that|it|my\\b.{0,120})\\s+(?:in|to)\\s+(?:your\\s+)?memor(?:y|ies)[.!?]*$`,
+      `^${ENGLISH_REQUEST_PREFIX}(?:save|store)\\s+(?:this|that|it|my\\b.{0,120})\\s+(?:in|to)\\s+(?:your\\s+)?memor(?:y|ies)[.!?]*$`,
       'i',
     ).test(value);
 }
 
 function isExplicitKoreanRecall(value: string) {
-  if (/(?:지난번|전에|지난\s*대화|이전\s*대화|우리(?:가)?\s+전에).*(?:기억나|기억하고\s+있어|기억해\s*\?)/u.test(value)) return true;
+  // Prior-conversation wording is a native recall request only when it actually
+  // ends as a recall question. This keeps discussion such as
+  // "지난번 본 영화가 왜 기억나는지 설명해줘" in ordinary chat.
+  if (/^(?=.*(?:지난번|전에|지난\s*대화|이전\s*대화|우리(?:가)?\s+전에)).{1,180}(?:기억나\s*\?|기억하고\s+있어\s*\?|기억해\s*\?)[.!?]*$/u.test(value)) return true;
   if (/(?:내가|나에\s+대해|내\s+\S+(?:\s+\S+){0,4}).*(?:뭐|무엇|어떤).*(?:기억|기억나)/u.test(value)) return true;
   // Direct personal-fact recall questions do not need an interrogative noun:
   // "내 생일 기억나?" is still a claim that native personal memory exists.
@@ -134,7 +139,10 @@ function isExplicitKoreanRecall(value: string) {
 function isExplicitEnglishRecall(value: string) {
   return /^what\s+do\s+you\s+remember\s+about\s+(?:me|my\b.{0,100}|our\b.{0,100}|the\s+(?:last|previous|earlier)\b.{0,80})[?!.]*$/i.test(value)
     || /^do\s+you\s+remember\s+(?:me|my\b.{0,100}|what\s+i\s+(?:said|asked|told)\b.{0,80}|our\s+(?:last|previous|earlier)\b.{0,80})[?!.]*$/i.test(value)
-    || /^(?:please\s+)?recall\s+(?:my\b.{0,100}|what\s+i\s+(?:said|asked|told)\b.{0,80}|what\s+you\s+remember(?:ed)?\s+about\s+me\b.{0,60}|our\s+(?:last|previous|earlier)\b.{0,80})[?!.]*$/i.test(value);
+    || new RegExp(
+      `^${ENGLISH_REQUEST_PREFIX}recall\\s+(?:my\\b.{0,100}|what\\s+i\\s+(?:said|asked|told)\\b.{0,80}|what\\s+you\\s+remember(?:ed)?\\s+about\\s+me\\b.{0,60}|our\\s+(?:last|previous|earlier)\\b.{0,80})[?!.]*$`,
+      'i',
+    ).test(value);
 }
 
 /**
