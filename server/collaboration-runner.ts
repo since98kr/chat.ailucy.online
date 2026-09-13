@@ -12,7 +12,7 @@ import { artifactDeliveryEvent, classifyArtifactDeliveryFailure } from './artifa
 import { storeGeneratedArtifact } from './artifacts.js';
 import type { CollaborationService } from './collaboration.js';
 import type { ChatDatabase } from './database.js';
-import type { ConversationOperatingIntent } from './conversation-intent.js';
+import { classifyConversationIntent, type ConversationOperatingIntent } from './conversation-intent.js';
 import { providerSessionIdentity } from './provider-session-identity.js';
 
 export type CollaborationRunInput = {
@@ -66,6 +66,17 @@ function historyForSelectedAgent(
   return history.filter((message) => message.role !== 'assistant' || message.authorId === selectedAgentId);
 }
 
+function taskBoundAtSource(messages: MessageRecord[], sourceMessageId: string) {
+  let taskId: string | null = null;
+  for (const message of messages) {
+    if (message.role === 'user' && classifyConversationIntent(message.content) === 'ordinary') {
+      taskId = message.id;
+    }
+    if (message.id === sourceMessageId) return taskId;
+  }
+  return null;
+}
+
 export function sessionIdentity(conversation: ConversationRecord, agentId: string, requestedSessionId?: string) {
   return providerSessionIdentity(conversation, agentId, requestedSessionId);
 }
@@ -99,11 +110,12 @@ export async function* runCollaborativeReply(input: CollaborationRunInput): Asyn
   if ((input.operatingIntent ?? 'ordinary') === 'ordinary' && routing.leadAgentId === conversation.agentId) {
     database.bindConversationTask(conversation.id, userMessage.id, userMessage.content);
   }
-  // Snapshot the canonical bound task before streaming/yields. A retry or
-  // regeneration owns artifacts on the original source user turn supplied by
-  // the retry route, even if a newer ordinary task is currently active.
+  // Snapshot the canonical task binding before streaming/yields. Retry and
+  // regeneration replay the task binding that applied at the original source
+  // turn: ordinary turns bind themselves, while continuation/status/approval
+  // turns retain the preceding ordinary task instead of adopting a newer task.
   const producerTaskId = input.regeneratedFromMessageId
-    ? userMessage.id
+    ? taskBoundAtSource(conversation.messages, userMessage.id)
     : database.getConversationOperatingContext(conversation.id)?.activeTask?.taskId ?? null;
 
   if (!input.suppressUserAccepted) yield { type: 'message.accepted', message: userMessage };
