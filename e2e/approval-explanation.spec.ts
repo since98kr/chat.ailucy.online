@@ -14,6 +14,7 @@ test('pending approval shows backend-owned reason, verification, rollback, and U
   await page.goto('/');
   const id = await createPersonalConversation(page);
   const initialContext = (await (await page.request.get(`/api/conversations/${id}/operating-context`)).json()).operatingContext;
+  const longReason = `https://example.test/${'x'.repeat(470)}`;
   let streamWaiting = false;
   let releaseStream: (() => void) | undefined;
   let markStreamFulfilled: (() => void) | undefined;
@@ -35,7 +36,7 @@ test('pending approval shows backend-owned reason, verification, rollback, and U
             approvalId: `approval:${id}`,
             kind: 'exec',
             summary: '운영 서비스 재시작',
-            reason: '새 설정을 적용하려면 재시작이 필요합니다.',
+            reason: longReason,
             verificationPlan: null,
             rollbackPlan: '기존 이미지로 되돌린 뒤 health를 확인합니다.',
             state: 'pending',
@@ -62,9 +63,10 @@ test('pending approval shows backend-owned reason, verification, rollback, and U
 
   const approval = page.getByTestId('pending-approval');
   await expect(approval).toContainText('운영 서비스 재시작');
-  await expect(page.getByTestId('approval-reason')).toHaveText('이유: 새 설정을 적용하려면 재시작이 필요합니다.');
+  await expect(page.getByTestId('approval-reason')).toHaveText(`이유: ${longReason}`);
   await expect(page.getByTestId('approval-verification')).toHaveText('검증: UNKNOWN');
   await expect(page.getByTestId('approval-rollback')).toHaveText('롤백: 기존 이미지로 되돌린 뒤 health를 확인합니다.');
+  await expect(approval.getByRole('button', { name: '승인' })).toBeInViewport();
 
   releaseStream?.();
   await streamFulfilled;
