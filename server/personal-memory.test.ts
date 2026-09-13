@@ -37,16 +37,26 @@ describe('personal memory owner contract', () => {
     expect(classifyPersonalMemoryOperation('what do you remember about my request?')).toBe('recall');
     expect(classifyPersonalMemoryOperation('이 기억 삭제해줘')).toBe('delete');
     expect(classifyPersonalMemoryOperation('forget this')).toBe('delete');
+    expect(classifyPersonalMemoryOperation('delete what you remember about me')).toBe('delete');
     expect(classifyPersonalMemoryOperation('이거 잊어줘')).toBe('delete');
     expect(classifyPersonalMemoryOperation('제발 이거 잊어줘')).toBe('delete');
     expect(classifyPersonalMemoryOperation('이제 이거 잊어줘')).toBe('delete');
-    expect(classifyPersonalMemoryOperation('Memory Capsule 구조를 설명해줘')).toBeNull();
-    expect(classifyPersonalMemoryOperation('AI memory architecture를 검토해줘')).toBeNull();
-    expect(classifyPersonalMemoryOperation('사람들이 왜 약속을 잊어버리는지 설명해줘')).toBeNull();
-    expect(classifyPersonalMemoryOperation('장기 프로젝트를 유지하는 방법을 설명해줘')).toBeNull();
-    expect(classifyPersonalMemoryOperation('앞으로 프로젝트를 유지해줘')).toBeNull();
-    expect(classifyPersonalMemoryOperation('why do people forget appointments?')).toBeNull();
-    expect(classifyPersonalMemoryOperation('keep this project long-term')).toBeNull();
+
+    const ordinary = [
+      'Memory Capsule 구조를 설명해줘',
+      'AI memory architecture를 검토해줘',
+      '사람들이 왜 약속을 잊어버리는지 설명해줘',
+      '사람들은 새로운 단어를 어떻게 기억해?',
+      '기억나는 영화 추천해줘',
+      '어린 시절이 기억나는 이유를 설명해줘',
+      '장기 프로젝트를 유지하는 방법을 설명해줘',
+      '앞으로 프로젝트를 유지해줘',
+      '경제 데이터를 장기 저장해줘',
+      'why do people forget appointments?',
+      'keep this project long-term',
+      'Explain how delete releases memory in C++',
+    ];
+    for (const content of ordinary) expect(classifyPersonalMemoryOperation(content), content).toBeNull();
   });
 
   it('resolves only canonical OpenClaw Lucy on the explicitly configured OpenClaw transport as the native owner', () => {
@@ -72,10 +82,17 @@ describe('personal memory owner contract', () => {
     )).toEqual({ ok: false, operation: 'delete', reason: 'OWNER_UNAVAILABLE' });
   });
 
-  it('blocks remember/recall/delete before a mock or unverified backend can fabricate memory behavior', async () => {
+  it('blocks explicit remember/recall/delete before a mock or unverified backend can fabricate memory behavior', async () => {
     const calls: string[] = [];
     const wrapped = wrapPersonalMemoryBoundary(fakeAdapter(calls), {} as NodeJS.ProcessEnv);
-    for (const content of ['이거 기억해 줘', '내 생일을 장기 보관해줘', '지난번 기억나?', '이 기억 삭제해줘', '제발 이거 잊어줘']) {
+    for (const content of [
+      '이거 기억해 줘',
+      '내 생일을 장기 보관해줘',
+      '지난번 기억나?',
+      '이 기억 삭제해줘',
+      '제발 이거 잊어줘',
+      'delete what you remember about me',
+    ]) {
       const consume = async () => {
         for await (const _item of wrapped.streamReply(request(content))) {
           // no-op
@@ -89,23 +106,23 @@ describe('personal memory owner contract', () => {
   it('routes explicit memory requests to the verified canonical owner and keeps ordinary chat unchanged', async () => {
     const calls: string[] = [];
     const wrapped = wrapPersonalMemoryBoundary(fakeAdapter(calls), { LETTA_PROTOCOL: 'openclaw' } as NodeJS.ProcessEnv);
-    const outputs: AdapterStreamItem[] = [];
-    for await (const item of wrapped.streamReply(request('이거 기억해 줘'))) outputs.push(item);
-    for await (const item of wrapped.streamReply(request('일반 대화 요청'))) outputs.push(item);
-    for await (const item of wrapped.streamReply(request('사람들이 왜 약속을 잊어버리는지 설명해줘'))) outputs.push(item);
-    for await (const item of wrapped.streamReply(request('장기 프로젝트를 유지하는 방법을 설명해줘'))) outputs.push(item);
-    expect(calls).toEqual([
-      '이거 기억해 줘',
+    const ordinary = [
       '일반 대화 요청',
       '사람들이 왜 약속을 잊어버리는지 설명해줘',
+      '사람들은 새로운 단어를 어떻게 기억해?',
+      '기억나는 영화 추천해줘',
       '장기 프로젝트를 유지하는 방법을 설명해줘',
-    ]);
-    expect(outputs).toEqual([
-      { type: 'delta', delta: 'backend result' },
-      { type: 'delta', delta: 'backend result' },
-      { type: 'delta', delta: 'backend result' },
-      { type: 'delta', delta: 'backend result' },
-    ]);
+      '경제 데이터를 장기 저장해줘',
+      'Explain how delete releases memory in C++',
+    ];
+    const outputs: AdapterStreamItem[] = [];
+    for await (const item of wrapped.streamReply(request('이거 기억해 줘'))) outputs.push(item);
+    for (const content of ordinary) {
+      for await (const item of wrapped.streamReply(request(content))) outputs.push(item);
+    }
+    expect(calls).toEqual(['이거 기억해 줘', ...ordinary]);
+    expect(outputs).toHaveLength(calls.length);
+    expect(outputs.every((item) => item.type === 'delta' && item.delta === 'backend result')).toBe(true);
   });
 
   it('keeps Memory Capsule language outside native personal-memory operations', async () => {
