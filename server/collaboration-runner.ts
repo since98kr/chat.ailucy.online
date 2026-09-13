@@ -118,8 +118,20 @@ export async function* runCollaborativeReply(input: CollaborationRunInput): Asyn
   // Capture the lead completion guard immediately after the optional task bind
   // and before the generator yields control. A sibling request cannot interleave
   // a newer task/blocker and have an older run snapshot that newer state.
-  const leadCompletionGuard = routing.leadAgentId === conversation.agentId
-    ? runCompletionGuard(database.getConversationOperatingContext(conversation.id)!)
+  // Historical retry/regeneration is deliberately ineligible to mutate the
+  // current operating context: its source user task must still be the exact
+  // active task. Otherwise even a valid provider receipt proves only the old
+  // operation and must not clear a newer task's blocker.
+  const currentOperatingContext = routing.leadAgentId === conversation.agentId
+    ? database.getConversationOperatingContext(conversation.id)!
+    : null;
+  const historicalRetry = Boolean(
+    input.regeneratedFromMessageId
+    && currentOperatingContext
+    && currentOperatingContext.activeTask?.taskId !== userMessage.id,
+  );
+  const leadCompletionGuard = routing.leadAgentId === conversation.agentId && !historicalRetry
+    ? runCompletionGuard(currentOperatingContext!)
     : undefined;
 
   if (!input.suppressUserAccepted) yield { type: 'message.accepted', message: userMessage };
