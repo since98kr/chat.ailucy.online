@@ -41,6 +41,7 @@ describe('personal memory owner contract', () => {
     expect(classifyPersonalMemoryOperation('내 생일 기억나?')).toBe('recall');
     expect(classifyPersonalMemoryOperation('what do you remember about my request?')).toBe('recall');
     expect(classifyPersonalMemoryOperation('recall my birthday')).toBe('recall');
+    expect(classifyPersonalMemoryOperation('Could you recall my birthday?')).toBe('recall');
     expect(classifyPersonalMemoryOperation('이 기억 삭제해줘')).toBe('delete');
     expect(classifyPersonalMemoryOperation('이 기억을 삭제해줘')).toBe('delete');
     expect(classifyPersonalMemoryOperation('메모리를 삭제해줘')).toBe('delete');
@@ -49,6 +50,7 @@ describe('personal memory owner contract', () => {
     expect(classifyPersonalMemoryOperation('forget this')).toBe('delete');
     expect(classifyPersonalMemoryOperation('forget my birthday')).toBe('delete');
     expect(classifyPersonalMemoryOperation('delete what you remember about me')).toBe('delete');
+    expect(classifyPersonalMemoryOperation('Could you delete what you remember about me?')).toBe('delete');
     expect(classifyPersonalMemoryOperation('delete my birthday from your memory')).toBe('delete');
     expect(classifyPersonalMemoryOperation('erase everything you know about me')).toBe('delete');
     expect(classifyPersonalMemoryOperation('이거 잊어줘')).toBe('delete');
@@ -63,12 +65,14 @@ describe('personal memory owner contract', () => {
       '제 학생들이 단어를 어떻게 기억해?',
       '기억나는 영화 추천해줘',
       '어린 시절이 기억나는 이유를 설명해줘',
+      '지난번 본 영화가 왜 기억나는지 설명해줘',
       '장기 프로젝트를 유지하는 방법을 설명해줘',
       '앞으로 프로젝트를 유지해줘',
       '경제 데이터를 장기 저장해줘',
       '메모리 누수 로그를 삭제해줘',
       'why do people forget appointments?',
       'keep this project long-term',
+      'Please keep me on this project long-term',
       'Explain how delete releases memory in C++',
       'remove the memory leak from this code',
       'delete the memory leak',
@@ -115,6 +119,7 @@ describe('personal memory owner contract', () => {
       '지난번 기억나?',
       '내 생일 기억나?',
       'recall my birthday',
+      'Could you recall my birthday?',
       '이 기억 삭제해줘',
       '이 기억을 삭제해줘',
       '메모리를 삭제해줘',
@@ -122,6 +127,7 @@ describe('personal memory owner contract', () => {
       '나에 대해 아는 모든 것을 삭제해줘',
       '제발 이거 잊어줘',
       'delete what you remember about me',
+      'Could you delete what you remember about me?',
       'delete my birthday from your memory',
       'erase everything you know about me',
     ]) {
@@ -144,9 +150,11 @@ describe('personal memory owner contract', () => {
       '사람들은 새로운 단어를 어떻게 기억해?',
       '제 학생들이 단어를 어떻게 기억해?',
       '기억나는 영화 추천해줘',
+      '지난번 본 영화가 왜 기억나는지 설명해줘',
       '장기 프로젝트를 유지하는 방법을 설명해줘',
       '경제 데이터를 장기 저장해줘',
       '메모리 누수 로그를 삭제해줘',
+      'Please keep me on this project long-term',
       'Explain how delete releases memory in C++',
       'remove the memory leak from this code',
       'delete the memory leak',
