@@ -1,17 +1,44 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import type { FastifyInstance } from 'fastify';
-import { buildApp } from './index.js';
 import type { ConversationApprovalBackend } from './openclaw-approval.js';
+import type { StreamEvent } from '../shared/contracts.js';
 
-process.env.NODE_ENV = 'test';
-delete process.env.LETTA_BASE_URL;
-delete process.env.HERMES_BASE_URL;
+const PROVIDER_ENV_KEYS = [
+  'NODE_ENV',
+  'LETTA_BASE_URL',
+  'LETTA_PROTOCOL',
+  'LETTA_API_KEY',
+  'LETTA_OPENCLAW_AGENT_TARGET',
+  'LETTA_OPENCLAW_SESSION_PREFIX',
+  'HERMES_BASE_URL',
+] as const;
 
 describe('durable Conversation operating-context continuity', () => {
   it('restores task, continuation, and the last verified approval snapshot across reload/reconnect', async () => {
+    const previousEnv = Object.fromEntries(
+      PROVIDER_ENV_KEYS.map((key) => [key, process.env[key]]),
+    ) as Record<(typeof PROVIDER_ENV_KEYS)[number], string | undefined>;
+    process.env.NODE_ENV = 'test';
+    delete process.env.LETTA_BASE_URL;
+    delete process.env.LETTA_PROTOCOL;
+    delete process.env.LETTA_API_KEY;
+    delete process.env.LETTA_OPENCLAW_AGENT_TARGET;
+    delete process.env.LETTA_OPENCLAW_SESSION_PREFIX;
+    delete process.env.HERMES_BASE_URL;
+
+    // Adapter singletons are created when buildApp's module graph is loaded.
+    // Reset and import only after provider configuration is cleared so this
+    // deterministic source test can never inherit a real HTTP/OpenClaw route.
+    vi.resetModules();
+    const [{ buildApp }, { MockAdapter }] = await Promise.all([
+      import('./index.js'),
+      import('./adapters/mock.js'),
+    ]);
+    const mockStreamSpy = vi.spyOn(MockAdapter.prototype, 'streamReply');
+
     const directory = mkdtempSync(join(tmpdir(), 'chat-v2-durable-context-'));
     const databasePath = join(directory, 'chat.sqlite');
     const artifactRoot = join(directory, 'artifacts');
@@ -60,6 +87,7 @@ describe('durable Conversation operating-context continuity', () => {
       });
       expect(created.statusCode).toBe(201);
       const conversationId = created.json().conversation.id as string;
+      const expectedSessionIdentity = `letta:${conversationId}:[Letta] Lucy`;
 
       const first = await app.inject({
         method: 'POST',
@@ -67,7 +95,13 @@ describe('durable Conversation operating-context continuity', () => {
         payload: { content: '이 작업을 재접속 뒤에도 그대로 이어가야 해.' },
       });
       expect(first.statusCode).toBe(200);
-      expect(first.body).toContain('run.completed');
+      const firstEvents = first.body.trim().split('\n').filter(Boolean)
+        .map((line) => JSON.parse(line) as StreamEvent);
+      const firstAccepted = firstEvents.find((event) => event.type === 'message.accepted');
+      expect(firstAccepted?.type).toBe('message.accepted');
+      if (firstAccepted?.type !== 'message.accepted') throw new Error('Expected original task message');
+      const originalTaskId = firstAccepted.message.id;
+      expect(firstEvents.some((event) => event.type === 'run.completed')).toBe(true);
 
       const synchronized = await app.inject({
         method: 'GET',
@@ -79,15 +113,24 @@ describe('durable Conversation operating-context continuity', () => {
         conversationId,
         backendSystem: 'letta',
         agentId: '[OpenClaw] Lucy',
-        activeTask: { label: expect.stringContaining('재접속') },
+        sessionIdentity: expectedSessionIdentity,
+        activeTask: {
+          taskId: originalTaskId,
+          label: expect.stringContaining('재접속'),
+        },
         continuationTarget: {
           conversationId,
-          taskId: beforeReload.activeTask.taskId,
-          sessionIdentity: beforeReload.sessionIdentity,
+          backendSystem: 'letta',
+          agentId: '[OpenClaw] Lucy',
+          taskId: originalTaskId,
+          sessionIdentity: expectedSessionIdentity,
         },
         pendingApproval: {
+          conversationId,
+          backendSystem: 'letta',
+          agentId: '[OpenClaw] Lucy',
           approvalId: `approval:${conversationId}`,
-          sessionIdentity: beforeReload.sessionIdentity,
+          sessionIdentity: expectedSessionIdentity,
           state: 'pending',
           reason: 'durable approval reason',
           verificationPlan: 'verify durable outcome',
@@ -107,14 +150,33 @@ describe('durable Conversation operating-context continuity', () => {
       });
       expect(restored.statusCode).toBe(200);
       const afterReload = restored.json().operatingContext;
-      expect(afterReload.conversationId).toBe(beforeReload.conversationId);
-      expect(afterReload.backendSystem).toBe(beforeReload.backendSystem);
-      expect(afterReload.agentId).toBe(beforeReload.agentId);
-      expect(afterReload.sessionIdentity).toBe(beforeReload.sessionIdentity);
+      expect(afterReload).toMatchObject({
+        conversationId,
+        backendSystem: 'letta',
+        agentId: '[OpenClaw] Lucy',
+        sessionIdentity: expectedSessionIdentity,
+        activeTask: beforeReload.activeTask,
+        continuationTarget: {
+          conversationId,
+          backendSystem: 'letta',
+          agentId: '[OpenClaw] Lucy',
+          taskId: originalTaskId,
+          sessionIdentity: expectedSessionIdentity,
+        },
+        pendingApproval: {
+          conversationId,
+          backendSystem: 'letta',
+          agentId: '[OpenClaw] Lucy',
+          approvalId: `approval:${conversationId}`,
+          sessionIdentity: expectedSessionIdentity,
+          state: 'pending',
+        },
+      });
       expect(afterReload.activeTask).toEqual(beforeReload.activeTask);
       expect(afterReload.continuationTarget).toEqual(beforeReload.continuationTarget);
       expect(afterReload.pendingApproval).toEqual(beforeReload.pendingApproval);
 
+      const callsBeforeContinuation = mockStreamSpy.mock.calls.length;
       const continued = await app.inject({
         method: 'POST',
         url: `/api/conversations/${conversationId}/messages/stream`,
@@ -122,6 +184,28 @@ describe('durable Conversation operating-context continuity', () => {
       });
       expect(continued.statusCode).toBe(200);
       expect(continued.body).toContain('run.completed');
+      expect(mockStreamSpy.mock.calls.length).toBe(callsBeforeContinuation + 1);
+      const continuationRequest = mockStreamSpy.mock.calls.at(-1)?.[0];
+      expect(continuationRequest).toMatchObject({
+        userMessage: { content: '계속해' },
+        targetAgentId: '[OpenClaw] Lucy',
+        sessionId: expectedSessionIdentity,
+        operatingIntent: 'continuation',
+        operatingContext: {
+          conversationId,
+          backendSystem: 'letta',
+          agentId: '[OpenClaw] Lucy',
+          sessionIdentity: expectedSessionIdentity,
+          activeTask: beforeReload.activeTask,
+          continuationTarget: {
+            conversationId,
+            backendSystem: 'letta',
+            agentId: '[OpenClaw] Lucy',
+            taskId: originalTaskId,
+            sessionIdentity: expectedSessionIdentity,
+          },
+        },
+      });
 
       const afterContinueResponse = await app.inject({
         method: 'GET',
@@ -133,8 +217,14 @@ describe('durable Conversation operating-context continuity', () => {
       expect(afterContinue.continuationTarget).toEqual(beforeReload.continuationTarget);
       expect(afterContinue.pendingApproval).toEqual(beforeReload.pendingApproval);
     } finally {
+      mockStreamSpy.mockRestore();
       if (app) await app.close();
       rmSync(directory, { recursive: true, force: true });
+      for (const key of PROVIDER_ENV_KEYS) {
+        const value = previousEnv[key];
+        if (value === undefined) delete process.env[key];
+        else process.env[key] = value;
+      }
     }
   });
 });
