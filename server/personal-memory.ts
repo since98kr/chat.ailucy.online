@@ -19,6 +19,19 @@ function normalized(value: string) {
   return value.trim().toLowerCase().replace(/\s+/gu, ' ');
 }
 
+function isExplicitKoreanDurableSave(value: string) {
+  const imperativeSave = /(?:보관|저장|남겨)(?:해\s*(?:줘|주세요)?|해둬|해\s*둬|해주세요|해라)/u;
+  if (!imperativeSave.test(value)) return false;
+  if (/(?:다음\s*대화|다음에도|향후\s*대화|대화가\s*바뀌어도)/u.test(value)) return true;
+  return /(?:내|나의|나에\s*대한|제|저의)/u.test(value) && /(?:장기|앞으로)/u.test(value);
+}
+
+function isExplicitEnglishDurableSave(value: string) {
+  if (!/\b(?:save|store|keep)\b/i.test(value)) return false;
+  if (/\b(?:for\s+(?:future|later|next)\s+conversations?|across\s+conversations?)\b/i.test(value)) return true;
+  return /\b(?:my|me|personal)\b/i.test(value) && /\blong[- ]term\b/i.test(value);
+}
+
 /**
  * Recognize only explicit personal-memory operations. Generic discussion of
  * "memory" or the product's Memory Capsules is ordinary chat, not authority to
@@ -30,17 +43,17 @@ export function classifyPersonalMemoryOperation(content: string): PersonalMemory
 
   if (
     /(?:기억|메모리).*(?:삭제|지워|지우|제거)/u.test(value)
-    || /^(?:이거|그거|이것|그것|방금(?:\s+말한\s+것)?|나에\s+대해|내\s+\S+(?:\s+\S+){0,4})?\s*잊어\s*(?:줘|주세요)?[.!?]*$/u.test(value)
+    || /^(?:(?:제발|이제|그냥|앞으로|정말)\s+)*(?:이거|그거|이것|그것|방금(?:\s+말한\s+것)?|나에\s+대해|내\s+\S+(?:\s+\S+){0,4})?\s*잊어\s*(?:줘|주세요)?[.!?]*$/u.test(value)
     || /\b(?:forget|delete|remove|erase)\b.*\b(?:memory|memories|remembered)\b/i.test(value)
     || /\bforget\b\s+(?:this|that|it|my\s+\S+(?:\s+\S+){0,4})\b/i.test(value)
   ) return 'delete';
 
   if (
     /(?:기억해\s*(?:줘|둬|두|주세요)?|기억해두|기억해 둬|기억해 줘|장기기억.*(?:저장|기억)|기억에.*(?:저장|남겨))/u.test(value)
-    || /(?:장기|앞으로|다음\s*대화|다음에도|향후\s*대화).*(?:보관|저장|남겨|유지)/u.test(value)
+    || isExplicitKoreanDurableSave(value)
     || /\bremember\b\s+(?:this|that|it|my|the)\b/i.test(value)
     || /\b(?:save|store)\b.*\b(?:memory|remember)\b/i.test(value)
-    || /\b(?:save|store|keep)\b.*\b(?:for\s+(?:future|later|next)\s+conversations?|across\s+conversations?|long[- ]term)\b/i.test(value)
+    || isExplicitEnglishDurableSave(value)
   ) return 'remember';
 
   if (
