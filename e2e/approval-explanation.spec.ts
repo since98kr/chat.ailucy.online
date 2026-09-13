@@ -1,6 +1,11 @@
 import { expect, test } from '@playwright/test';
 
 async function createPersonalConversation(page: import('@playwright/test').Page) {
+  const mobileMenu = page.locator('.mobile-menu');
+  if (await mobileMenu.isVisible()) {
+    await mobileMenu.click();
+    await expect(page.locator('.sidebar')).toHaveClass(/sidebar--open/);
+  }
   const createdResponse = page.waitForResponse((response) =>
     response.request().method() === 'POST' && new URL(response.url()).pathname === '/api/conversations',
   );
