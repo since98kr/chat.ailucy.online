@@ -16,6 +16,8 @@ test('pending approval shows backend-owned reason, verification, rollback, and U
   const initialContext = (await (await page.request.get(`/api/conversations/${id}/operating-context`)).json()).operatingContext;
   let streamWaiting = false;
   let releaseStream: (() => void) | undefined;
+  let markStreamFulfilled: (() => void) | undefined;
+  const streamFulfilled = new Promise<void>((resolve) => { markStreamFulfilled = resolve; });
 
   await page.route(`**/api/conversations/${id}/operating-context`, async (route) => {
     if (!streamWaiting) return route.continue();
@@ -51,6 +53,7 @@ test('pending approval shows backend-owned reason, verification, rollback, and U
     streamWaiting = true;
     await new Promise<void>((resolve) => { releaseStream = resolve; });
     await route.fulfill({ status: 200, contentType: 'application/x-ndjson', body: '' });
+    markStreamFulfilled?.();
   });
 
   const composer = page.locator('.composer textarea');
@@ -64,4 +67,6 @@ test('pending approval shows backend-owned reason, verification, rollback, and U
   await expect(page.getByTestId('approval-rollback')).toHaveText('롤백: 기존 이미지로 되돌린 뒤 health를 확인합니다.');
 
   releaseStream?.();
+  await streamFulfilled;
+  await expect(page.locator('button[aria-label="전송"]')).toBeEnabled();
 });
