@@ -40,7 +40,8 @@ function isExplicitKoreanDurableSave(value: string) {
 }
 
 function isExplicitEnglishDurableSave(value: string) {
-  if (!/^(?:please\s+)?(?:save|store|keep)\b/i.test(value)) return false;
+  const requestPrefix = '(?:(?:please)\\s+|(?:(?:could|can|would|will)\\s+you\\s+))?';
+  if (!new RegExp(`^${requestPrefix}(?:save|store|keep)\\b`, 'i').test(value)) return false;
   if (/\b(?:for\s+(?:future|later|next)\s+conversations?|across\s+conversations?)\b/i.test(value)) return true;
   return /\b(?:my|me|personal)\b/i.test(value) && /\blong[- ]term\b/i.test(value);
 }
@@ -50,10 +51,10 @@ function isExplicitKoreanDelete(value: string) {
   const deleteVerb = '(?:삭제해\\s*(?:줘|주세요)|지워\\s*(?:줘|주세요)|제거해\\s*(?:줘|주세요))';
 
   // Match only the thing being deleted, not a loose mention of "memory" before
-  // an unrelated technical object. This keeps "메모리 누수 로그를 삭제해줘"
-  // outside native personal-memory deletion.
+  // an unrelated technical object. Natural object particles on the actual memory
+  // target are accepted: "이 기억을 삭제해줘", "메모리를 삭제해줘".
   if (new RegExp(
-    `^${prefix}(?:(?:이|그|내|제)\\s+)?(?:기억|메모리)(?:\\s+(?:내용|정보|기록))?\\s*${deleteVerb}[.!?]*$`,
+    `^${prefix}(?:(?:이|그|내|제)\\s+)?(?:기억|메모리)(?:\\s+(?:내용|정보|기록))?\\s*(?:을|를)?\\s*${deleteVerb}[.!?]*$`,
     'u',
   ).test(value)) return true;
 
