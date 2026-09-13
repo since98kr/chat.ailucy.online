@@ -37,7 +37,7 @@ describe('provider execution receipt transport contract', () => {
     expect(extractExecutionReceipt({ id: 'chatcmpl-provider-response' })).toBeNull();
   });
 
-  it('supports legacy/plain and snake-case provider fields but fails closed on malformed explicit frames', () => {
+  it('supports canonical legacy/plain and snake-case fields but rejects normalization-prone receipts', () => {
     expect(extractExecutionReceipt({
       type: 'execution-evidence',
       evidence: {
@@ -55,7 +55,7 @@ describe('provider execution receipt transport contract', () => {
     expect(() => extractExecutionReceipt({
       type: 'execution-evidence',
       evidence: { kind: 'result-receipt', receiptId: 'missing-correlation' },
-    })).toThrow('requires sessionId, operationId, and receiptId');
+    })).toThrow('requires canonical sessionId, operationId, and receiptId');
     expect(() => extractExecutionReceipt({
       type: 'execution-evidence',
       evidence: {
@@ -65,5 +65,14 @@ describe('provider execution receipt transport contract', () => {
         receiptId: 'bad-encoding',
       },
     })).toThrow('correlation encoding is invalid');
+    expect(() => extractExecutionReceipt({
+      type: 'execution-evidence',
+      evidence: {
+        kind: 'result-receipt',
+        sessionId: 'session-1',
+        operationId: 'operation-1',
+        receiptId: ' provider-result-1 ',
+      },
+    })).toThrow('requires canonical sessionId, operationId, and receiptId');
   });
 });
