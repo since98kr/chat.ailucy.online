@@ -530,8 +530,9 @@ export class HttpAgentAdapter implements ChatBackendAdapter {
     const reader = response.body.getReader();
     const decoder = new TextDecoder();
     let buffer = '';
+    let streamDone = false;
 
-    while (true) {
+    while (!streamDone) {
       const { value, done } = await reader.read();
       buffer += decoder.decode(value, { stream: !done });
       let newline = buffer.indexOf('\n');
@@ -541,7 +542,12 @@ export class HttpAgentAdapter implements ChatBackendAdapter {
         newline = buffer.indexOf('\n');
         if (!line || line.startsWith(':')) continue;
         if (line.startsWith('data:')) line = line.slice(5).trim();
-        if (!line || line === '[DONE]') continue;
+        if (!line) continue;
+        if (line === '[DONE]') {
+          streamDone = true;
+          buffer = '';
+          break;
+        }
         let payload: unknown;
         try {
           payload = JSON.parse(line);
@@ -551,10 +557,10 @@ export class HttpAgentAdapter implements ChatBackendAdapter {
         }
         for (const item of processPayload(payload, toolAccumulator)) yield item;
       }
-      if (done) break;
+      if (streamDone || done) break;
     }
 
-    const trailing = buffer.trim().replace(/^data:\s*/, '');
+    const trailing = streamDone ? '' : buffer.trim().replace(/^data:\s*/, '');
     if (trailing && trailing !== '[DONE]') {
       try {
         const payload = JSON.parse(trailing) as unknown;
