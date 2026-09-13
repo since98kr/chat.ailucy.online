@@ -48,6 +48,7 @@ describe('direct-agent Conversation isolation', () => {
       app = buildApp({
         databasePath,
         artifactRoot: join(directory, 'artifacts'),
+        approvalBackend: null,
       });
       await app.ready();
 
