@@ -56,7 +56,24 @@ function isExplicitEnglishDelete(value: string) {
   if (/^(?:please\s+)?forget\s+(?:this|that|it|my\b.{0,80}|what\s+you\s+remember(?:ed)?\s+about\s+me\b.{0,40})[.!?]*$/i.test(value)) {
     return true;
   }
-  return /^(?:please\s+)?(?:delete|remove|erase)\s+(?:(?:the\s+)?memories?\b.{0,80}|what\s+you\s+remember(?:ed)?\s+about\s+me\b.{0,40})[.!?]*$/i.test(value);
+
+  // Assistant-owned personal-memory deletion must be explicit. Keep the target
+  // grammar narrow enough that technical compounds such as "memory leak" remain
+  // ordinary coding requests rather than becoming personal-memory operations.
+  const mutation = '(?:delete|remove|erase)';
+  if (new RegExp(`^(?:please\\s+)?${mutation}\\s+what\\s+you\\s+remember(?:ed)?\\s+about\\s+me[.!?]*$`, 'i').test(value)) {
+    return true;
+  }
+  if (new RegExp(`^(?:please\\s+)?${mutation}\\s+(?:everything|anything|all)\\s+you\\s+(?:know|remember(?:ed)?)\\s+about\\s+me[.!?]*$`, 'i').test(value)) {
+    return true;
+  }
+  if (new RegExp(`^(?:please\\s+)?${mutation}\\s+my\\s+.{1,80}\\s+from\\s+(?:your\\s+)?memor(?:y|ies)[.!?]*$`, 'i').test(value)) {
+    return true;
+  }
+  return new RegExp(
+    `^(?:please\\s+)?${mutation}\\s+(?:(?:my|the)\\s+)?memor(?:y|ies)(?:\\s+(?:about|of)\\s+me)?[.!?]*$`,
+    'i',
+  ).test(value);
 }
 
 function isExplicitKoreanRemember(value: string) {
@@ -86,7 +103,9 @@ function isExplicitEnglishRemember(value: string) {
 function isExplicitKoreanRecall(value: string) {
   if (/(?:지난번|전에|지난\s*대화|이전\s*대화|우리(?:가)?\s+전에).*(?:기억나|기억하고\s+있어|기억해\s*\?)/u.test(value)) return true;
   if (/(?:내가|나에\s+대해|내\s+\S+(?:\s+\S+){0,4}).*(?:뭐|무엇|어떤).*(?:기억|기억나)/u.test(value)) return true;
-  return false;
+  // Direct personal-fact recall questions do not need an interrogative noun:
+  // "내 생일 기억나?" is still a claim that native personal memory exists.
+  return /^(?:(?:내|제|나의|저의)\s+.+|나에\s+대(?:해|한)\s+.+)\s+기억나\s*\?[.!?]*$/u.test(value);
 }
 
 function isExplicitEnglishRecall(value: string) {
