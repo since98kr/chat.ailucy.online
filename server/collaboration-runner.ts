@@ -370,7 +370,7 @@ export async function* runCollaborativeReply(input: CollaborationRunInput): Asyn
         outputMessageId: assistantMessage.id,
       });
       collaboration.setParticipantState(conversation.id, agentId, 'blocked');
-      if (agentId === conversation.agentId) {
+      if (agentId === conversation.agentId && !historicalRetry) {
         database.recordConversationRunFailure(conversation.id, runId, message);
       }
       participants = collaboration.listParticipants(conversation.id);
