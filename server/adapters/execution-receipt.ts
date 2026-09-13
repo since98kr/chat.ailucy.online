@@ -9,21 +9,27 @@ function nonBlank(value: unknown): value is string {
   return typeof value === 'string' && value.trim().length > 0;
 }
 
+function canonicalNonBlank(value: unknown): value is string {
+  return nonBlank(value) && value === value.trim();
+}
+
 function encodeCorrelationIdentity(value: string) {
   return `${CORRELATION_ENCODING_PREFIX}${Buffer.from(value, 'utf8').toString('base64url')}`;
 }
 
 function decodeCorrelationIdentity(value: string) {
-  const normalized = value.trim();
+  if (value !== value.trim()) {
+    throw new Error('Execution evidence correlation identity is noncanonical');
+  }
   // Accept legacy/plain ASCII receipts during migration, but all headers emitted
   // by this client use the versioned UTF-8/base64url representation below.
-  if (!normalized.startsWith(CORRELATION_ENCODING_PREFIX)) return normalized;
-  const encoded = normalized.slice(CORRELATION_ENCODING_PREFIX.length);
+  if (!value.startsWith(CORRELATION_ENCODING_PREFIX)) return value;
+  const encoded = value.slice(CORRELATION_ENCODING_PREFIX.length);
   if (!encoded || !/^[A-Za-z0-9_-]+$/.test(encoded)) {
     throw new Error('Execution evidence correlation encoding is invalid');
   }
   const decoded = Buffer.from(encoded, 'base64url').toString('utf8');
-  if (!decoded || encodeCorrelationIdentity(decoded) !== normalized) {
+  if (!decoded || encodeCorrelationIdentity(decoded) !== value) {
     throw new Error('Execution evidence correlation encoding is invalid');
   }
   return decoded;
@@ -64,13 +70,15 @@ export function extractExecutionReceipt(payload: unknown): AdapterExecutionRecei
   if (kind !== 'tool-receipt' && kind !== 'result-receipt') {
     throw new Error('Execution evidence frame kind is invalid');
   }
-  if (!nonBlank(sessionId) || !nonBlank(operationId) || !nonBlank(receiptId)) {
-    throw new Error('Execution evidence frame requires sessionId, operationId, and receiptId');
+  if (!canonicalNonBlank(sessionId) || !canonicalNonBlank(operationId) || !canonicalNonBlank(receiptId)) {
+    throw new Error('Execution evidence frame requires canonical sessionId, operationId, and receiptId');
   }
   return {
     kind,
     sessionId: decodeCorrelationIdentity(sessionId),
     operationId: decodeCorrelationIdentity(operationId),
-    receiptId: receiptId.trim(),
+    // Receipt IDs are provider-owned opaque references. Never normalize them:
+    // downstream validation either accepts the exact value or rejects it.
+    receiptId,
   };
 }
