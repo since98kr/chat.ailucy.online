@@ -126,11 +126,13 @@ describe('retry execution evidence boundary', () => {
     const retryOperationIds = operationIds.slice(-2);
     expect(retryOperationIds).toHaveLength(2);
     for (const operationId of retryOperationIds) {
-      expect(operationId).toMatch(/caller-operation-sha256:[a-f0-9]{64}$/);
+      expect(operationId).toMatch(/^v1\.[A-Za-z0-9_-]+$/);
       expect(operationId).toMatch(/^[\x20-\x7e]+$/);
     }
     expect(retryOperationIds[0]).not.toContain(firstKey);
     expect(retryOperationIds[1]).not.toContain(secondKey);
+    expect(retryOperationIds[0]).not.toContain('재시도');
+    expect(retryOperationIds[1]).not.toContain('재시도');
     expect(retryOperationIds[0]).not.toBe(retryOperationIds[1]);
 
     const afterSecondDatabase = new ChatDatabase(databasePath);
