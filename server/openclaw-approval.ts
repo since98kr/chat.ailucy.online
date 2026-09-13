@@ -4,14 +4,23 @@ import type {
   PendingApprovalBinding,
 } from '../shared/conversation-operating-context.js';
 
-type OpenClawApprovalRequest = {
+type ApprovalExplanationFields = {
+  reason?: unknown;
+  verification?: unknown;
+  verificationPlan?: unknown;
+  rollback?: unknown;
+  rollbackPlan?: unknown;
+  metadata?: unknown;
+};
+
+type OpenClawApprovalRequest = ApprovalExplanationFields & {
   command?: unknown;
   commandPreview?: unknown;
   sessionKey?: unknown;
   agentId?: unknown;
 };
 
-type OpenClawApprovalRecord = {
+type OpenClawApprovalRecord = ApprovalExplanationFields & {
   approvalKind?: unknown;
   id?: unknown;
   request?: unknown;
@@ -44,6 +53,66 @@ function boundedText(value: unknown, fallback: string, maxLength = 500) {
   const raw = typeof value === 'string' ? value : '';
   const normalized = raw.replace(CONTROL_CHARACTERS, ' ').replace(/\s+/g, ' ').trim();
   return (normalized || fallback).slice(0, maxLength);
+}
+
+function boundedOptionalText(value: unknown, maxLength = 500) {
+  if (typeof value !== 'string') return null;
+  const normalized = value.replace(CONTROL_CHARACTERS, ' ').replace(/\s+/g, ' ').trim();
+  return normalized ? normalized.slice(0, maxLength) : null;
+}
+
+function objectValue(value: unknown) {
+  return value && typeof value === 'object' && !Array.isArray(value)
+    ? value as Record<string, unknown>
+    : null;
+}
+
+/**
+ * Approval explanations are presentation metadata only. They never grant
+ * authority and are read only from the backend-owned approval record/request.
+ * Missing metadata stays null so the UI can say UNKNOWN instead of inventing it.
+ */
+function approvalExplanation(
+  record: OpenClawApprovalRecord,
+  request: OpenClawApprovalRequest,
+) {
+  const requestMetadata = objectValue(request.metadata);
+  const recordMetadata = objectValue(record.metadata);
+  const first = (...values: unknown[]) => {
+    for (const value of values) {
+      const bounded = boundedOptionalText(value);
+      if (bounded) return bounded;
+    }
+    return null;
+  };
+  return {
+    reason: first(
+      request.reason,
+      requestMetadata?.reason,
+      record.reason,
+      recordMetadata?.reason,
+    ),
+    verificationPlan: first(
+      request.verificationPlan,
+      request.verification,
+      requestMetadata?.verificationPlan,
+      requestMetadata?.verification,
+      record.verificationPlan,
+      record.verification,
+      recordMetadata?.verificationPlan,
+      recordMetadata?.verification,
+    ),
+    rollbackPlan: first(
+      request.rollbackPlan,
+      request.rollback,
+      requestMetadata?.rollbackPlan,
+      requestMetadata?.rollback,
+      record.rollbackPlan,
+      record.rollback,
+      recordMetadata?.rollbackPlan,
+      recordMetadata?.rollback,
+    ),
+  };
 }
 
 function asTimestamp(value: unknown) {
@@ -105,6 +174,7 @@ export function mapOpenClawPendingApprovals(
       approvalRequest.commandPreview ?? approvalRequest.command,
       'OpenClaw protected action',
     );
+    const explanation = approvalExplanation(record, approvalRequest);
     mapped.push({
       conversationId: context.conversationId,
       backendSystem: context.backendSystem,
@@ -113,6 +183,7 @@ export function mapOpenClawPendingApprovals(
       approvalId: id,
       kind,
       summary,
+      ...explanation,
       state: 'pending',
       createdAt: new Date(createdAtMs).toISOString(),
       expiresAt: expiresAtMs === null ? null : new Date(expiresAtMs).toISOString(),

@@ -42,7 +42,14 @@ export interface BlockerRecord {
 export interface PendingApprovalBinding extends ConversationRuntimeIdentity {
   approvalId: string;
   kind: string;
+  /** Backend-owned description of the protected mutation/action. */
   summary: string;
+  /** Optional backend-owned explanation. Missing values stay UNKNOWN in the UI. */
+  reason?: string | null;
+  /** Optional backend-owned success-verification plan. */
+  verificationPlan?: string | null;
+  /** Optional backend-owned rollback/recovery plan. */
+  rollbackPlan?: string | null;
   state: PendingApprovalState;
   createdAt: string;
   expiresAt: string | null;
@@ -223,6 +230,9 @@ export function validateConversationOperatingContext(value: unknown): Conversati
     assertNonEmpty(context.pendingApproval.approvalId, 'approvalId');
     assertNonEmpty(context.pendingApproval.kind, 'approval kind');
     assertNonEmpty(context.pendingApproval.summary, 'approval summary');
+    assertOptionalBoundedText(context.pendingApproval.reason, 'approval reason');
+    assertOptionalBoundedText(context.pendingApproval.verificationPlan, 'approval verification plan');
+    assertOptionalBoundedText(context.pendingApproval.rollbackPlan, 'approval rollback plan');
     if (!['pending', 'approved', 'expired', 'cancelled'].includes(context.pendingApproval.state)) throw new Error('Approval state is invalid');
   }
   return context;
@@ -253,6 +263,12 @@ function assertIdentity(identity: ConversationRuntimeIdentity) {
   assertNonEmpty(identity.conversationId, 'conversationId');
   assertNonEmpty(identity.agentId, 'agentId');
   assertNonEmpty(identity.sessionIdentity, 'sessionIdentity');
+}
+
+function assertOptionalBoundedText(value: string | null | undefined, label: string, maxLength = 500) {
+  if (value === undefined || value === null) return;
+  assertNonEmpty(value, label);
+  if (value.length > maxLength) throw new Error(`${label} exceeds ${maxLength} characters`);
 }
 
 function assertNonEmpty(value: string, label: string) {
