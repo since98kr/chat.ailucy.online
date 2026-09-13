@@ -98,8 +98,6 @@ export interface MessageRecord {
   content: string;
   state: MessageState;
   parentMessageId: string | null;
-  /** Canonical task bound when this assistant response began; null means genuinely unbound/unknown. */
-  producerTaskId?: string | null;
   createdAt: string;
   updatedAt: string;
 }
