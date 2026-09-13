@@ -106,6 +106,8 @@ export interface ArtifactRecord {
   id: string;
   conversationId: string;
   messageId: string | null;
+  producerRunId: string | null;
+  producerTaskId: string | null;
   filename: string;
   mimeType: string;
   sizeBytes: number;
