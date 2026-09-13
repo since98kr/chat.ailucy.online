@@ -78,7 +78,7 @@ function fixture(systemId: 'letta', agentId: string) {
 }
 
 describe('provider execution receipt transport', () => {
-  it('carries correlation headers and surfaces an explicit receipt through HttpAgentAdapter', async () => {
+  it('carries encoded correlation headers and restores an echoed receipt through HttpAgentAdapter', async () => {
     const seen: Record<string, string> = {};
     const baseUrl = await startServer((request, response) => {
       seen.session = String(request.headers['x-lucy-execution-session-id'] ?? '');
@@ -86,7 +86,15 @@ describe('provider execution receipt transport', () => {
       request.resume();
       request.on('end', () => {
         response.writeHead(200, { 'Content-Type': 'text/event-stream' });
-        response.write('data: {"type":"execution-evidence","evidence":{"kind":"result-receipt","sessionId":"session-http","operationId":"operation-http","receiptId":"http-result-1"}}\n\n');
+        response.write(`data: ${JSON.stringify({
+          type: 'execution-evidence',
+          evidence: {
+            kind: 'result-receipt',
+            sessionId: seen.session,
+            operationId: seen.operation,
+            receiptId: 'http-result-1',
+          },
+        })}\n\n`);
         response.end('data: [DONE]\n\n');
       });
     });
@@ -109,23 +117,26 @@ describe('provider execution receipt transport', () => {
       selectedAgentId: '[OpenClaw] Lucy',
       routingMode: 'direct',
       participants: [participant],
-      sessionId: 'session-http',
-      idempotencyKey: 'operation-http',
+      sessionId: 'session-http-테이아',
+      idempotencyKey: 'operation-http-실행',
     })) items.push(item);
 
-    expect(seen).toEqual({ session: 'session-http', operation: 'operation-http' });
+    expect(seen.session).toMatch(/^v1\.[A-Za-z0-9_-]+$/);
+    expect(seen.operation).toMatch(/^v1\.[A-Za-z0-9_-]+$/);
+    expect(seen.session).not.toContain('테이아');
+    expect(seen.operation).not.toContain('실행');
     expect(items).toEqual([{
       type: 'execution-evidence',
       evidence: {
         kind: 'result-receipt',
-        sessionId: 'session-http',
-        operationId: 'operation-http',
+        sessionId: 'session-http-테이아',
+        operationId: 'operation-http-실행',
         receiptId: 'http-result-1',
       },
     }]);
   });
 
-  it('carries correlation headers and surfaces an explicit receipt through OpenClawLettaAdapter', async () => {
+  it('carries encoded correlation headers and restores an echoed receipt through OpenClawLettaAdapter', async () => {
     const seen: Record<string, string> = {};
     const baseUrl = await startServer((request, response) => {
       seen.session = String(request.headers['x-lucy-execution-session-id'] ?? '');
@@ -133,11 +144,19 @@ describe('provider execution receipt transport', () => {
       request.resume();
       request.on('end', () => {
         response.writeHead(200, { 'Content-Type': 'text/event-stream' });
-        response.write('data: {"type":"execution-evidence","evidence":{"kind":"tool-receipt","session_id":"session-openclaw","operation_id":"operation-openclaw","receipt_id":"openclaw-tool-1"}}\n\n');
+        response.write(`data: ${JSON.stringify({
+          type: 'execution-evidence',
+          evidence: {
+            kind: 'tool-receipt',
+            session_id: seen.session,
+            operation_id: seen.operation,
+            receipt_id: 'openclaw-tool-1',
+          },
+        })}\n\n`);
         response.end('data: [DONE]\n\n');
       });
     });
-    const { conversation, userMessage, participant } = fixture('letta', '[Letta] Lucy');
+    const { conversation, userMessage, participant } = fixture('letta', '[OpenClaw] Lucy');
     const adapter = new OpenClawLettaAdapter({
       baseUrl,
       chatPath: '/v1/chat/completions',
@@ -156,21 +175,24 @@ describe('provider execution receipt transport', () => {
       conversation,
       userMessage,
       history: [userMessage],
-      targetAgentId: '[Letta] Lucy',
-      selectedAgentId: '[Letta] Lucy',
+      targetAgentId: '[OpenClaw] Lucy',
+      selectedAgentId: '[OpenClaw] Lucy',
       routingMode: 'direct',
       participants: [participant],
-      sessionId: 'session-openclaw',
-      idempotencyKey: 'operation-openclaw',
+      sessionId: 'session-openclaw-루시',
+      idempotencyKey: 'operation-openclaw-도구',
     })) items.push(item);
 
-    expect(seen).toEqual({ session: 'session-openclaw', operation: 'operation-openclaw' });
+    expect(seen.session).toMatch(/^v1\.[A-Za-z0-9_-]+$/);
+    expect(seen.operation).toMatch(/^v1\.[A-Za-z0-9_-]+$/);
+    expect(seen.session).not.toContain('루시');
+    expect(seen.operation).not.toContain('도구');
     expect(items).toEqual([{
       type: 'execution-evidence',
       evidence: {
         kind: 'tool-receipt',
-        sessionId: 'session-openclaw',
-        operationId: 'operation-openclaw',
+        sessionId: 'session-openclaw-루시',
+        operationId: 'operation-openclaw-도구',
         receiptId: 'openclaw-tool-1',
       },
     }]);
