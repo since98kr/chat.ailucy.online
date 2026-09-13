@@ -30,15 +30,17 @@ export function classifyPersonalMemoryOperation(content: string): PersonalMemory
 
   if (
     /(?:기억|메모리).*(?:삭제|지워|지우|제거)/u.test(value)
-    || /(?:잊어|잊어줘|잊어 줘)/u.test(value)
+    || /^(?:이거|그거|이것|그것|방금(?:\s+말한\s+것)?|나에\s+대해|내\s+\S+(?:\s+\S+){0,4})?\s*잊어\s*(?:줘|주세요)?[.!?]*$/u.test(value)
     || /\b(?:forget|delete|remove|erase)\b.*\b(?:memory|memories|remembered)\b/i.test(value)
-    || /\b(?:forget)\b\s+(?:this|that|it)\b/i.test(value)
+    || /\bforget\b\s+(?:this|that|it|my\s+\S+(?:\s+\S+){0,4})\b/i.test(value)
   ) return 'delete';
 
   if (
     /(?:기억해\s*(?:줘|둬|두|주세요)?|기억해두|기억해 둬|기억해 줘|장기기억.*(?:저장|기억)|기억에.*(?:저장|남겨))/u.test(value)
+    || /(?:장기|앞으로|다음\s*대화|다음에도|향후\s*대화).*(?:보관|저장|남겨|유지)/u.test(value)
     || /\bremember\b\s+(?:this|that|it|my|the)\b/i.test(value)
     || /\b(?:save|store)\b.*\b(?:memory|remember)\b/i.test(value)
+    || /\b(?:save|store|keep)\b.*\b(?:for\s+(?:future|later|next)\s+conversations?|across\s+conversations?|long[- ]term)\b/i.test(value)
   ) return 'remember';
 
   if (
