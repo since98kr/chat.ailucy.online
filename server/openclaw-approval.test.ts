@@ -39,12 +39,62 @@ describe('OpenClaw approval contract', () => {
         approvalId: 'approval-current',
         sessionIdentity: 'chat-v2:conversation-1',
         summary: 'safe current action',
+        reason: null,
+        verificationPlan: null,
+        rollbackPlan: null,
         state: 'pending',
       }),
     ]);
     expect(mapOpenClawPendingApprovals(context, records, 'other')).toEqual([]);
     expect(mapOpenClawPendingApprovals(context, records)).toEqual([]);
     expect(mapOpenClawPendingApprovals(context, records, '   ')).toEqual([]);
+  });
+
+  it('preserves bounded backend-owned reason, verification, and rollback without inventing missing values', () => {
+    const [mapped] = mapOpenClawPendingApprovals(context, [{
+      approvalKind: 'exec',
+      id: 'approval-explained',
+      createdAtMs: Date.parse('2026-09-01T00:00:00Z'),
+      request: {
+        sessionKey: 'chat-v2:conversation-1',
+        agentId: 'main',
+        commandPreview: 'restart bounded worker',
+        reason: '  Apply\nvalidated source change  ',
+        metadata: {
+          verificationPlan: 'Confirm health endpoint and exact version.',
+        },
+      },
+      metadata: {
+        rollback: 'Restore the previous versioned container.',
+      },
+    }], 'main');
+
+    expect(mapped).toMatchObject({
+      approvalId: 'approval-explained',
+      summary: 'restart bounded worker',
+      reason: 'Apply validated source change',
+      verificationPlan: 'Confirm health endpoint and exact version.',
+      rollbackPlan: 'Restore the previous versioned container.',
+    });
+  });
+
+  it('bounds explanation metadata and keeps empty values explicitly unknown', () => {
+    const [mapped] = mapOpenClawPendingApprovals(context, [{
+      approvalKind: 'exec',
+      id: 'approval-bounded',
+      createdAtMs: Date.parse('2026-09-01T00:00:00Z'),
+      reason: 'x'.repeat(900),
+      verificationPlan: '   ',
+      request: {
+        sessionKey: 'chat-v2:conversation-1',
+        agentId: 'main',
+        commandPreview: 'bounded action',
+      },
+    }], 'main');
+
+    expect(mapped.reason).toHaveLength(500);
+    expect(mapped.verificationPlan).toBeNull();
+    expect(mapped.rollbackPlan).toBeNull();
   });
 
   it('normalizes gateway urls and agent aliases without inventing an agent id', () => {
