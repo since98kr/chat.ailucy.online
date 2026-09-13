@@ -1,4 +1,4 @@
-import { randomUUID } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import type {
   ArtifactRecord,
   ConversationRecord,
@@ -76,11 +76,17 @@ export function sessionIdentity(conversation: ConversationRecord, agentId: strin
   return providerSessionIdentity(conversation, agentId, requestedSessionId);
 }
 
+function callerOperationDigest(value: string) {
+  return createHash('sha256').update(value, 'utf8').digest('hex');
+}
+
 export function operationIdentity(input: CollaborationRunInput, agentId: string, sessionId: string) {
   const requested = input.idempotencyKey?.trim();
   // Keep retries/regenerations for one agent stable while preventing a caller
-  // key from deduplicating a sibling agent's authorized work.
-  if (requested) return `${sessionId}:caller-operation:${requested}`;
+  // key from deduplicating a sibling agent's authorized work. The caller key is
+  // hashed before entering transport metadata so arbitrary Unicode/control input
+  // never becomes an HTTP header value.
+  if (requested) return `${sessionId}:caller-operation-sha256:${callerOperationDigest(requested)}`;
   const operation = input.regeneratedFromMessageId
     ? `${input.retryMode ?? 'regenerate'}:${input.regeneratedFromMessageId}`
     : `message:${input.userMessage.id}`;
@@ -105,6 +111,12 @@ export async function* runCollaborativeReply(input: CollaborationRunInput): Asyn
   if ((input.operatingIntent ?? 'ordinary') === 'ordinary' && routing.leadAgentId === conversation.agentId) {
     database.bindConversationTask(conversation.id, userMessage.id, userMessage.content);
   }
+  // Capture the lead completion guard immediately after the optional task bind
+  // and before the generator yields control. A sibling request cannot interleave
+  // a newer task/blocker and have an older run snapshot that newer state.
+  const leadCompletionGuard = routing.leadAgentId === conversation.agentId
+    ? runCompletionGuard(database.getConversationOperatingContext(conversation.id)!)
+    : undefined;
 
   if (!input.suppressUserAccepted) yield { type: 'message.accepted', message: userMessage };
   if (attachedArtifacts.length && !input.suppressUserAccepted) {
@@ -121,9 +133,7 @@ export async function* runCollaborativeReply(input: CollaborationRunInput): Asyn
     const idempotencyKey = operationIdentity(input, agentId, sessionId);
     const executionIdentity = { runId, sessionId, operationId: idempotencyKey };
     const executionEvidence: RunExecutionEvidence[] = [];
-    const completionGuard = agentId === conversation.agentId
-      ? runCompletionGuard(database.getConversationOperatingContext(conversation.id)!)
-      : undefined;
+    const completionGuard = agentId === conversation.agentId ? leadCompletionGuard : undefined;
     const state = participantWorkState(agentId);
     const retryLabel = input.regeneratedFromMessageId
       ? `${input.retryMode === 'retry' ? 'Retry' : 'Regeneration'} requested from response ${input.regeneratedFromMessageId}.`
