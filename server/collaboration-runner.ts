@@ -82,11 +82,15 @@ function callerOperationDigest(value: string) {
 
 export function operationIdentity(input: CollaborationRunInput, agentId: string, sessionId: string) {
   const requested = input.idempotencyKey?.trim();
-  // Keep retries/regenerations for one agent stable while preventing a caller
-  // key from deduplicating a sibling agent's authorized work. The caller key is
-  // hashed before entering transport metadata so arbitrary Unicode/control input
-  // never becomes an HTTP header value.
-  if (requested) return `${sessionId}:caller-operation-sha256:${callerOperationDigest(requested)}`;
+  // Direct sends and retry/regeneration requests have independent idempotency
+  // namespaces. Include the operation kind/source/mode before hashing so the
+  // same caller key cannot replay a receipt issued for a different operation.
+  if (requested) {
+    const namespace = input.regeneratedFromMessageId
+      ? `retry:${input.retryMode ?? 'regenerate'}:${input.regeneratedFromMessageId}:${agentId}`
+      : `message:${input.userMessage.id}:${agentId}`;
+    return `${sessionId}:caller-operation-sha256:${callerOperationDigest(`${namespace}\u0000${requested}`)}`;
+  }
   const operation = input.regeneratedFromMessageId
     ? `${input.retryMode ?? 'regenerate'}:${input.regeneratedFromMessageId}`
     : `message:${input.userMessage.id}`;
