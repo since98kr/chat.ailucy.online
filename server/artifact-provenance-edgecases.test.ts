@@ -223,4 +223,54 @@ describe('generated artifact provenance edge cases', () => {
     expect(retryArtifact.artifact.producerTaskId).not.toBe(continuationAccepted.message.id);
     expect(retryArtifact.artifact.producerTaskId).not.toBe(newerAccepted.message.id);
   });
+
+  it('keeps a regenerated branched status artifact unbound when the original execution had no active task', async () => {
+    const created = await app.inject({
+      method: 'POST',
+      url: '/api/conversations',
+      payload: { systemId: 'hermes', agentId: '[Hermes] Lucy', title: 'Branched unbound status owner' },
+    });
+    const sourceId = created.json().conversation.id as string;
+    const source = await app.inject({
+      method: 'POST',
+      url: `/api/conversations/${sourceId}/messages/stream`,
+      payload: { content: '원본 대화의 작업이다.', artifactIds: [] },
+    });
+    expect(source.statusCode).toBe(200);
+
+    const branched = await app.inject({ method: 'POST', url: `/api/conversations/${sourceId}/branch`, payload: {} });
+    expect(branched.statusCode).toBe(201);
+    const branchId = branched.json().conversation.id as string;
+    const beforeStatus = await app.inject({ method: 'GET', url: `/api/conversations/${branchId}/operating-context` });
+    expect(beforeStatus.json().operatingContext.activeTask).toBeNull();
+
+    const status = await app.inject({
+      method: 'POST',
+      url: `/api/conversations/${branchId}/messages/stream`,
+      payload: { content: '현황 알려줘', artifactIds: [] },
+    });
+    expect(status.statusCode).toBe(200);
+    const statusEvents = events(status.body);
+    const statusArtifact = statusEvents.find((event) => event.type === 'artifact.created');
+    const statusCompleted = statusEvents.find(
+      (event) => event.type === 'run.completed' && event.agentId === '[Hermes] Lucy',
+    );
+    expect(statusArtifact?.type).toBe('artifact.created');
+    expect(statusCompleted?.type).toBe('run.completed');
+    if (statusArtifact?.type !== 'artifact.created' || statusCompleted?.type !== 'run.completed') {
+      throw new Error('Expected unbound status response and artifact');
+    }
+    expect(statusArtifact.artifact.producerTaskId).toBeNull();
+
+    const retried = await app.inject({
+      method: 'POST',
+      url: `/api/messages/${statusCompleted.message.id}/retry/stream`,
+      payload: { mode: 'regenerate', idempotencyKey: `branched-status-retry-${crypto.randomUUID()}` },
+    });
+    expect(retried.statusCode).toBe(200);
+    const retryArtifact = events(retried.body).find((event) => event.type === 'artifact.created');
+    expect(retryArtifact?.type).toBe('artifact.created');
+    if (retryArtifact?.type !== 'artifact.created') throw new Error('Expected regenerated status artifact');
+    expect(retryArtifact.artifact.producerTaskId).toBeNull();
+  });
 });
