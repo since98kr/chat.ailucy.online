@@ -357,6 +357,9 @@ export class OpenClawLettaAdapter implements ChatBackendAdapter {
         if (!line) continue;
         if (line === '[DONE]') {
           terminalFrameSeen = true;
+          // Anything already buffered after the transport terminator belongs to
+          // no active response and must never be parsed as execution evidence.
+          buffer = '';
           break;
         }
         let payload: unknown;
@@ -383,7 +386,7 @@ export class OpenClawLettaAdapter implements ChatBackendAdapter {
       if (done) break;
     }
 
-    const trailing = buffer.trim().replace(/^data:\s*/, '');
+    const trailing = terminalFrameSeen ? '' : buffer.trim().replace(/^data:\s*/, '');
     if (trailing && trailing !== '[DONE]') {
       let payload: unknown;
       try {
