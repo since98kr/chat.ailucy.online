@@ -1,3 +1,4 @@
+import Database from 'better-sqlite3';
 import { afterEach, describe, expect, it } from 'vitest';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
@@ -84,5 +85,43 @@ describe('durable generated-artifact ownership', () => {
       producerTaskId: 'task-a',
     });
     database.close();
+  });
+
+  it('migrates pre-ownership artifact rows without inventing producer provenance', () => {
+    directory = mkdtempSync(join(tmpdir(), 'chat-v2-artifact-owner-migration-'));
+    const databasePath = join(directory, 'legacy.sqlite');
+    const legacy = new Database(databasePath);
+    legacy.exec(`
+      CREATE TABLE artifacts (
+        id TEXT PRIMARY KEY,
+        conversation_id TEXT NOT NULL,
+        message_id TEXT,
+        filename TEXT NOT NULL,
+        mime_type TEXT NOT NULL,
+        size_bytes INTEGER NOT NULL,
+        storage_path TEXT NOT NULL,
+        created_at TEXT NOT NULL
+      );
+      INSERT INTO artifacts (
+        id, conversation_id, message_id, filename, mime_type, size_bytes, storage_path, created_at
+      ) VALUES (
+        'legacy-artifact', 'legacy-conversation', NULL, 'legacy.txt', 'text/plain', 6, '/legacy/path', '2026-01-01T00:00:00.000Z'
+      );
+    `);
+    legacy.close();
+
+    const migrated = new ChatDatabase(databasePath);
+    expect(migrated.getArtifact('legacy-artifact')).toMatchObject({
+      id: 'legacy-artifact',
+      conversationId: 'legacy-conversation',
+      producerRunId: null,
+      producerTaskId: null,
+    });
+    const columns = migrated.db.prepare('PRAGMA table_info(artifacts)').all() as Array<{ name: string }>;
+    expect(columns.map((column) => column.name)).toEqual(expect.arrayContaining([
+      'producer_run_id',
+      'producer_task_id',
+    ]));
+    migrated.close();
   });
 });
