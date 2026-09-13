@@ -115,7 +115,7 @@ export async function* runCollaborativeReply(input: CollaborationRunInput): Asyn
   // turn: ordinary turns bind themselves, while continuation/status/approval
   // turns retain the preceding ordinary task instead of adopting a newer task.
   const producerTaskId = input.regeneratedFromMessageId
-    ? taskBoundAtSource(conversation.messages, userMessage.id)
+    ? taskBoundAtSource(database.getConversation(conversation.id)?.messages ?? [], userMessage.id)
     : database.getConversationOperatingContext(conversation.id)?.activeTask?.taskId ?? null;
 
   if (!input.suppressUserAccepted) yield { type: 'message.accepted', message: userMessage };
