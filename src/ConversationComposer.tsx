@@ -125,7 +125,12 @@ export default function ConversationComposer({
 
       {pendingApproval && (
         <div className="readonly-bar" data-testid="pending-approval">
-          <span><strong>승인 필요</strong> · {pendingApproval.summary}</span>
+          <span>
+            <strong>승인 필요</strong> · {pendingApproval.summary}
+            <br /><small data-testid="approval-reason">이유: {pendingApproval.reason?.trim() || 'UNKNOWN'}</small>
+            <br /><small data-testid="approval-verification">검증: {pendingApproval.verificationPlan?.trim() || 'UNKNOWN'}</small>
+            <br /><small data-testid="approval-rollback">롤백: {pendingApproval.rollbackPlan?.trim() || 'UNKNOWN'}</small>
+          </span>
           <button type="button" disabled={chat.approvingApproval} onClick={() => void chat.approvePending()}>
             {chat.approvingApproval ? '승인 중' : '승인'}
           </button>
