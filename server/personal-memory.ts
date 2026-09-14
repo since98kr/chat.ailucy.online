@@ -14,7 +14,7 @@ export type PersonalMemoryOwnerResolution =
   | { ok: false; operation: PersonalMemoryOperation; reason: 'OWNER_UNAVAILABLE' | 'IDENTITY_MISMATCH' };
 
 const CANONICAL_PERSONAL_MEMORY_AGENT = '[OpenClaw] Lucy' as const;
-const ENGLISH_REQUEST_PREFIX = '(?:(?:(?:could|can|would|will)\\s+you\\s+)(?:please\\s+)?|please\\s+)?';
+const ENGLISH_REQUEST_PREFIX = '(?:(?:please\\s+)?(?:could|can|would|will)\\s+you\\s+(?:please\\s+)?|please\\s+)?';
 
 function normalized(value: string) {
   return value.trim().toLowerCase().replace(/\s+/gu, ' ');
