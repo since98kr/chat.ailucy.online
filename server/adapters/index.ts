@@ -5,6 +5,7 @@ import { MockAdapter, UnavailableAdapter } from './mock.js';
 import { HttpAgentAdapter, httpAdapterConfig } from './http.js';
 import { OpenClawLettaAdapter, openClawLettaConfigFromEnv } from './openclaw-letta.js';
 import { augmentNativeArtifactContext } from './native-artifacts.js';
+import { wrapProgressSanitizer } from './progress-status.js';
 
 const LEGACY_PERSONAL_LUCY_ID = '[Letta] Lucy';
 const OPENCLAW_PERSONAL_LUCY_ID = '[OpenClaw] Lucy';
@@ -136,22 +137,27 @@ function wrapOpenAiPersonalLucyMapping(
 
 function createAdapter(systemId: SystemId): ChatBackendAdapter {
   if (systemId === 'letta' && protocol(process.env.LETTA_PROTOCOL) === 'openclaw') {
-    return new OpenClawLettaAdapter(openClawLettaConfigFromEnv());
+    return wrapProgressSanitizer(new OpenClawLettaAdapter(openClawLettaConfigFromEnv()));
   }
 
   const config = httpAdapterConfig(systemId);
-  if (!config) return mockAdaptersAllowed() ? new MockAdapter(systemId) : new UnavailableAdapter(systemId);
+  if (!config) {
+    return wrapProgressSanitizer(
+      mockAdaptersAllowed() ? new MockAdapter(systemId) : new UnavailableAdapter(systemId),
+    );
+  }
   const httpAdapter = new HttpAgentAdapter(systemId, config);
   const adapter = config.protocol === 'native'
     ? wrapNativeAgentMapping(httpAdapter, config.agentId, config.modelMap)
     : systemId === 'letta'
       ? wrapOpenAiPersonalLucyMapping(httpAdapter, config.agentId, config.modelMap)
       : httpAdapter;
-  return systemId === 'hermes'
+  const artifactAwareAdapter = systemId === 'hermes'
     && config.protocol === 'openai'
     && enabled(process.env.HERMES_ARTIFACT_ENVELOPE_ENABLED)
     ? wrapArtifactEnvelopeFallback(adapter)
     : adapter;
+  return wrapProgressSanitizer(artifactAwareAdapter);
 }
 
 const adapters: Record<SystemId, ChatBackendAdapter> = {
