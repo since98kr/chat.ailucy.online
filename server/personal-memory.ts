@@ -14,7 +14,7 @@ export type PersonalMemoryOwnerResolution =
   | { ok: false; operation: PersonalMemoryOperation; reason: 'OWNER_UNAVAILABLE' | 'IDENTITY_MISMATCH' };
 
 const CANONICAL_PERSONAL_MEMORY_AGENT = '[OpenClaw] Lucy' as const;
-const ENGLISH_REQUEST_PREFIX = '(?:(?:please)\\s+|(?:(?:could|can|would|will)\\s+you\\s+))?';
+const ENGLISH_REQUEST_PREFIX = '(?:(?:(?:could|can|would|will)\\s+you\\s+)(?:please\\s+)?|please\\s+)?';
 
 function normalized(value: string) {
   return value.trim().toLowerCase().replace(/\s+/gu, ' ');
@@ -72,7 +72,10 @@ function isExplicitKoreanDelete(value: string) {
 }
 
 function isExplicitEnglishDelete(value: string) {
-  if (new RegExp(`^${ENGLISH_REQUEST_PREFIX}forget\\s+(?:this|that|it|my\\b.{0,80}|what\\s+you\\s+remember(?:ed)?\\s+about\\s+me\\b.{0,40})[.!?]*$`, 'i').test(value)) {
+  if (new RegExp(
+    `^${ENGLISH_REQUEST_PREFIX}forget\\s+(?:this|that|it|my\\b.{0,80}|what\\s+you\\s+remember(?:ed)?\\s+about\\s+me\\b.{0,40}|(?:everything|anything|all)\\s+you\\s+(?:know|remember(?:ed)?)\\s+about\\s+me)[.!?]*$`,
+    'i',
+  ).test(value)) {
     return true;
   }
 
