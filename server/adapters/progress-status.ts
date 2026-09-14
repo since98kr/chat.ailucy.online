@@ -24,10 +24,10 @@ const TOOL_MARKER = new RegExp(
   `\\b(?:tool(?:_name|_call)?\\s*[:=]\\s*${TOOL_IDENTIFIER}|(?:tool\\s+call|tool_call)\\s*:?\\s*${TOOL_IDENTIFIER})`,
   'i',
 );
-// Backends outside the native bridge may use Unicode tool identifiers. These
-// broader identifiers exist only to find a bounded tool name so any following
-// payload fails closed; they are never used to approve/preserve a bridge label.
-const ANY_QUOTED_TOOL_IDENTIFIER = `(?:"[^"\\r\\n]{1,160}"|'[^'\\r\\n]{1,160}')`;
+// Backends outside the native bridge may use Unicode or overlong quoted tool
+// identifiers. This broader grammar is taint detection only, so quoted names are
+// intentionally unbounded: preservation remains governed by TOOL_IDENTIFIER.
+const ANY_QUOTED_TOOL_IDENTIFIER = `(?:"[^"\\r\\n]+"|'[^'\\r\\n]+')`;
 const ANY_BARE_TOOL_IDENTIFIER = `[^\\s=:,()\\[\\]{}"']{1,160}`;
 const ANY_TOOL_IDENTIFIER = `(?:${ANY_QUOTED_TOOL_IDENTIFIER}|${ANY_BARE_TOOL_IDENTIFIER})`;
 const BROAD_TOOL_MARKER = new RegExp(
@@ -54,13 +54,15 @@ const WINDOWS_ROOTED_PATH = /(^|[\s([{:;,="'])\\(?=\S)/u;
 // allowed to contain safe slashes such as mcp/search and openai/gpt-*.
 const ABSOLUTE_SLASH_PATH = /(^|[^A-Za-z0-9/])\/{1,2}(?=\S)/u;
 const RELATIVE_PRIVATE_PATH = /(^|[\s([{:;,])\.{1,2}[\\/](?=\S)/u;
-const BARE_RELATIVE_PATH = /(^|[\s([{:;,="'])[^\s\\/<>"']+[\\/](?:[^\s\\/<>"']+[\\/])*[^\s\\/<>"']+/u;
+const BARE_RELATIVE_PATH = /(^|[\s([{:;,="'<])[^\s\\/<>"']+[\\/](?:[^\s\\/<>"']+[\\/])*[^\s\\/<>"']+/u;
 
 const SENSITIVE_WORDS = new Set([
   'authorization',
   'cookie',
   'credential',
   'password',
+  'passwd',
+  'pwd',
   'secret',
   'session',
   'signature',
@@ -87,7 +89,7 @@ function isSensitiveAssignedField(key: string) {
   if (words.some((word) => SENSITIVE_WORDS.has(word))) return true;
 
   const collapsed = key.replace(/[^A-Za-z0-9]/g, '').toLowerCase();
-  if (/(?:authorization|cookie|credential|password|secret|signature|token)/.test(collapsed)) return true;
+  if (/(?:authorization|cookie|credential|password|passwd|pwd|secret|signature|token)/.test(collapsed)) return true;
   if (/^(?:session|sessionid|sessionkey|sessiontoken|sid)$/.test(collapsed)) return true;
   // Case/delimiter splitting cannot expose KEY in forms such as APIKEY/apikey.
   // Recognize the common credential compounds without treating arbitrary words
