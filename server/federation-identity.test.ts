@@ -28,7 +28,7 @@ describe('federation conversation identity guard', () => {
     rmSync(directory, { recursive: true, force: true });
   });
 
-  const createConversation = async (systemId: 'letta' | 'hermes', agentId: string, title: string) => {
+  const createConversation = async (systemId: 'openclaw' | 'hermes', agentId: string, title: string) => {
     const created = await app.inject({
       method: 'POST',
       url: '/api/conversations',
@@ -46,12 +46,12 @@ describe('federation conversation identity guard', () => {
         conversation_id, mode, coordinator_agent_id, allowed_system_ids_json,
         memory_policy, created_at, updated_at
       ) VALUES (?, 'federated', '[Hermes] Lucy', ?, 'explicit-capsules-only', ?, ?)
-    `).run(conversationId, JSON.stringify(['letta', 'hermes', 'claude']), timestamp, timestamp);
+    `).run(conversationId, JSON.stringify(['openclaw', 'hermes', 'claude']), timestamp, timestamp);
     db.close();
   };
 
   it('rejects federation on a personal OpenClaw conversation', async () => {
-    const id = await createConversation('letta', '[OpenClaw] Lucy', 'Personal Lucy');
+    const id = await createConversation('openclaw', '[OpenClaw] Lucy', 'Personal Lucy');
     const enabled = await app.inject({
       method: 'POST',
       url: `/api/conversations/${id}/federation`,
@@ -64,7 +64,7 @@ describe('federation conversation identity guard', () => {
   });
 
   it('keeps a persisted stale personal federation config inert after upgrade', async () => {
-    const id = await createConversation('letta', '[OpenClaw] Lucy', 'Persisted personal Lucy');
+    const id = await createConversation('openclaw', '[OpenClaw] Lucy', 'Persisted personal Lucy');
     seedStaleFederation(id);
 
     const snapshot = await app.inject({ method: 'GET', url: `/api/conversations/${id}/federation` });
@@ -101,7 +101,7 @@ describe('federation conversation identity guard', () => {
       method: 'POST',
       url: `/api/conversations/${id}/memory-capsules`,
       payload: {
-        sourceSystemId: 'letta',
+        sourceSystemId: 'openclaw',
         targetSystemId: 'hermes',
         title: 'must stay inert',
         content: 'stale cross-system state',
