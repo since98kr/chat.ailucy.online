@@ -129,9 +129,10 @@ export function migrateLegacyPersonalLucyOperatingContexts(
  * prose or event-ledger payloads. `depends_on_step_ids_json` contains step UUIDs
  * after createSteps(), so it must remain byte-for-byte untouched.
  *
- * FederationService owns the system-id table migration. If its tables already
- * exist when CollaborationService starts, this function may see legacy raw
- * `workflow_steps.system_id='letta'` and only updates the associated agent id.
+ * FederationService owns the system-id table migration. Depending on startup
+ * order this function may see either raw legacy `letta` or already-canonical
+ * `openclaw`; both are migration candidates only when the agent id is the
+ * retired `[Letta] Lucy` identity.
  */
 export function migrateLegacyPersonalLucyWorkflowIdentity(
   db: Database.Database,
@@ -165,7 +166,7 @@ export function migrateLegacyPersonalLucyWorkflowIdentity(
   const steps = db.prepare(`
     UPDATE workflow_steps AS legacy
     SET agent_id = ?
-    WHERE legacy.system_id = 'letta'
+    WHERE legacy.system_id IN ('letta', 'openclaw')
       AND legacy.agent_id = ?
       AND NOT EXISTS (
         SELECT 1 FROM workflow_steps AS canonical
