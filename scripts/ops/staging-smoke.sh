@@ -182,16 +182,16 @@ def select(system_id: str) -> str:
 
 
 print(select("hermes"))
-print(select("letta"))
+print(select("openclaw"))
 PY
 )
 
-[[ "${#CHAT_AGENT_IDS[@]}" -eq 2 ]] || fail 'could not resolve Hermes and Letta Chat V2 agent IDs'
+[[ "${#CHAT_AGENT_IDS[@]}" -eq 2 ]] || fail 'could not resolve Hermes and OpenClaw Chat V2 agent IDs'
 HERMES_CHAT_AGENT="${CHAT_AGENT_IDS[0]}"
-LETTA_CHAT_AGENT="${CHAT_AGENT_IDS[1]}"
+OPENCLAW_CHAT_AGENT="${CHAT_AGENT_IDS[1]}"
 
 log "Selected Hermes Chat V2 agent: ${HERMES_CHAT_AGENT}"
-log "Selected Letta Chat V2 agent: ${LETTA_CHAT_AGENT}"
+log "Selected OpenClaw Chat V2 agent: ${OPENCLAW_CHAT_AGENT}"
 
 run_agent_smoke() {
   local system_id="$1"
@@ -318,8 +318,8 @@ PY
 }
 
 run_agent_smoke hermes "${HERMES_CHAT_AGENT}" CHAT_V2_HERMES_OK hermes
-run_agent_smoke letta "${LETTA_CHAT_AGENT}" CHAT_V2_LETTA_OK letta
+run_agent_smoke openclaw "${OPENCLAW_CHAT_AGENT}" CHAT_V2_OPENCLAW_OK openclaw
 
 CURRENT_STAGE='complete'
 CURRENT_SYSTEM='none'
-log 'PASS: staging, authentication, Hermes, and Letta are all healthy.'
+log 'PASS: staging, authentication, Hermes, and OpenClaw are all healthy.'
