@@ -130,17 +130,17 @@ jobs:
           curl --fail --silent --show-error --max-time 5 "${OPENCLAW_GATEWAY_BRIDGE_BASE_URL}/health" >/dev/null
           echo 'Private authenticated OpenClaw reverse-tunnel ingress and Docker bridge proxy are healthy.'
 
-      - name: Legacy Letta bridge rollout is not used in OpenClaw mode
+      - name: Legacy Letta bridge is migration history only
         run: |
-          echo 'SKIP: Letta Lucy cognition remains in Letta, while Chat side-effect execution is routed through the native OpenClaw Gateway.'
-          echo 'The legacy full-CLI bridge files remain in the repository for rollback investigation only.'
+          echo 'SKIP: current Chat cognition routes through the canonical OpenClaw Gateway.'
+          echo 'Legacy Letta bridge files remain only for migration/rollback investigation and are not a live runtime path.'
 
       - name: Enforce fail-closed staging QA gate configuration
         env:
           CHAT_MULTIMODAL_QA_REQUIRED: ${{ vars.CHAT_MULTIMODAL_QA_REQUIRED }}
           CHAT_GENERATED_ARTIFACT_QA_REQUIRED: ${{ vars.CHAT_GENERATED_ARTIFACT_QA_REQUIRED }}
           CHAT_EXTERNAL_QA_REQUIRED: ${{ vars.CHAT_EXTERNAL_QA_REQUIRED }}
-          CHAT_LETTA_FULL_RUNTIME_QA_REQUIRED: ${{ vars.CHAT_LETTA_FULL_RUNTIME_QA_REQUIRED }}
+          CHAT_OPENCLAW_FULL_RUNTIME_QA_REQUIRED: ${{ vars.CHAT_OPENCLAW_FULL_RUNTIME_QA_REQUIRED || vars.CHAT_LETTA_FULL_RUNTIME_QA_REQUIRED }}
           HERMES_PROTOCOL: ${{ vars.HERMES_PROTOCOL }}
           HERMES_ARTIFACT_TOOL_ENABLED: ${{ vars.HERMES_ARTIFACT_TOOL_ENABLED }}
           HERMES_ARTIFACT_ENVELOPE_ENABLED: ${{ vars.HERMES_ARTIFACT_ENVELOPE_ENABLED }}
@@ -174,24 +174,24 @@ jobs:
           CHAT_MAX_UPLOAD_BYTES: ${{ vars.CHAT_MAX_UPLOAD_BYTES }}
           CHAT_MAX_GENERATED_ARTIFACT_BYTES: ${{ vars.CHAT_MAX_GENERATED_ARTIFACT_BYTES }}
           CHAT_MAX_INLINE_GENERATED_ARTIFACT_PAYLOAD_BYTES: ${{ vars.CHAT_MAX_INLINE_GENERATED_ARTIFACT_PAYLOAD_BYTES }}
-          LETTA_BASE_URL: http://host.docker.internal:18792
-          LETTA_CHAT_PATH: /v1/chat/completions
-          LETTA_HEALTH_PATH: /health
-          LETTA_AGENT_ID: ${{ vars.LETTA_AGENT_ID }}
-          LETTA_API_KEY: ${{ secrets.OPENCLAW_GATEWAY_TOKEN }}
-          LETTA_TIMEOUT_MS: ${{ vars.LETTA_TIMEOUT_MS }}
-          LETTA_PROTOCOL: openclaw
-          LETTA_OPENCLAW_AGENT_TARGET: openclaw/main
-          LETTA_OPENCLAW_SESSION_PREFIX: ${{ vars.LETTA_OPENCLAW_SESSION_PREFIX }}
-          LETTA_MODEL_MAP_JSON: ''
-          LETTA_MAX_ARTIFACT_BYTES: ${{ vars.LETTA_MAX_ARTIFACT_BYTES }}
-          LETTA_MAX_ARTIFACT_TOTAL_BYTES: ${{ vars.LETTA_MAX_ARTIFACT_TOTAL_BYTES }}
-          LETTA_MAX_TEXT_ARTIFACT_BYTES: ${{ vars.LETTA_MAX_TEXT_ARTIFACT_BYTES }}
-          LETTA_NATIVE_BINARY_ARTIFACTS: 'false'
-          LETTA_ARTIFACT_TOOL_ENABLED: ${{ vars.LETTA_ARTIFACT_TOOL_ENABLED }}
-          LETTA_READINESS_PROBE_ENABLED: ${{ vars.LETTA_READINESS_PROBE_ENABLED }}
-          LETTA_READINESS_PROBE_MODEL: ${{ vars.LETTA_READINESS_PROBE_MODEL }}
-          LETTA_READINESS_PROBE_PROMPT: ${{ vars.LETTA_READINESS_PROBE_PROMPT }}
+          OPENCLAW_BASE_URL: http://host.docker.internal:18792
+          OPENCLAW_CHAT_PATH: /v1/chat/completions
+          OPENCLAW_HEALTH_PATH: /health
+          OPENCLAW_AGENT_ID: ${{ vars.OPENCLAW_AGENT_ID || vars.LETTA_AGENT_ID }}
+          OPENCLAW_API_KEY: ${{ secrets.OPENCLAW_GATEWAY_TOKEN }}
+          OPENCLAW_TIMEOUT_MS: ${{ vars.OPENCLAW_TIMEOUT_MS || vars.LETTA_TIMEOUT_MS }}
+          OPENCLAW_PROTOCOL: openclaw
+          OPENCLAW_AGENT_TARGET: openclaw/main
+          OPENCLAW_SESSION_PREFIX: ${{ vars.OPENCLAW_SESSION_PREFIX || vars.LETTA_OPENCLAW_SESSION_PREFIX }}
+          OPENCLAW_MODEL_MAP_JSON: ''
+          OPENCLAW_MAX_ARTIFACT_BYTES: ${{ vars.OPENCLAW_MAX_ARTIFACT_BYTES || vars.LETTA_MAX_ARTIFACT_BYTES }}
+          OPENCLAW_MAX_ARTIFACT_TOTAL_BYTES: ${{ vars.OPENCLAW_MAX_ARTIFACT_TOTAL_BYTES || vars.LETTA_MAX_ARTIFACT_TOTAL_BYTES }}
+          OPENCLAW_MAX_TEXT_ARTIFACT_BYTES: ${{ vars.OPENCLAW_MAX_TEXT_ARTIFACT_BYTES || vars.LETTA_MAX_TEXT_ARTIFACT_BYTES }}
+          OPENCLAW_NATIVE_BINARY_ARTIFACTS: 'false'
+          OPENCLAW_ARTIFACT_TOOL_ENABLED: ${{ vars.OPENCLAW_ARTIFACT_TOOL_ENABLED || vars.LETTA_ARTIFACT_TOOL_ENABLED }}
+          OPENCLAW_READINESS_PROBE_ENABLED: ${{ vars.OPENCLAW_READINESS_PROBE_ENABLED || vars.LETTA_READINESS_PROBE_ENABLED }}
+          OPENCLAW_READINESS_PROBE_MODEL: ${{ vars.OPENCLAW_READINESS_PROBE_MODEL || vars.LETTA_READINESS_PROBE_MODEL }}
+          OPENCLAW_READINESS_PROBE_PROMPT: ${{ vars.OPENCLAW_READINESS_PROBE_PROMPT || vars.LETTA_READINESS_PROBE_PROMPT }}
           HERMES_BASE_URL: ${{ vars.HERMES_BASE_URL }}
           HERMES_BASE_URL_MAP_JSON: ${{ vars.HERMES_BASE_URL_MAP_JSON }}
           HERMES_CHAT_PATH: ${{ vars.HERMES_CHAT_PATH }}
@@ -209,16 +209,16 @@ jobs:
           CHAT_MULTIMODAL_QA_REQUIRED: ${{ vars.CHAT_MULTIMODAL_QA_REQUIRED }}
           CHAT_GENERATED_ARTIFACT_QA_REQUIRED: ${{ vars.CHAT_GENERATED_ARTIFACT_QA_REQUIRED }}
           CHAT_EXTERNAL_QA_REQUIRED: ${{ vars.CHAT_EXTERNAL_QA_REQUIRED }}
-          CHAT_LETTA_FULL_RUNTIME_QA_REQUIRED: ${{ vars.CHAT_LETTA_FULL_RUNTIME_QA_REQUIRED }}
+          CHAT_OPENCLAW_FULL_RUNTIME_QA_REQUIRED: ${{ vars.CHAT_OPENCLAW_FULL_RUNTIME_QA_REQUIRED || vars.CHAT_LETTA_FULL_RUNTIME_QA_REQUIRED }}
         run: bash scripts/deploy/staging.sh "$(git rev-parse HEAD)"
 
-      - name: Verify real Hermes and Letta transport
+      - name: Verify real Hermes and OpenClaw transport
         env:
           CHAT_STAGING_BASE_URL: http://127.0.0.1:14174
           CHAT_STAGING_EMAIL: ${{ vars.CHAT_ALLOWED_EMAILS }}
         run: bash scripts/ops/staging-smoke.sh
 
-      - name: Verify OpenClaw-backed Letta session continuity
+      - name: Verify OpenClaw session continuity
         env:
           CHAT_STAGING_BASE_URL: http://127.0.0.1:14174
           CHAT_STAGING_EMAIL: ${{ vars.CHAT_ALLOWED_EMAILS }}
@@ -230,7 +230,7 @@ jobs:
           CHAT_STAGING_EMAIL: ${{ vars.CHAT_ALLOWED_EMAILS }}
           CHAT_MULTIMODAL_QA_REQUIRED: ${{ vars.CHAT_MULTIMODAL_QA_REQUIRED }}
           CHAT_GENERATED_ARTIFACT_QA_REQUIRED: ${{ vars.CHAT_GENERATED_ARTIFACT_QA_REQUIRED }}
-          CHAT_LETTA_FULL_RUNTIME_QA_REQUIRED: ${{ vars.CHAT_LETTA_FULL_RUNTIME_QA_REQUIRED }}
+          CHAT_OPENCLAW_FULL_RUNTIME_QA_REQUIRED: ${{ vars.CHAT_OPENCLAW_FULL_RUNTIME_QA_REQUIRED || vars.CHAT_LETTA_FULL_RUNTIME_QA_REQUIRED }}
           CHAT_HERMES_VISION_AGENT_ID: ${{ vars.CHAT_HERMES_VISION_AGENT_ID }}
         run: bash scripts/ops/staging-browser-smoke.sh
 
@@ -276,7 +276,7 @@ jobs:
           CHAT_EXTERNAL_QA_REQUIRED: ${{ vars.CHAT_EXTERNAL_QA_REQUIRED }}
           CHAT_MULTIMODAL_QA_REQUIRED: ${{ vars.CHAT_MULTIMODAL_QA_REQUIRED }}
           CHAT_GENERATED_ARTIFACT_QA_REQUIRED: ${{ vars.CHAT_GENERATED_ARTIFACT_QA_REQUIRED }}
-          CHAT_LETTA_FULL_RUNTIME_QA_REQUIRED: ${{ vars.CHAT_LETTA_FULL_RUNTIME_QA_REQUIRED }}
+          CHAT_OPENCLAW_FULL_RUNTIME_QA_REQUIRED: ${{ vars.CHAT_OPENCLAW_FULL_RUNTIME_QA_REQUIRED || vars.CHAT_LETTA_FULL_RUNTIME_QA_REQUIRED }}
           CHAT_HERMES_VISION_AGENT_ID: ${{ vars.CHAT_HERMES_VISION_AGENT_ID }}
           CHAT_STAGING_BASE_URL: ${{ vars.CHAT_PUBLIC_ORIGIN }}
         run: |
@@ -297,16 +297,16 @@ jobs:
             echo "- Requested revision: \`$(git rev-parse HEAD)\`"
             echo '- Local endpoint: `http://127.0.0.1:14174`'
             echo "- Public endpoint: \`${{ vars.CHAT_PUBLIC_ORIGIN }}\`"
-            echo '- Letta transport: `openclaw`'
+            echo '- OpenClaw transport: `openclaw`'
             echo '- OpenClaw ingress: private reverse SSH tunnel via bridge proxy `172.17.0.1:18792` / container `host.docker.internal:18792`'
             echo '- OpenClaw Lucy target: `openclaw/main`'
-            echo '- Backend model override: disabled; OpenClaw main keeps its configured model (`letta/lucy`)'
+            echo '- Backend model override: disabled; OpenClaw main keeps its configured model'
             echo "- External QA required: \`${{ vars.CHAT_EXTERNAL_QA_REQUIRED }}\`"
             echo "- Multimodal QA required: \`${{ vars.CHAT_MULTIMODAL_QA_REQUIRED }}\`"
             echo "- Generated artifact QA required: \`${{ vars.CHAT_GENERATED_ARTIFACT_QA_REQUIRED }}\`"
-            echo "- Letta full runtime QA required: \`${{ vars.CHAT_LETTA_FULL_RUNTIME_QA_REQUIRED }}\`"
-            echo '- Required Letta/OpenClaw gates: private Gateway health, Docker bridge proxy health, canonical main agent target, real Chat transport, two-turn same-Conversation session continuity, redaction, and configured artifact/browser gates'
-            echo '- Legacy direct Letta CLI/HMAC tool proof is not a release gate in OpenClaw mode.'
+            echo "- OpenClaw full runtime QA required: \`${{ vars.CHAT_OPENCLAW_FULL_RUNTIME_QA_REQUIRED || vars.CHAT_LETTA_FULL_RUNTIME_QA_REQUIRED }}\`"
+            echo '- Required OpenClaw gates: private Gateway health, Docker bridge proxy health, canonical main agent target, real Chat transport, two-turn same-Conversation session continuity, redaction, and configured artifact/browser gates'
+            echo '- Legacy direct Letta CLI/HMAC proof is migration history only and is not a release gate.'
             for item in last-deployment.json last-preflight.json last-backup.json last-backup-verify.json last-health.json last-ops-status.json; do
               path="/opt/chat-v2/staging/state/${item}"
               if [[ -f "${path}" ]]; then
