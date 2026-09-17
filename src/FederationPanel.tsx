@@ -36,7 +36,7 @@ export default function FederationPanel(props: Props) {
   const [title, setTitle] = useState('');
   const [content, setContent] = useState('');
   const active = props.config?.mode === 'federated';
-  const target: SystemId = source === 'hermes' ? 'letta' : 'hermes';
+  const target: SystemId = source === 'hermes' ? 'openclaw' : 'hermes';
 
   const createCapsule = () => {
     if (!title.trim() || !content.trim()) return;
@@ -78,7 +78,7 @@ export default function FederationPanel(props: Props) {
       <section>
         <div className="federation-section-title"><Brain size={14} /> Memory Capsules</div>
         {active && <div className="capsule-composer">
-          <div><button className={source === 'hermes' ? 'is-active' : ''} onClick={() => setSource('hermes')}>Hermes → OpenClaw</button><button className={source === 'letta' ? 'is-active' : ''} onClick={() => setSource('letta')}>OpenClaw → Hermes</button></div>
+          <div><button className={source === 'hermes' ? 'is-active' : ''} onClick={() => setSource('hermes')}>Hermes → OpenClaw</button><button className={source === 'openclaw' ? 'is-active' : ''} onClick={() => setSource('openclaw')}>OpenClaw → Hermes</button></div>
           <input value={title} onChange={(event) => setTitle(event.target.value)} placeholder="Capsule 제목" />
           <textarea value={content} onChange={(event) => setContent(event.target.value)} placeholder="상대 시스템에 전달할 승인 가능한 문맥" rows={3} />
           <button onClick={createCapsule} disabled={props.saving || !title.trim() || !content.trim()}>{props.saving ? <LoaderCircle size={14} className="spin" /> : <Brain size={14} />} Draft 생성</button>
