@@ -6,10 +6,12 @@ on:
     paths:
       - '.github/workflows/cf-alm-public-exception-once.yml'
 
+permissions:
+  contents: read
+
 jobs:
   publish-alm:
-    runs-on: [self-hosted, linux, x64, chat-production]
-    environment: production
+    runs-on: [self-hosted, linux, x64, chat-staging]
     timeout-minutes: 10
     steps:
       - name: Ensure exact-host Access bypass for alm.ailucy.online
@@ -19,8 +21,8 @@ jobs:
           TARGET_HOST: alm.ailucy.online
         run: |
           set -euo pipefail
-          [[ -n "${CF_API_TOKEN:-}" ]] || { echo 'CLOUDFLARE_API_TOKEN missing in production environment'; exit 2; }
-          [[ -n "${CF_ACCOUNT_ID:-}" ]] || { echo 'CLOUDFLARE_ACCOUNT_ID missing in production environment'; exit 2; }
+          [[ -n "${CF_API_TOKEN:-}" ]] || { echo 'CLOUDFLARE_API_TOKEN missing at repository scope'; exit 2; }
+          [[ -n "${CF_ACCOUNT_ID:-}" ]] || { echo 'CLOUDFLARE_ACCOUNT_ID missing at repository scope'; exit 2; }
 
           api_get() {
             curl -fsS \
