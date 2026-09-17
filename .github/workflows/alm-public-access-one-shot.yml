@@ -35,39 +35,34 @@ jobs:
           command -v curl >/dev/null
           command -v jq >/dev/null
 
-          # Reuse the exact account certificate already used by the approved
-          # relay publisher. Docker daemon can mount the owner-only file; copy
-          # it into an ephemeral 0700 directory without ever printing it.
           docker create --name "$helper" \
             --mount "type=bind,source=${ORIGIN_CERT},target=/run/cloudflare/cert.pem,readonly" \
             cloudflare/cloudflared:latest version >/dev/null
           docker cp "$helper:/run/cloudflare/cert.pem" "$tmp/cert.pem"
           [[ -s "$tmp/cert.pem" ]]
 
-          python3 - "$tmp/cert.pem" "$tmp/api-token" "$tmp/account-id" <<'PY'
+          python3 - "$tmp/cert.pem" "$tmp/api-token" "$tmp/account-id" "$tmp/zone-id" <<'PY'
           import base64, json, re, sys, os
-          src, token_path, account_path = sys.argv[1:]
+          src, token_path, account_path, zone_path = sys.argv[1:]
           text = open(src, encoding='utf-8', errors='strict').read()
           m = re.search(r'-----BEGIN ARGO TUNNEL TOKEN-----\s*(.*?)\s*-----END ARGO TUNNEL TOKEN-----', text, re.S)
           if not m:
               raise SystemExit('origin certificate has no ARGO TUNNEL TOKEN block')
           raw = base64.b64decode(re.sub(r'\s+', '', m.group(1)), validate=True)
           data = json.loads(raw.decode('utf-8'))
-          token = data.get('apiToken')
-          account = data.get('accountID')
-          zone = data.get('zoneID')
+          token, account, zone = data.get('apiToken'), data.get('accountID'), data.get('zoneID')
           if not all(isinstance(x, str) and x for x in (token, account, zone)):
               raise SystemExit('origin certificate token payload is incomplete')
-          open(token_path, 'w', encoding='utf-8').write(token)
-          open(account_path, 'w', encoding='utf-8').write(account)
-          os.chmod(token_path, 0o600)
-          os.chmod(account_path, 0o600)
+          for path, value in ((token_path, token), (account_path, account), (zone_path, zone)):
+              open(path, 'w', encoding='utf-8').write(value)
+              os.chmod(path, 0o600)
           print('RESULT origin_cert_decoded=true fields=zoneID,accountID,apiToken')
           PY
 
           CF_API_TOKEN="$(cat "$tmp/api-token")"
           CF_ACCOUNT_ID="$(cat "$tmp/account-id")"
-          [[ -n "$CF_API_TOKEN" && -n "$CF_ACCOUNT_ID" ]]
+          CF_ZONE_ID="$(cat "$tmp/zone-id")"
+          [[ -n "$CF_API_TOKEN" && -n "$CF_ACCOUNT_ID" && -n "$CF_ZONE_ID" ]]
           if [[ -n "${CF_ACCOUNT_ID_CONFIGURED:-}" && "$CF_ACCOUNT_ID_CONFIGURED" != "$CF_ACCOUNT_ID" ]]; then
             echo 'ERROR configured account ID does not match origin certificate account'
             exit 2
@@ -85,45 +80,66 @@ jobs:
 
           verify_code="$(request GET '/user/tokens/verify' '' "$tmp/verify.json")"
           echo "RESULT origin_cert_token_verify_http=${verify_code}"
+          [[ "$verify_code" = 200 ]]
 
-          apps_code="$(request GET "/accounts/${CF_ACCOUNT_ID}/access/apps?per_page=100" '' "$tmp/apps.json")"
-          echo "RESULT access_apps_http=${apps_code}"
-          if [[ "$apps_code" != 200 || "$(jq -r '.success // false' "$tmp/apps.json")" != true ]]; then
-            jq -r '.errors[]? | "ERROR access_apps code=\(.code) msg=\(.message)"' "$tmp/apps.json" | head -5
-            exit 3
-          fi
-
+          # Account scope is preferred. The cloudflared origin certificate is
+          # historically zone-scoped, so use Cloudflare's supported zone form
+          # only when account-scope write is rejected.
+          scope="accounts/${CF_ACCOUNT_ID}"
+          apps_code="$(request GET "/${scope}/access/apps?per_page=100" '' "$tmp/apps.json")"
+          echo "RESULT account_access_apps_http=${apps_code}"
+          [[ "$apps_code" = 200 && "$(jq -r '.success // false' "$tmp/apps.json")" = true ]]
           exact_count="$(jq -r --arg d "$TARGET_DOMAIN" '[.result[]? | select(.domain == $d)] | length' "$tmp/apps.json")"
           [[ "$exact_count" -le 1 ]] || { echo 'ERROR multiple exact-host Access apps exist'; exit 4; }
           app_id="$(jq -r --arg d "$TARGET_DOMAIN" '[.result[]? | select(.domain == $d)][0].id // empty' "$tmp/apps.json")"
 
+          app_payload="$(jq -nc --arg n 'AI Live Map Public Demo' --arg d "$TARGET_DOMAIN" '{name:$n,domain:$d,type:"self_hosted",session_duration:"24h",app_launcher_visible:false}')"
           if [[ -z "$app_id" ]]; then
-            app_payload="$(jq -nc --arg n 'AI Live Map Public Demo' --arg d "$TARGET_DOMAIN" '{name:$n,domain:$d,type:"self_hosted",session_duration:"24h",app_launcher_visible:false}')"
-            create_code="$(request POST "/accounts/${CF_ACCOUNT_ID}/access/apps" "$app_payload" "$tmp/app-create.json")"
-            echo "RESULT access_app_create_http=${create_code}"
+            create_code="$(request POST "/${scope}/access/apps" "$app_payload" "$tmp/app-create.json")"
+            echo "RESULT account_access_app_create_http=${create_code}"
             if [[ "$create_code" != 200 && "$create_code" != 201 ]]; then
-              jq -r '.errors[]? | "ERROR app_create code=\(.code) msg=\(.message)"' "$tmp/app-create.json" | head -5
-              exit 5
+              scope="zones/${CF_ZONE_ID}"
+              zone_list_code="$(request GET "/${scope}/access/apps?per_page=100" '' "$tmp/zone-apps.json")"
+              echo "RESULT zone_access_apps_http=${zone_list_code}"
+              [[ "$zone_list_code" = 200 && "$(jq -r '.success // false' "$tmp/zone-apps.json")" = true ]] || {
+                jq -r '.errors[]? | "ERROR zone_apps code=\(.code) msg=\(.message)"' "$tmp/zone-apps.json" | head -5; exit 5; }
+              zone_exact_count="$(jq -r --arg d "$TARGET_DOMAIN" '[.result[]? | select(.domain == $d)] | length' "$tmp/zone-apps.json")"
+              [[ "$zone_exact_count" -le 1 ]] || { echo 'ERROR multiple zone exact-host apps exist'; exit 6; }
+              app_id="$(jq -r --arg d "$TARGET_DOMAIN" '[.result[]? | select(.domain == $d)][0].id // empty' "$tmp/zone-apps.json")"
+              if [[ -z "$app_id" ]]; then
+                zone_create_code="$(request POST "/${scope}/access/apps" "$app_payload" "$tmp/zone-app-create.json")"
+                echo "RESULT zone_access_app_create_http=${zone_create_code}"
+                if [[ "$zone_create_code" != 200 && "$zone_create_code" != 201 ]]; then
+                  jq -r '.errors[]? | "ERROR zone_app_create code=\(.code) msg=\(.message)"' "$tmp/zone-app-create.json" | head -5
+                  exit 7
+                fi
+                [[ "$(jq -r '.success // false' "$tmp/zone-app-create.json")" = true ]]
+                app_id="$(jq -r '.result.id' "$tmp/zone-app-create.json")"
+                echo 'RESULT exact_app_created=true scope=zone'
+              else
+                echo 'RESULT exact_app_created=false scope=zone'
+              fi
+            else
+              [[ "$(jq -r '.success // false' "$tmp/app-create.json")" = true ]]
+              app_id="$(jq -r '.result.id' "$tmp/app-create.json")"
+              echo 'RESULT exact_app_created=true scope=account'
             fi
-            [[ "$(jq -r '.success // false' "$tmp/app-create.json")" = true ]]
-            app_id="$(jq -r '.result.id' "$tmp/app-create.json")"
-            echo 'RESULT exact_app_created=true'
           else
-            echo 'RESULT exact_app_created=false'
+            echo 'RESULT exact_app_created=false scope=account'
           fi
 
-          policies_code="$(request GET "/accounts/${CF_ACCOUNT_ID}/access/apps/${app_id}/policies" '' "$tmp/policies.json")"
+          policies_code="$(request GET "/${scope}/access/apps/${app_id}/policies" '' "$tmp/policies.json")"
           echo "RESULT policies_http=${policies_code}"
           [[ "$policies_code" = 200 && "$(jq -r '.success // false' "$tmp/policies.json")" = true ]]
           bypass_id="$(jq -r '[.result[]? | select(.decision == "bypass") | select(any(.include[]?; has("everyone")))][0].id // empty' "$tmp/policies.json")"
 
           if [[ -z "$bypass_id" ]]; then
             policy_payload='{"name":"AI Live Map public demo - bypass everyone","decision":"bypass","include":[{"everyone":{}}],"exclude":[],"require":[]}'
-            policy_code="$(request POST "/accounts/${CF_ACCOUNT_ID}/access/apps/${app_id}/policies" "$policy_payload" "$tmp/policy-create.json")"
+            policy_code="$(request POST "/${scope}/access/apps/${app_id}/policies" "$policy_payload" "$tmp/policy-create.json")"
             echo "RESULT bypass_create_http=${policy_code}"
             if [[ "$policy_code" != 200 && "$policy_code" != 201 ]]; then
               jq -r '.errors[]? | "ERROR policy_create code=\(.code) msg=\(.message)"' "$tmp/policy-create.json" | head -5
-              exit 6
+              exit 8
             fi
             [[ "$(jq -r '.success // false' "$tmp/policy-create.json")" = true ]]
             echo 'RESULT bypass_created=true'
@@ -131,7 +147,7 @@ jobs:
             echo 'RESULT bypass_created=false'
           fi
 
-          final_code="$(request GET "/accounts/${CF_ACCOUNT_ID}/access/apps/${app_id}/policies" '' "$tmp/final-policies.json")"
+          final_code="$(request GET "/${scope}/access/apps/${app_id}/policies" '' "$tmp/final-policies.json")"
           [[ "$final_code" = 200 ]]
           final_bypass="$(jq -r '[.result[]? | select(.decision == "bypass") | select(any(.include[]?; has("everyone")))] | length' "$tmp/final-policies.json")"
           [[ "$final_bypass" -ge 1 ]]
