@@ -11,72 +11,145 @@ permissions:
   contents: read
 
 jobs:
-  diagnose-auth:
+  apply:
     runs-on: [self-hosted, linux, x64, chat-staging]
     environment: staging
     timeout-minutes: 10
     env:
-      CF_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
-      CF_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+      CF_ACCOUNT_ID_CONFIGURED: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+      TARGET_DOMAIN: alm.ailucy.online
+      ORIGIN_CERT: /home/since98kr/.cloudflared/cert.pem
     steps:
-      - name: Diagnose available Cloudflare auth without exposing credentials
+      - name: Apply exact-host Access bypass using existing Cloudflare account certificate
         shell: bash
         run: |
-          set -u
-          echo "RESULT api_token_configured=$([[ -n "${CF_API_TOKEN:-}" ]] && echo true || echo false)"
-          echo "RESULT account_id_configured=$([[ -n "${CF_ACCOUNT_ID:-}" ]] && echo true || echo false)"
+          set -Eeuo pipefail
+          tmp="$(mktemp -d)"
+          trap 'rm -rf "$tmp"' EXIT
+          umask 077
 
-          if [[ -n "${CF_API_TOKEN:-}" ]]; then
-            code="$(curl -sS -o /tmp/cf-token-verify.json -w '%{http_code}' -H "Authorization: Bearer ${CF_API_TOKEN}" https://api.cloudflare.com/client/v4/user/tokens/verify || true)"
-            echo "RESULT api_token_verify_http=${code}"
-            rm -f /tmp/cf-token-verify.json
-          fi
+          command -v docker >/dev/null
+          command -v python3 >/dev/null
+          command -v curl >/dev/null
+          command -v jq >/dev/null
 
-          echo "RESULT cloudflared_present=$([[ -x "$(command -v cloudflared 2>/dev/null || true)" ]] && echo true || echo false)"
-          echo "RESULT wrangler_present=$([[ -x "$(command -v wrangler 2>/dev/null || true)" ]] && echo true || echo false)"
+          # Read the already-approved account certificate through the same
+          # Docker mount path used by the existing relay publisher. Never print it.
+          docker run --rm --entrypoint cat \
+            --mount "type=bind,source=${ORIGIN_CERT},target=/run/cloudflare/cert.pem,readonly" \
+            cloudflare/cloudflared:latest /run/cloudflare/cert.pem >"$tmp/cert.pem"
+          [[ -s "$tmp/cert.pem" ]]
 
-          cert="$HOME/.cloudflared/cert.pem"
-          echo "RESULT cloudflared_cert_present=$([[ -r "$cert" ]] && echo true || echo false)"
-          if command -v cloudflared >/dev/null 2>&1 && [[ -r "$cert" ]]; then
-            if cloudflared tunnel list --output json >/tmp/cf-tunnels.json 2>/tmp/cf-tunnels.err; then
-              echo "RESULT cloudflared_tunnel_auth=true count=$(jq 'length' /tmp/cf-tunnels.json 2>/dev/null || echo unknown)"
-            else
-              echo 'RESULT cloudflared_tunnel_auth=false'
-            fi
-            rm -f /tmp/cf-tunnels.json /tmp/cf-tunnels.err
-          fi
-
-          candidates=(
-            "$HOME/.config/.wrangler/config/default.toml"
-            "$HOME/.wrangler/config/default.toml"
-            "$HOME/.config/wrangler/config/default.toml"
-          )
-          found=''
-          for f in "${candidates[@]}"; do
-            if [[ -r "$f" ]]; then
-              found="$f"
-              echo 'RESULT wrangler_oauth_config_present=true'
-              python3 - "$f" <<'PY'
-          import re, sys
-          p=sys.argv[1]
-          keys=[]
-          for line in open(p, encoding='utf-8', errors='ignore'):
-              m=re.match(r'\s*([A-Za-z0-9_.-]+)\s*=', line)
-              if m:
-                  keys.append(m.group(1))
-          safe=[k for k in keys if k.lower() in {'oauth_token','refresh_token','expiration_time','scopes'}]
-          print('RESULT wrangler_oauth_keys=' + ','.join(safe))
+          python3 - "$tmp/cert.pem" "$tmp/api-token" "$tmp/account-id" <<'PY'
+          import base64, json, re, sys, os
+          src, token_path, account_path = sys.argv[1:]
+          text = open(src, encoding='utf-8', errors='strict').read()
+          m = re.search(r'-----BEGIN ARGO TUNNEL TOKEN-----\s*(.*?)\s*-----END ARGO TUNNEL TOKEN-----', text, re.S)
+          if not m:
+              raise SystemExit('origin certificate has no ARGO TUNNEL TOKEN block')
+          raw = base64.b64decode(re.sub(r'\s+', '', m.group(1)), validate=True)
+          data = json.loads(raw.decode('utf-8'))
+          token = data.get('apiToken')
+          account = data.get('accountID')
+          zone = data.get('zoneID')
+          if not all(isinstance(x, str) and x for x in (token, account, zone)):
+              raise SystemExit('origin certificate token payload is incomplete')
+          open(token_path, 'w', encoding='utf-8').write(token)
+          open(account_path, 'w', encoding='utf-8').write(account)
+          os.chmod(token_path, 0o600)
+          os.chmod(account_path, 0o600)
+          print('RESULT origin_cert_decoded=true fields=zoneID,accountID,apiToken')
           PY
-              break
-            fi
-          done
-          [[ -n "$found" ]] || echo 'RESULT wrangler_oauth_config_present=false'
 
-          if command -v wrangler >/dev/null 2>&1; then
-            if wrangler whoami >/tmp/whoami.out 2>/tmp/whoami.err; then
-              echo 'RESULT wrangler_whoami=true'
-            else
-              echo 'RESULT wrangler_whoami=false'
-            fi
-            rm -f /tmp/whoami.out /tmp/whoami.err
+          CF_API_TOKEN="$(cat "$tmp/api-token")"
+          CF_ACCOUNT_ID="$(cat "$tmp/account-id")"
+          [[ -n "$CF_API_TOKEN" && -n "$CF_ACCOUNT_ID" ]]
+          if [[ -n "${CF_ACCOUNT_ID_CONFIGURED:-}" && "$CF_ACCOUNT_ID_CONFIGURED" != "$CF_ACCOUNT_ID" ]]; then
+            echo 'ERROR configured account ID does not match origin certificate account'
+            exit 2
           fi
+
+          request() {
+            local method="$1" path="$2" body="${3:-}"
+            local out="$4"
+            local args=(--silent --show-error --output "$out" --write-out '%{http_code}'
+              --request "$method"
+              --header "Authorization: Bearer ${CF_API_TOKEN}"
+              --header 'Content-Type: application/json')
+            [[ -z "$body" ]] || args+=(--data "$body")
+            curl "${args[@]}" "https://api.cloudflare.com/client/v4${path}" || true
+          }
+
+          verify_code="$(request GET '/user/tokens/verify' '' "$tmp/verify.json")"
+          echo "RESULT origin_cert_token_verify_http=${verify_code}"
+
+          apps_code="$(request GET "/accounts/${CF_ACCOUNT_ID}/access/apps?per_page=100" '' "$tmp/apps.json")"
+          echo "RESULT access_apps_http=${apps_code}"
+          if [[ "$apps_code" != 200 || "$(jq -r '.success // false' "$tmp/apps.json")" != true ]]; then
+            jq -r '.errors[]? | "ERROR access_apps code=\(.code) msg=\(.message)"' "$tmp/apps.json" | head -5
+            exit 3
+          fi
+
+          exact_count="$(jq -r --arg d "$TARGET_DOMAIN" '[.result[]? | select(.domain == $d)] | length' "$tmp/apps.json")"
+          [[ "$exact_count" -le 1 ]] || { echo 'ERROR multiple exact-host Access apps exist'; exit 4; }
+          app_id="$(jq -r --arg d "$TARGET_DOMAIN" '[.result[]? | select(.domain == $d)][0].id // empty' "$tmp/apps.json")"
+
+          if [[ -z "$app_id" ]]; then
+            app_payload="$(jq -nc --arg n 'AI Live Map Public Demo' --arg d "$TARGET_DOMAIN" '{name:$n,domain:$d,type:"self_hosted",session_duration:"24h",app_launcher_visible:false}')"
+            create_code="$(request POST "/accounts/${CF_ACCOUNT_ID}/access/apps" "$app_payload" "$tmp/app-create.json")"
+            echo "RESULT access_app_create_http=${create_code}"
+            if [[ "$create_code" != 200 && "$create_code" != 201 ]]; then
+              jq -r '.errors[]? | "ERROR app_create code=\(.code) msg=\(.message)"' "$tmp/app-create.json" | head -5
+              exit 5
+            fi
+            [[ "$(jq -r '.success // false' "$tmp/app-create.json")" = true ]]
+            app_id="$(jq -r '.result.id' "$tmp/app-create.json")"
+            echo 'RESULT exact_app_created=true'
+          else
+            echo 'RESULT exact_app_created=false'
+          fi
+
+          policies_code="$(request GET "/accounts/${CF_ACCOUNT_ID}/access/apps/${app_id}/policies" '' "$tmp/policies.json")"
+          echo "RESULT policies_http=${policies_code}"
+          [[ "$policies_code" = 200 && "$(jq -r '.success // false' "$tmp/policies.json")" = true ]]
+          bypass_id="$(jq -r '[.result[]? | select(.decision == "bypass") | select(any(.include[]?; has("everyone")))][0].id // empty' "$tmp/policies.json")"
+
+          if [[ -z "$bypass_id" ]]; then
+            policy_payload='{"name":"AI Live Map public demo - bypass everyone","decision":"bypass","include":[{"everyone":{}}],"exclude":[],"require":[]}'
+            policy_code="$(request POST "/accounts/${CF_ACCOUNT_ID}/access/apps/${app_id}/policies" "$policy_payload" "$tmp/policy-create.json")"
+            echo "RESULT bypass_create_http=${policy_code}"
+            if [[ "$policy_code" != 200 && "$policy_code" != 201 ]]; then
+              jq -r '.errors[]? | "ERROR policy_create code=\(.code) msg=\(.message)"' "$tmp/policy-create.json" | head -5
+              exit 6
+            fi
+            [[ "$(jq -r '.success // false' "$tmp/policy-create.json")" = true ]]
+            echo 'RESULT bypass_created=true'
+          else
+            echo 'RESULT bypass_created=false'
+          fi
+
+          final_code="$(request GET "/accounts/${CF_ACCOUNT_ID}/access/apps/${app_id}/policies" '' "$tmp/final-policies.json")"
+          [[ "$final_code" = 200 ]]
+          final_bypass="$(jq -r '[.result[]? | select(.decision == "bypass") | select(any(.include[]?; has("everyone")))] | length' "$tmp/final-policies.json")"
+          [[ "$final_bypass" -ge 1 ]]
+          echo 'RESULT exact_app_present=true bypass_everyone_present=true'
+
+      - name: Verify unauthenticated public endpoint from agentlucy
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          tmp="$(mktemp -d)"
+          trap 'rm -rf "$tmp"' EXIT
+          status=000
+          for _ in $(seq 1 15); do
+            status="$(curl --silent --show-error --connect-timeout 5 --max-time 15 --max-redirs 0 -D "$tmp/headers" -o "$tmp/body" -w '%{http_code}' "https://${TARGET_DOMAIN}/" || true)"
+            location="$(awk 'BEGIN{IGNORECASE=1} /^location:/ {sub(/^[^:]*:[[:space:]]*/,""); sub(/\r$/,""); print; exit}' "$tmp/headers")"
+            if [[ "$status" = 200 && "$location" != *cloudflareaccess.com* && "$location" != *'/cdn-cgi/access/login'* ]]; then break; fi
+            sleep 2
+          done
+          title="$(grep -oEi '<title[^>]*>[^<]+' "$tmp/body" | head -1 | sed -E 's/<title[^>]*>//I' || true)"
+          echo "RESULT public_http_status=${status}"
+          echo "RESULT login_intercept_present=$([[ "${location:-}" == *cloudflareaccess.com* || "${location:-}" == *'/cdn-cgi/access/login'* ]] && echo true || echo false)"
+          echo "RESULT title=${title:-none}"
+          [[ "$status" = 200 ]]
+          [[ "${location:-}" != *cloudflareaccess.com* && "${location:-}" != *'/cdn-cgi/access/login'* ]]
