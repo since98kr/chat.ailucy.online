@@ -8,6 +8,7 @@ import type { ConversationApprovalBackend } from './openclaw-approval.js';
 import type { StreamEvent } from '../shared/contracts.js';
 
 process.env.NODE_ENV = 'test';
+delete process.env.OPENCLAW_BASE_URL;
 delete process.env.LETTA_BASE_URL;
 delete process.env.HERMES_BASE_URL;
 
@@ -71,7 +72,7 @@ describe('Chat Core API', () => {
     const created = await app.inject({
       method: 'POST',
       url: '/api/conversations',
-      payload: { systemId: 'letta', agentId: '[OpenClaw] Lucy' },
+      payload: { systemId: 'openclaw', agentId: '[OpenClaw] Lucy' },
     });
     const id = created.json().conversation.id as string;
     const clientMessageId = crypto.randomUUID();
@@ -114,7 +115,7 @@ describe('Chat Core API', () => {
     const created = await app.inject({
       method: 'POST',
       url: '/api/conversations',
-      payload: { systemId: 'letta', agentId: '[OpenClaw] Lucy' },
+      payload: { systemId: 'openclaw', agentId: '[OpenClaw] Lucy' },
     });
     const id = created.json().conversation.id as string;
     const started = performance.now();
@@ -134,7 +135,7 @@ describe('Chat Core API', () => {
     const created = await app.inject({
       method: 'POST',
       url: '/api/conversations',
-      payload: { systemId: 'letta', agentId: '[OpenClaw] Lucy' },
+      payload: { systemId: 'openclaw', agentId: '[OpenClaw] Lucy' },
     });
     const id = created.json().conversation.id as string;
     const clientMessageId = crypto.randomUUID();
@@ -198,7 +199,7 @@ describe('Chat Core API', () => {
     const created = await app.inject({
       method: 'POST',
       url: '/api/conversations',
-      payload: { systemId: 'letta', agentId: '[OpenClaw] Lucy' },
+      payload: { systemId: 'openclaw', agentId: '[OpenClaw] Lucy' },
     });
     const id = created.json().conversation.id as string;
 
@@ -206,7 +207,7 @@ describe('Chat Core API', () => {
     expect(initial.statusCode).toBe(200);
     expect(initial.json().operatingContext).toMatchObject({
       conversationId: id,
-      backendSystem: 'letta',
+      backendSystem: 'openclaw',
       agentId: '[OpenClaw] Lucy',
       activeTask: null,
       continuationTarget: null,
@@ -239,7 +240,7 @@ describe('Chat Core API', () => {
     const created = await app.inject({
       method: 'POST',
       url: '/api/conversations',
-      payload: { systemId: 'letta', agentId: '[OpenClaw] Lucy' },
+      payload: { systemId: 'openclaw', agentId: '[OpenClaw] Lucy' },
     });
     const id = created.json().conversation.id as string;
 
@@ -303,7 +304,7 @@ describe('Chat Core API', () => {
     const created = await app.inject({
       method: 'POST',
       url: '/api/conversations',
-      payload: { systemId: 'letta', agentId: '[OpenClaw] Lucy' },
+      payload: { systemId: 'openclaw', agentId: '[OpenClaw] Lucy' },
     });
     const id = created.json().conversation.id as string;
 
@@ -357,7 +358,7 @@ describe('Chat Core API', () => {
       const created = await app.inject({
         method: 'POST',
         url: '/api/conversations',
-        payload: { systemId: 'letta', agentId: '[OpenClaw] Lucy' },
+        payload: { systemId: 'openclaw', agentId: '[OpenClaw] Lucy' },
       });
       const id = created.json().conversation.id as string;
 
@@ -425,7 +426,7 @@ describe('Chat Core API', () => {
       const created = await app.inject({
         method: 'POST',
         url: '/api/conversations',
-        payload: { systemId: 'letta', agentId: '[OpenClaw] Lucy' },
+        payload: { systemId: 'openclaw', agentId: '[OpenClaw] Lucy' },
       });
       const id = created.json().conversation.id as string;
       const approval = app.inject({ method: 'POST', url: `/api/conversations/${id}/approval` });
@@ -465,7 +466,7 @@ describe('Chat Core API', () => {
       const created = await app.inject({
         method: 'POST',
         url: '/api/conversations',
-        payload: { systemId: 'letta', agentId: '[OpenClaw] Lucy' },
+        payload: { systemId: 'openclaw', agentId: '[OpenClaw] Lucy' },
       });
       const id = created.json().conversation.id as string;
 
@@ -563,7 +564,7 @@ describe('Chat Core API', () => {
     const health = await app.inject({ method: 'GET', url: '/api/health' });
     expect(health.statusCode).toBe(200);
     expect(health.json().adapters).toMatchObject({
-      letta: { ok: true, mode: 'mock' },
+      openclaw: { ok: true, mode: 'mock' },
       hermes: { ok: true, mode: 'mock' },
     });
 
