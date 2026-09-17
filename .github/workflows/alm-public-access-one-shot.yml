@@ -11,101 +11,72 @@ permissions:
   contents: read
 
 jobs:
-  apply:
+  diagnose-auth:
     runs-on: [self-hosted, linux, x64, chat-staging]
     environment: staging
     timeout-minutes: 10
     env:
       CF_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
       CF_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
-      TARGET_DOMAIN: alm.ailucy.online
     steps:
-      - name: Create exact-host public Access exception
+      - name: Diagnose available Cloudflare auth without exposing credentials
         shell: bash
         run: |
-          set -euo pipefail
-          [[ -n "${CF_API_TOKEN:-}" ]] || { echo 'CLOUDFLARE_API_TOKEN is missing'; exit 1; }
-          [[ -n "${CF_ACCOUNT_ID:-}" ]] || { echo 'CLOUDFLARE_ACCOUNT_ID is missing'; exit 1; }
+          set -u
+          echo "RESULT api_token_configured=$([[ -n "${CF_API_TOKEN:-}" ]] && echo true || echo false)"
+          echo "RESULT account_id_configured=$([[ -n "${CF_ACCOUNT_ID:-}" ]] && echo true || echo false)"
 
-          api_get() {
-            curl --fail-with-body --silent --show-error \
-              -H "Authorization: Bearer ${CF_API_TOKEN}" \
-              -H 'Content-Type: application/json' \
-              "https://api.cloudflare.com/client/v4$1"
-          }
-          api_post() {
-            local path="$1"
-            local payload="$2"
-            curl --fail-with-body --silent --show-error \
-              -X POST \
-              -H "Authorization: Bearer ${CF_API_TOKEN}" \
-              -H 'Content-Type: application/json' \
-              --data "$payload" \
-              "https://api.cloudflare.com/client/v4${path}"
-          }
-
-          verify="$(api_get '/user/tokens/verify')"
-          test "$(jq -r '.success' <<<"$verify")" = true
-          echo "RESULT token_status=$(jq -r '.result.status // "unknown"' <<<"$verify")"
-
-          apps="$(api_get "/accounts/${CF_ACCOUNT_ID}/access/apps?per_page=100")"
-          test "$(jq -r '.success' <<<"$apps")" = true
-          exact_count="$(jq -r --arg d "$TARGET_DOMAIN" '[.result[]? | select(.domain == $d)] | length' <<<"$apps")"
-          if [[ "$exact_count" -gt 1 ]]; then
-            echo "ERROR multiple exact Access apps found for ${TARGET_DOMAIN}"
-            exit 2
+          if [[ -n "${CF_API_TOKEN:-}" ]]; then
+            code="$(curl -sS -o /tmp/cf-token-verify.json -w '%{http_code}' -H "Authorization: Bearer ${CF_API_TOKEN}" https://api.cloudflare.com/client/v4/user/tokens/verify || true)"
+            echo "RESULT api_token_verify_http=${code}"
+            rm -f /tmp/cf-token-verify.json
           fi
 
-          app_id="$(jq -r --arg d "$TARGET_DOMAIN" '[.result[]? | select(.domain == $d)][0].id // empty' <<<"$apps")"
-          if [[ -z "$app_id" ]]; then
-            payload="$(jq -nc --arg name 'AI Live Map Public Demo' --arg domain "$TARGET_DOMAIN" '{name:$name,domain:$domain,type:"self_hosted",session_duration:"24h",app_launcher_visible:false}')"
-            created="$(api_post "/accounts/${CF_ACCOUNT_ID}/access/apps" "$payload")"
-            if [[ "$(jq -r '.success' <<<"$created")" != true ]]; then
-              jq -r '.errors[]? | "ERROR app_create code=\(.code) msg=\(.message)"' <<<"$created"
-              exit 3
+          echo "RESULT cloudflared_present=$([[ -x "$(command -v cloudflared 2>/dev/null || true)" ]] && echo true || echo false)"
+          echo "RESULT wrangler_present=$([[ -x "$(command -v wrangler 2>/dev/null || true)" ]] && echo true || echo false)"
+
+          cert="$HOME/.cloudflared/cert.pem"
+          echo "RESULT cloudflared_cert_present=$([[ -r "$cert" ]] && echo true || echo false)"
+          if command -v cloudflared >/dev/null 2>&1 && [[ -r "$cert" ]]; then
+            if cloudflared tunnel list --output json >/tmp/cf-tunnels.json 2>/tmp/cf-tunnels.err; then
+              echo "RESULT cloudflared_tunnel_auth=true count=$(jq 'length' /tmp/cf-tunnels.json 2>/dev/null || echo unknown)"
+            else
+              echo 'RESULT cloudflared_tunnel_auth=false'
             fi
-            app_id="$(jq -r '.result.id' <<<"$created")"
-            echo "RESULT app_created=true domain=${TARGET_DOMAIN}"
-          else
-            echo "RESULT app_created=false domain=${TARGET_DOMAIN}"
+            rm -f /tmp/cf-tunnels.json /tmp/cf-tunnels.err
           fi
 
-          policies="$(api_get "/accounts/${CF_ACCOUNT_ID}/access/apps/${app_id}/policies")"
-          test "$(jq -r '.success' <<<"$policies")" = true
-          bypass_id="$(jq -r '[.result[]? | select(.decision == "bypass") | select(any(.include[]?; has("everyone")))][0].id // empty' <<<"$policies")"
-
-          if [[ -z "$bypass_id" ]]; then
-            policy_payload='{"name":"AI Live Map public demo - bypass everyone","decision":"bypass","include":[{"everyone":{}}],"exclude":[],"require":[]}'
-            policy_created="$(api_post "/accounts/${CF_ACCOUNT_ID}/access/apps/${app_id}/policies" "$policy_payload")"
-            if [[ "$(jq -r '.success' <<<"$policy_created")" != true ]]; then
-              jq -r '.errors[]? | "ERROR policy_create code=\(.code) msg=\(.message)"' <<<"$policy_created"
-              exit 4
+          candidates=(
+            "$HOME/.config/.wrangler/config/default.toml"
+            "$HOME/.wrangler/config/default.toml"
+            "$HOME/.config/wrangler/config/default.toml"
+          )
+          found=''
+          for f in "${candidates[@]}"; do
+            if [[ -r "$f" ]]; then
+              found="$f"
+              echo 'RESULT wrangler_oauth_config_present=true'
+              python3 - "$f" <<'PY'
+          import re, sys
+          p=sys.argv[1]
+          keys=[]
+          for line in open(p, encoding='utf-8', errors='ignore'):
+              m=re.match(r'\s*([A-Za-z0-9_.-]+)\s*=', line)
+              if m:
+                  keys.append(m.group(1))
+          safe=[k for k in keys if k.lower() in {'oauth_token','refresh_token','expiration_time','scopes'}]
+          print('RESULT wrangler_oauth_keys=' + ','.join(safe))
+          PY
+              break
             fi
-            bypass_id="$(jq -r '.result.id' <<<"$policy_created")"
-            echo 'RESULT bypass_created=true'
-          else
-            echo 'RESULT bypass_created=false'
+          done
+          [[ -n "$found" ]] || echo 'RESULT wrangler_oauth_config_present=false'
+
+          if command -v wrangler >/dev/null 2>&1; then
+            if wrangler whoami >/tmp/whoami.out 2>/tmp/whoami.err; then
+              echo 'RESULT wrangler_whoami=true'
+            else
+              echo 'RESULT wrangler_whoami=false'
+            fi
+            rm -f /tmp/whoami.out /tmp/whoami.err
           fi
-
-          final_apps="$(api_get "/accounts/${CF_ACCOUNT_ID}/access/apps?per_page=100")"
-          final_app_id="$(jq -r --arg d "$TARGET_DOMAIN" '[.result[]? | select(.domain == $d)][0].id // empty' <<<"$final_apps")"
-          [[ "$final_app_id" = "$app_id" ]]
-          final_policies="$(api_get "/accounts/${CF_ACCOUNT_ID}/access/apps/${app_id}/policies")"
-          final_bypass_count="$(jq -r '[.result[]? | select(.decision == "bypass") | select(any(.include[]?; has("everyone")))] | length' <<<"$final_policies")"
-          [[ "$final_bypass_count" -ge 1 ]]
-          echo "RESULT exact_app_present=true bypass_everyone_present=true"
-
-      - name: Probe unauthenticated public endpoint
-        shell: bash
-        run: |
-          set -euo pipefail
-          tmp="$(mktemp -d)"
-          trap 'rm -rf "$tmp"' EXIT
-          code="$(curl --silent --show-error --max-redirs 0 -D "$tmp/headers" -o "$tmp/body" -w '%{http_code}' "https://${TARGET_DOMAIN}/" || true)"
-          location="$(awk 'BEGIN{IGNORECASE=1} /^location:/ {sub(/^[^:]*:[[:space:]]*/,""); sub(/\r$/,""); print; exit}' "$tmp/headers")"
-          title="$(sed -n 's:.*<title[^>]*>\([^<]*\)</title>.*:\1:p' "$tmp/body" | head -1)"
-          echo "RESULT public_http_status=${code}"
-          echo "RESULT login_redirect_present=$([[ "$location" == *cloudflareaccess.com* ]] && echo true || echo false)"
-          echo "RESULT title=${title:-none}"
-          [[ "$code" = 200 ]]
-          [[ "$location" != *cloudflareaccess.com* ]]
