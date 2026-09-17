@@ -8,8 +8,8 @@ on:
 
 jobs:
   publish-alm:
-    runs-on: [self-hosted, chat-staging]
-    environment: staging
+    runs-on: [self-hosted, linux, x64, chat-production]
+    environment: production
     timeout-minutes: 10
     steps:
       - name: Ensure exact-host Access bypass for alm.ailucy.online
@@ -19,6 +19,8 @@ jobs:
           TARGET_HOST: alm.ailucy.online
         run: |
           set -euo pipefail
+          [[ -n "${CF_API_TOKEN:-}" ]] || { echo 'CLOUDFLARE_API_TOKEN missing in production environment'; exit 2; }
+          [[ -n "${CF_ACCOUNT_ID:-}" ]] || { echo 'CLOUDFLARE_ACCOUNT_ID missing in production environment'; exit 2; }
 
           api_get() {
             curl -fsS \
@@ -81,7 +83,6 @@ jobs:
             exit 1
           fi
           test "$code" = "200"
-
           health=$(curl -sS -L -o /tmp/alm-health.txt -w '%{http_code}' https://alm.ailucy.online/healthz)
           echo "RESULT health_http_code=${health} body=$(tr -d '\r\n' < /tmp/alm-health.txt | head -c 80)"
           test "$health" = "200"
