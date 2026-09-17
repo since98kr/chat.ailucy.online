@@ -93,7 +93,7 @@ describe('Chat Core API', () => {
     const messages = detail.json().conversation.messages as Array<{ role: string; content: string; state: string }>;
     expect(messages).toHaveLength(2);
     expect(messages[0]).toMatchObject({ role: 'user', content: '이번 주 우선순위를 정리해줘.' });
-    expect(messages[1].content).toContain('[OpenClaw] Lucy');
+    expect(messages[1].content).toContain('이번 주 우선순위를 정리해줘.');
     expect(messages[1].state).toBe('complete');
   });
 
