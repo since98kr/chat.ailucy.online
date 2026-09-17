@@ -64,9 +64,9 @@ export function claudeDirectChatEnabled(env: NodeJS.ProcessEnv = process.env) {
 const seedAgents: Array<Omit<AgentRecord, 'createdAt' | 'updatedAt'>> = [
   {
     id: OPENCLAW_LUCY_ID,
-    systemId: 'letta',
+    systemId: 'openclaw',
     displayName: OPENCLAW_LUCY_ID,
-    shortName: 'Lucy',
+    shortName: 'OpenClaw',
     role: 'Personal AI',
     description: 'Persistent personal Lucy running through the OpenClaw runtime.',
     capabilities: ['personal-memory', 'planning', 'writing', 'conversation', 'openclaw-runtime'],
@@ -204,7 +204,7 @@ export class CollaborationService {
     this.db.exec(`
       CREATE TABLE IF NOT EXISTS agents (
         id TEXT PRIMARY KEY,
-        system_id TEXT NOT NULL CHECK (system_id IN ('letta', 'hermes', 'claude')),
+        system_id TEXT NOT NULL CHECK (system_id IN ('openclaw', 'hermes', 'claude')),
         display_name TEXT NOT NULL,
         short_name TEXT NOT NULL,
         role TEXT NOT NULL,
@@ -300,7 +300,7 @@ export class CollaborationService {
     const transaction = this.db.transaction(() => {
       this.db.prepare(`
         UPDATE conversations SET agent_id = ?
-        WHERE system_id = 'letta' AND agent_id = ?
+        WHERE system_id = 'openclaw' AND agent_id = ?
       `).run(OPENCLAW_LUCY_ID, LEGACY_LETTA_LUCY_ID);
       migrateLegacyPersonalLucyOperatingContexts(
         this.database,
@@ -582,7 +582,7 @@ export class CollaborationService {
     if (!lead) throw new Error(`No enabled agent is registered for ${conversation.systemId}`);
     const primary = agents.find((agent) => agent.id === conversation.agentId) ?? lead;
 
-    if (conversation.systemId === 'letta' || primary.id !== lead.id) {
+    if (conversation.systemId === 'openclaw' || primary.id !== lead.id) {
       return {
         mode: 'direct',
         leadAgentId: primary.id,
