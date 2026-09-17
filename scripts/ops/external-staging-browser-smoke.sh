@@ -3,7 +3,7 @@ set -Eeuo pipefail
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 BASE_URL="${CHAT_STAGING_BASE_URL:-https://chat-staging.ailucy.online}"
-LETTA_PROTOCOL="${LETTA_PROTOCOL:-openclaw}"
+OPENCLAW_PROTOCOL="${OPENCLAW_PROTOCOL:-openclaw}"
 
 log() {
   printf '[chat-v2-external-smoke] %s\n' "$*"
@@ -20,7 +20,7 @@ done
 
 [[ -n "${CF_ACCESS_CLIENT_ID:-}" ]] || fail 'CF_ACCESS_CLIENT_ID is required'
 [[ -n "${CF_ACCESS_CLIENT_SECRET:-}" ]] || fail 'CF_ACCESS_CLIENT_SECRET is required'
-[[ "${LETTA_PROTOCOL,,}" == 'openclaw' ]] || fail 'external staging QA requires LETTA_PROTOCOL=openclaw'
+[[ "${OPENCLAW_PROTOCOL,,}" == 'openclaw' ]] || fail 'external staging QA requires OPENCLAW_PROTOCOL=openclaw'
 
 AUTH_OUTPUT="$(mktemp)"
 trap 'rm -f "${AUTH_OUTPUT}"' EXIT
@@ -53,7 +53,7 @@ log "Running public Access, Tunnel, chat, and artifact transport QA through ${BA
 CHAT_STAGING_BASE_URL="${BASE_URL}" \
 CF_ACCESS_CLIENT_ID="${CF_ACCESS_CLIENT_ID}" \
 CF_ACCESS_CLIENT_SECRET="${CF_ACCESS_CLIENT_SECRET}" \
-LETTA_PROTOCOL="${LETTA_PROTOCOL}" \
+OPENCLAW_PROTOCOL="${OPENCLAW_PROTOCOL}" \
 npx playwright test --config playwright.external.config.ts
 
 log 'PASS: Cloudflare Access, Tunnel, full Chat V2 browser QA, multimodal transport, generated artifacts, and persistence are healthy.'
