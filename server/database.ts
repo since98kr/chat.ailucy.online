@@ -149,7 +149,7 @@ export class ChatDatabase {
     this.db.exec(`
       CREATE TABLE IF NOT EXISTS conversations (
         id TEXT PRIMARY KEY,
-        system_id TEXT NOT NULL CHECK (system_id IN ('letta', 'hermes', 'claude')),
+        system_id TEXT NOT NULL CHECK (system_id IN ('openclaw', 'hermes', 'claude')),
         agent_id TEXT NOT NULL,
         title TEXT NOT NULL,
         preview TEXT NOT NULL DEFAULT '',
@@ -249,7 +249,7 @@ export class ChatDatabase {
       },
       {
         id: 'weekly',
-        systemId: 'letta' as const,
+        systemId: 'openclaw' as const,
         agentId: '[OpenClaw] Lucy',
         title: '이번 주 업무 정리',
         preview: '중요 의사결정과 다음 일정',
@@ -281,7 +281,7 @@ export class ChatDatabase {
           role: 'assistant',
           authorId: item.agentId,
           content:
-            item.systemId === 'letta'
+            item.systemId === 'openclaw'
               ? '이 Conversation은 다른 아젠다와 분리됩니다. 기억 사용 여부와 범위는 현재 연결된 OpenClaw Lucy 런타임에서 검증 가능한 상태를 따릅니다.'
               : '이 Conversation은 Hermes 작업 공간입니다. 필요할 때 subagent와 협업하되 최종 응답은 Lucy가 책임집니다.',
         });
