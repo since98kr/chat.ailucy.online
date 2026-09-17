@@ -25,7 +25,9 @@ jobs:
         run: |
           set -Eeuo pipefail
           tmp="$(mktemp -d)"
-          trap 'rm -rf "$tmp"' EXIT
+          helper="alm-cf-cert-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          cleanup() { docker rm -f "$helper" >/dev/null 2>&1 || true; rm -rf "$tmp"; }
+          trap cleanup EXIT
           umask 077
 
           command -v docker >/dev/null
@@ -33,11 +35,13 @@ jobs:
           command -v curl >/dev/null
           command -v jq >/dev/null
 
-          # Read the already-approved account certificate through the same
-          # Docker mount path used by the existing relay publisher. Never print it.
-          docker run --rm --entrypoint cat \
+          # Reuse the exact account certificate already used by the approved
+          # relay publisher. Docker daemon can mount the owner-only file; copy
+          # it into an ephemeral 0700 directory without ever printing it.
+          docker create --name "$helper" \
             --mount "type=bind,source=${ORIGIN_CERT},target=/run/cloudflare/cert.pem,readonly" \
-            cloudflare/cloudflared:latest /run/cloudflare/cert.pem >"$tmp/cert.pem"
+            cloudflare/cloudflared:latest version >/dev/null
+          docker cp "$helper:/run/cloudflare/cert.pem" "$tmp/cert.pem"
           [[ -s "$tmp/cert.pem" ]]
 
           python3 - "$tmp/cert.pem" "$tmp/api-token" "$tmp/account-id" <<'PY'
@@ -70,8 +74,7 @@ jobs:
           fi
 
           request() {
-            local method="$1" path="$2" body="${3:-}"
-            local out="$4"
+            local method="$1" path="$2" body="${3:-}" out="$4"
             local args=(--silent --show-error --output "$out" --write-out '%{http_code}'
               --request "$method"
               --header "Authorization: Bearer ${CF_API_TOKEN}"
@@ -141,6 +144,7 @@ jobs:
           tmp="$(mktemp -d)"
           trap 'rm -rf "$tmp"' EXIT
           status=000
+          location=''
           for _ in $(seq 1 15); do
             status="$(curl --silent --show-error --connect-timeout 5 --max-time 15 --max-redirs 0 -D "$tmp/headers" -o "$tmp/body" -w '%{http_code}' "https://${TARGET_DOMAIN}/" || true)"
             location="$(awk 'BEGIN{IGNORECASE=1} /^location:/ {sub(/^[^:]*:[[:space:]]*/,""); sub(/\r$/,""); print; exit}' "$tmp/headers")"
@@ -149,7 +153,7 @@ jobs:
           done
           title="$(grep -oEi '<title[^>]*>[^<]+' "$tmp/body" | head -1 | sed -E 's/<title[^>]*>//I' || true)"
           echo "RESULT public_http_status=${status}"
-          echo "RESULT login_intercept_present=$([[ "${location:-}" == *cloudflareaccess.com* || "${location:-}" == *'/cdn-cgi/access/login'* ]] && echo true || echo false)"
+          echo "RESULT login_intercept_present=$([[ "$location" == *cloudflareaccess.com* || "$location" == *'/cdn-cgi/access/login'* ]] && echo true || echo false)"
           echo "RESULT title=${title:-none}"
           [[ "$status" = 200 ]]
-          [[ "${location:-}" != *cloudflareaccess.com* && "${location:-}" != *'/cdn-cgi/access/login'* ]]
+          [[ "$location" != *cloudflareaccess.com* && "$location" != *'/cdn-cgi/access/login'* ]]
