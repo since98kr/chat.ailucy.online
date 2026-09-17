@@ -18,12 +18,8 @@ type WorkflowRunIdentityRow = {
   requested_agent_ids_json: string;
 };
 
-type LegacyRuntimeIdentity = Omit<ConversationRuntimeIdentity, 'backendSystem'> & {
-  backendSystem: 'letta';
-};
-
 function legacyBackendSystem(value: ConversationRuntimeIdentity) {
-  return (value as ConversationRuntimeIdentity & { backendSystem: string }).backendSystem === 'letta';
+  return (value as unknown as { backendSystem: string }).backendSystem === 'letta';
 }
 
 function migrateBoundIdentity<T extends ConversationRuntimeIdentity>(
@@ -89,15 +85,13 @@ export function migrateLegacyPersonalLucyOperatingContexts(
   let migrated = 0;
   for (const row of rows) {
     try {
-      // `validateConversationOperatingContext` intentionally validates shape and
-      // bindings, while the old backend id is recognized only by this bounded
-      // migration. Cast documents that this is persisted legacy input, not a
-      // current SystemId accepted by product/API contracts.
+      // The validator checks binding shape. `legacyBackendSystem` performs the
+      // one migration-only raw-string check that current SystemId deliberately
+      // no longer represents.
       const previous = validateConversationOperatingContext(JSON.parse(row.context_json));
-      const legacyIdentity = previous as ConversationOperatingContext & LegacyRuntimeIdentity;
       if (
         previous.conversationId !== row.conversation_id
-        || !legacyBackendSystem(legacyIdentity)
+        || !legacyBackendSystem(previous)
         || previous.agentId !== legacyAgentId
       ) continue;
       if (
