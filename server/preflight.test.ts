@@ -14,6 +14,7 @@ function prepareEnvironment() {
   process.env.CHAT_ARTIFACT_ROOT = join(directory, 'artifacts');
   process.env.CHAT_BACKUP_ROOT = join(directory, 'backups');
   process.env.CHAT_PREFLIGHT_MIN_FREE_BYTES = '1';
+  delete process.env.OPENCLAW_BASE_URL;
   delete process.env.LETTA_BASE_URL;
   delete process.env.HERMES_BASE_URL;
   delete process.env.CHAT_PUBLIC_ORIGIN;
@@ -82,7 +83,7 @@ describe('deployment preflight', () => {
     const report = await runPreflight({ strict: false });
 
     expect(report.ok).toBe(true);
-    expect(report.adapters.letta.mode).toBe('mock');
+    expect(report.adapters.openclaw.mode).toBe('mock');
     expect(report.adapters.hermes.mode).toBe('mock');
     expect(report.checks.find((check) => check.name === 'database-integrity')?.level).toBe('warning');
     expect(report.checks.find((check) => check.name === 'inline-generated-artifact-payload-limit')?.ok).toBe(true);
@@ -94,7 +95,7 @@ describe('deployment preflight', () => {
 
     expect(report.ok).toBe(false);
     expect(report.checks.find((check) => check.name === 'authentication')?.ok).toBe(false);
-    expect(report.checks.find((check) => check.name === 'adapter-letta')?.ok).toBe(false);
+    expect(report.checks.find((check) => check.name === 'adapter-openclaw')?.ok).toBe(false);
     expect(report.checks.find((check) => check.name === 'adapter-hermes')?.ok).toBe(false);
   });
 
