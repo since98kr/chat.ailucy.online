@@ -84,7 +84,7 @@ describe('Federated Conversation controller', () => {
     const detail = await app.inject({ method: 'GET', url: `/api/conversations/${conversationId}` });
     const messages = detail.json().conversation.messages as Array<{ authorId: string; content: string }>;
     expect(messages.some((message) => message.authorId === 'Xixi' && message.content.includes('Xixi 원문 결과'))).toBe(true);
-    expect(messages.some((message) => message.authorId === '[OpenClaw] Lucy' && message.content.includes('승인된 장기기억'))).toBe(true);
+    expect(messages.some((message) => message.authorId === '[OpenClaw] Lucy' && message.content.includes('검증된 현재 Conversation 문맥'))).toBe(true);
     expect(messages.some((message) => message.authorId === '[Hermes] Lucy' && message.content.includes('종합응답'))).toBe(true);
 
     const snapshot = await app.inject({ method: 'GET', url: `/api/conversations/${conversationId}/federation` });
