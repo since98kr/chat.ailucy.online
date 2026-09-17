@@ -199,42 +199,43 @@ describe('HttpAgentAdapter', () => {
   it('normalizes NDJSON and plain text lines without mixing backend memory', async () => {
     const baseUrl = await startServer((_request, response) => {
       response.writeHead(200, { 'Content-Type': 'application/x-ndjson' });
-      response.write('{"status":"Letta 기억 조회"}\n');
+      response.write('{"status":"OpenClaw 기억 조회"}\n');
       response.write('{"content":"개인 기억은 "}\n');
       response.write('현재 Conversation과 분리됩니다.\n');
       response.end();
     });
 
-    const adapter = new HttpAgentAdapter('letta', {
+    const adapter = new HttpAgentAdapter('openclaw', {
       baseUrl,
       chatPath: '/chat',
       healthPath: '/health',
       timeoutMs: 2_000,
     });
-    const lettaConversation = { ...conversation, systemId: 'letta' as const, agentId: '[Letta] Lucy' };
-    const lettaParticipant = {
+    const openClawConversation = { ...conversation, systemId: 'openclaw' as const, agentId: '[OpenClaw] Lucy' };
+    const openClawParticipant: ConversationParticipantRecord = {
       ...participants[0],
-      conversationId: lettaConversation.id,
-      agentId: '[Letta] Lucy',
+      conversationId: openClawConversation.id,
+      agentId: '[OpenClaw] Lucy',
       agent: {
         ...participants[0].agent,
-        id: '[Letta] Lucy',
-        systemId: 'letta' as const,
-        displayName: '[Letta] Lucy',
+        id: '[OpenClaw] Lucy',
+        systemId: 'openclaw',
+        displayName: '[OpenClaw] Lucy',
+        shortName: 'OpenClaw',
       },
     };
     const items = [];
     for await (const item of adapter.streamReply({
-      conversation: lettaConversation,
-      userMessage: { ...userMessage, conversationId: lettaConversation.id },
-      history: [{ ...userMessage, conversationId: lettaConversation.id }],
-      targetAgentId: '[Letta] Lucy',
+      conversation: openClawConversation,
+      userMessage: { ...userMessage, conversationId: openClawConversation.id },
+      history: [{ ...userMessage, conversationId: openClawConversation.id }],
+      targetAgentId: '[OpenClaw] Lucy',
       routingMode: 'direct',
-      participants: [lettaParticipant],
+      participants: [openClawParticipant],
     })) items.push(item);
 
     expect(items).toEqual([
-      { type: 'status', status: 'Letta 기억 조회' },
+      { type: 'status', status: 'OpenClaw 기억 조회' },
       { type: 'delta', delta: '개인 기억은 ' },
       { type: 'delta', delta: '현재 Conversation과 분리됩니다.' },
     ]);
@@ -380,21 +381,22 @@ describe('HttpAgentAdapter', () => {
       response.end('{"error":"verified local tool probe failed"}');
     });
 
-    const lettaConversation = { ...conversation, systemId: 'letta' as const, agentId: '[Letta] Lucy' };
-    const lettaParticipant = {
+    const openClawConversation = { ...conversation, systemId: 'openclaw' as const, agentId: '[OpenClaw] Lucy' };
+    const openClawParticipant: ConversationParticipantRecord = {
       ...participants[0],
-      conversationId: lettaConversation.id,
-      agentId: '[Letta] Lucy',
+      conversationId: openClawConversation.id,
+      agentId: '[OpenClaw] Lucy',
       agent: {
         ...participants[0].agent,
-        id: '[Letta] Lucy',
-        systemId: 'letta' as const,
-        displayName: '[Letta] Lucy',
+        id: '[OpenClaw] Lucy',
+        systemId: 'openclaw',
+        displayName: '[OpenClaw] Lucy',
+        shortName: 'OpenClaw',
       },
     };
 
     for (const chatPath of ['/json', '/ndjson', '/sse']) {
-      const adapter = new HttpAgentAdapter('letta', {
+      const adapter = new HttpAgentAdapter('openclaw', {
         baseUrl,
         chatPath,
         healthPath: '/health',
@@ -403,12 +405,12 @@ describe('HttpAgentAdapter', () => {
       const items: Array<{ type: string }> = [];
       const consume = async () => {
         for await (const item of adapter.streamReply({
-          conversation: lettaConversation,
-          userMessage: { ...userMessage, conversationId: lettaConversation.id },
-          history: [{ ...userMessage, conversationId: lettaConversation.id }],
-          targetAgentId: '[Letta] Lucy',
+          conversation: openClawConversation,
+          userMessage: { ...userMessage, conversationId: openClawConversation.id },
+          history: [{ ...userMessage, conversationId: openClawConversation.id }],
+          targetAgentId: '[OpenClaw] Lucy',
           routingMode: 'direct',
-          participants: [lettaParticipant],
+          participants: [openClawParticipant],
         })) items.push(item);
       };
       await expect(consume()).rejects.toThrow('Backend stream error: verified local tool probe failed');
