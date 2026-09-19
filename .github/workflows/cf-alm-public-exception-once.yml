@@ -1,0 +1,90 @@
+name: Publish ALM through Cloudflare Access
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/cf-alm-public-exception-once.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  publish-alm:
+    runs-on: [self-hosted, linux, x64, chat-staging]
+    timeout-minutes: 10
+    steps:
+      - name: Ensure exact-host Access bypass for alm.ailucy.online
+        env:
+          CF_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CF_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          TARGET_HOST: alm.ailucy.online
+        run: |
+          set -euo pipefail
+          [[ -n "${CF_API_TOKEN:-}" ]] || { echo 'CLOUDFLARE_API_TOKEN missing at repository scope'; exit 2; }
+          [[ -n "${CF_ACCOUNT_ID:-}" ]] || { echo 'CLOUDFLARE_ACCOUNT_ID missing at repository scope'; exit 2; }
+
+          api_get() {
+            curl -fsS \
+              -H "Authorization: Bearer ${CF_API_TOKEN}" \
+              -H "Content-Type: application/json" \
+              "https://api.cloudflare.com/client/v4$1"
+          }
+          api_post() {
+            local path="$1" body="$2"
+            curl -fsS -X POST \
+              -H "Authorization: Bearer ${CF_API_TOKEN}" \
+              -H "Content-Type: application/json" \
+              --data "$body" \
+              "https://api.cloudflare.com/client/v4${path}"
+          }
+
+          verify=$(api_get "/user/tokens/verify")
+          test "$(echo "$verify" | jq -r '.success')" = "true"
+          echo "RESULT token_status=$(echo "$verify" | jq -r '.result.status // "unknown"')"
+
+          apps=$(api_get "/accounts/${CF_ACCOUNT_ID}/access/apps?per_page=100")
+          test "$(echo "$apps" | jq -r '.success')" = "true"
+          appid=$(echo "$apps" | jq -r --arg host "$TARGET_HOST" '[.result[]? | select((.domain // "") == $host)][0].id // empty')
+
+          if [ -z "$appid" ]; then
+            body=$(jq -nc --arg name "AI Live Map Public Demo" --arg domain "$TARGET_HOST" '{name:$name,domain:$domain,type:"self_hosted",session_duration:"24h"}')
+            created=$(api_post "/accounts/${CF_ACCOUNT_ID}/access/apps" "$body")
+            test "$(echo "$created" | jq -r '.success')" = "true"
+            appid=$(echo "$created" | jq -r '.result.id')
+            echo "RESULT app_created=true domain=${TARGET_HOST}"
+          else
+            echo "RESULT app_created=false domain=${TARGET_HOST}"
+          fi
+
+          policies=$(api_get "/accounts/${CF_ACCOUNT_ID}/access/apps/${appid}/policies")
+          test "$(echo "$policies" | jq -r '.success')" = "true"
+          bypass_id=$(echo "$policies" | jq -r '[.result[]? | select((.decision == "bypass") and (((.include // []) | map(has("everyone")) | any)))] [0].id // empty')
+
+          if [ -z "$bypass_id" ]; then
+            policy_body=$(jq -nc '{name:"Public demo — Everyone bypass",decision:"bypass",precedence:1,include:[{everyone:{}}],exclude:[],require:[]}')
+            created_policy=$(api_post "/accounts/${CF_ACCOUNT_ID}/access/apps/${appid}/policies" "$policy_body")
+            test "$(echo "$created_policy" | jq -r '.success')" = "true"
+            echo "RESULT bypass_created=true"
+          else
+            echo "RESULT bypass_created=false"
+          fi
+
+          final=$(api_get "/accounts/${CF_ACCOUNT_ID}/access/apps/${appid}/policies")
+          echo "$final" | jq -r '.result[]? | "RESULT policy name=\(.name) decision=\(.decision) precedence=\(.precedence) include=\((.include // [])|map(keys[0])|join(","))"'
+
+      - name: Verify unauthenticated public response
+        run: |
+          set -euo pipefail
+          code=$(curl -sS -L -o /tmp/alm-public.html -w '%{http_code}' https://alm.ailucy.online/)
+          echo "RESULT public_http_code=${code}"
+          title=$(grep -io '<title>[^<]*</title>' /tmp/alm-public.html | head -1 || true)
+          echo "RESULT title=${title}"
+          if grep -qi 'Cloudflare Access\|Log in to ailucy.online' /tmp/alm-public.html; then
+            echo "Cloudflare Access challenge still present" >&2
+            exit 1
+          fi
+          test "$code" = "200"
+          health=$(curl -sS -L -o /tmp/alm-health.txt -w '%{http_code}' https://alm.ailucy.online/healthz)
+          echo "RESULT health_http_code=${health} body=$(tr -d '\r\n' < /tmp/alm-health.txt | head -c 80)"
+          test "$health" = "200"
