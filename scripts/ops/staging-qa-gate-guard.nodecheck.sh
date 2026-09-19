@@ -17,25 +17,21 @@ test -r "${GUARD}" || {
 FAILURES=0
 CHECKS=0
 
-# run_guard <command> [NAME=VALUE ...]
 run_guard() {
   local command="$1"
   shift
   env -i "PATH=${PATH}" "$@" bash "${GUARD}" "${command}"
 }
 
-# expect_pass <description> <command> [NAME=VALUE ...]
 expect_pass() {
   local description="$1"
   shift
   local output status
   CHECKS=$((CHECKS + 1))
-
   set +e
   output="$(run_guard "$@" 2>&1)"
   status=$?
   set -e
-
   if [[ "${status}" -eq 0 ]]; then
     printf '%s ok   accepted: %s\n' "${LABEL}" "${description}"
   else
@@ -45,32 +41,27 @@ expect_pass() {
   fi
 }
 
-# expect_fail <description> <expected-substring> <command> [NAME=VALUE ...]
 expect_fail() {
   local description="$1"
   local expected="$2"
   shift 2
   local output status
   CHECKS=$((CHECKS + 1))
-
   set +e
   output="$(run_guard "$@" 2>&1)"
   status=$?
   set -e
-
   if [[ "${status}" -eq 0 ]]; then
     FAILURES=$((FAILURES + 1))
     printf '%s FAIL expected rejection but the guard accepted: %s\n' "${LABEL}" "${description}" >&2
     return
   fi
-
   if [[ "${output}" != *"${expected}"* ]]; then
     FAILURES=$((FAILURES + 1))
     printf '%s FAIL rejected but the message did not mention %s: %s\n' "${LABEL}" "${expected}" "${description}" >&2
     printf '%s      output: %s\n' "${LABEL}" "${output}" >&2
     return
   fi
-
   printf '%s ok   rejected: %s\n' "${LABEL}" "${description}"
 }
 
@@ -78,7 +69,7 @@ ALL_FALSE=(
   CHAT_MULTIMODAL_QA_REQUIRED=false
   CHAT_GENERATED_ARTIFACT_QA_REQUIRED=false
   CHAT_EXTERNAL_QA_REQUIRED=false
-  CHAT_LETTA_FULL_RUNTIME_QA_REQUIRED=false
+  CHAT_OPENCLAW_FULL_RUNTIME_QA_REQUIRED=false
 )
 
 ARTIFACT_CONTRACT=(
@@ -87,19 +78,14 @@ ARTIFACT_CONTRACT=(
   HERMES_ARTIFACT_ENVELOPE_ENABLED=true
 )
 
-# ---------------------------------------------------------------------------
-# Accepted combinations
-# ---------------------------------------------------------------------------
-
-expect_pass 'all four gates explicitly false' \
-  enforce-all "${ALL_FALSE[@]}"
+expect_pass 'all four gates explicitly false' enforce-all "${ALL_FALSE[@]}"
 
 expect_pass 'deferred gates false, enabled gates true, artifact contract satisfied' \
   enforce-all \
   CHAT_MULTIMODAL_QA_REQUIRED=true \
   CHAT_GENERATED_ARTIFACT_QA_REQUIRED=true \
   CHAT_EXTERNAL_QA_REQUIRED=false \
-  CHAT_LETTA_FULL_RUNTIME_QA_REQUIRED=false \
+  CHAT_OPENCLAW_FULL_RUNTIME_QA_REQUIRED=false \
   "${ARTIFACT_CONTRACT[@]}"
 
 expect_pass 'all four gates explicitly true with artifact contract satisfied' \
@@ -107,7 +93,7 @@ expect_pass 'all four gates explicitly true with artifact contract satisfied' \
   CHAT_MULTIMODAL_QA_REQUIRED=true \
   CHAT_GENERATED_ARTIFACT_QA_REQUIRED=true \
   CHAT_EXTERNAL_QA_REQUIRED=true \
-  CHAT_LETTA_FULL_RUNTIME_QA_REQUIRED=true \
+  CHAT_OPENCLAW_FULL_RUNTIME_QA_REQUIRED=true \
   "${ARTIFACT_CONTRACT[@]}"
 
 expect_pass 'artifact gate disabled leaves the Hermes contract unchecked' \
@@ -115,10 +101,6 @@ expect_pass 'artifact gate disabled leaves the Hermes contract unchecked' \
 
 expect_pass 'artifact contract command alone is a no-op while the gate is false' \
   enforce-artifact-contract CHAT_GENERATED_ARTIFACT_QA_REQUIRED=false
-
-# ---------------------------------------------------------------------------
-# Rejected combinations: variable shape
-# ---------------------------------------------------------------------------
 
 expect_fail 'every gate variable undefined' \
   'CHAT_MULTIMODAL_QA_REQUIRED is not defined' \
@@ -129,15 +111,15 @@ expect_fail 'one gate variable undefined' \
   enforce-all \
   CHAT_MULTIMODAL_QA_REQUIRED=true \
   CHAT_GENERATED_ARTIFACT_QA_REQUIRED=false \
-  CHAT_LETTA_FULL_RUNTIME_QA_REQUIRED=false
+  CHAT_OPENCLAW_FULL_RUNTIME_QA_REQUIRED=false
 
 expect_fail 'gate variable defined but empty' \
-  'CHAT_LETTA_FULL_RUNTIME_QA_REQUIRED is defined but empty' \
+  'CHAT_OPENCLAW_FULL_RUNTIME_QA_REQUIRED is defined but empty' \
   enforce-all \
   CHAT_MULTIMODAL_QA_REQUIRED=true \
   CHAT_GENERATED_ARTIFACT_QA_REQUIRED=false \
   CHAT_EXTERNAL_QA_REQUIRED=false \
-  CHAT_LETTA_FULL_RUNTIME_QA_REQUIRED=
+  CHAT_OPENCLAW_FULL_RUNTIME_QA_REQUIRED=
 
 for bad_value in TRUE True FALSE Yes yes no on off 1 0 ' true' 'true ' 'true#comment'; do
   expect_fail "uppercase or non-canonical value '${bad_value}'" \
@@ -146,7 +128,7 @@ for bad_value in TRUE True FALSE Yes yes no on off 1 0 ' true' 'true ' 'true#com
     "CHAT_MULTIMODAL_QA_REQUIRED=${bad_value}" \
     CHAT_GENERATED_ARTIFACT_QA_REQUIRED=false \
     CHAT_EXTERNAL_QA_REQUIRED=false \
-    CHAT_LETTA_FULL_RUNTIME_QA_REQUIRED=false
+    CHAT_OPENCLAW_FULL_RUNTIME_QA_REQUIRED=false
 done
 
 expect_fail 'validate-vars alone still rejects an unset gate' \
@@ -156,17 +138,13 @@ expect_fail 'validate-vars alone still rejects an unset gate' \
   CHAT_GENERATED_ARTIFACT_QA_REQUIRED=true \
   CHAT_EXTERNAL_QA_REQUIRED=false
 
-# ---------------------------------------------------------------------------
-# Rejected combinations: generated artifact contract
-# ---------------------------------------------------------------------------
-
 expect_fail 'artifact gate true with no Hermes artifact configuration at all' \
   'HERMES_PROTOCOL is not defined' \
   enforce-all \
   CHAT_MULTIMODAL_QA_REQUIRED=false \
   CHAT_GENERATED_ARTIFACT_QA_REQUIRED=true \
   CHAT_EXTERNAL_QA_REQUIRED=false \
-  CHAT_LETTA_FULL_RUNTIME_QA_REQUIRED=false
+  CHAT_OPENCLAW_FULL_RUNTIME_QA_REQUIRED=false
 
 expect_fail 'artifact gate true with the wrong Hermes protocol' \
   "requires HERMES_PROTOCOL=openai, received 'openclaw'" \
@@ -174,7 +152,7 @@ expect_fail 'artifact gate true with the wrong Hermes protocol' \
   CHAT_MULTIMODAL_QA_REQUIRED=false \
   CHAT_GENERATED_ARTIFACT_QA_REQUIRED=true \
   CHAT_EXTERNAL_QA_REQUIRED=false \
-  CHAT_LETTA_FULL_RUNTIME_QA_REQUIRED=false \
+  CHAT_OPENCLAW_FULL_RUNTIME_QA_REQUIRED=false \
   HERMES_PROTOCOL=openclaw \
   HERMES_ARTIFACT_TOOL_ENABLED=true \
   HERMES_ARTIFACT_ENVELOPE_ENABLED=true
@@ -185,7 +163,7 @@ expect_fail 'artifact gate true with the artifact tool disabled' \
   CHAT_MULTIMODAL_QA_REQUIRED=false \
   CHAT_GENERATED_ARTIFACT_QA_REQUIRED=true \
   CHAT_EXTERNAL_QA_REQUIRED=false \
-  CHAT_LETTA_FULL_RUNTIME_QA_REQUIRED=false \
+  CHAT_OPENCLAW_FULL_RUNTIME_QA_REQUIRED=false \
   HERMES_PROTOCOL=openai \
   HERMES_ARTIFACT_TOOL_ENABLED=false \
   HERMES_ARTIFACT_ENVELOPE_ENABLED=true
@@ -196,7 +174,7 @@ expect_fail 'artifact gate true with the artifact envelope missing' \
   CHAT_MULTIMODAL_QA_REQUIRED=false \
   CHAT_GENERATED_ARTIFACT_QA_REQUIRED=true \
   CHAT_EXTERNAL_QA_REQUIRED=false \
-  CHAT_LETTA_FULL_RUNTIME_QA_REQUIRED=false \
+  CHAT_OPENCLAW_FULL_RUNTIME_QA_REQUIRED=false \
   HERMES_PROTOCOL=openai \
   HERMES_ARTIFACT_TOOL_ENABLED=true
 
@@ -208,11 +186,7 @@ expect_fail 'artifact contract command alone rejects a violated contract' \
   HERMES_ARTIFACT_TOOL_ENABLED=true \
   HERMES_ARTIFACT_ENVELOPE_ENABLED=false
 
-expect_fail 'unknown command' \
-  'unknown command' \
-  totally-unknown-command "${ALL_FALSE[@]}"
-
-# ---------------------------------------------------------------------------
+expect_fail 'unknown command' 'unknown command' totally-unknown-command "${ALL_FALSE[@]}"
 
 if [[ "${FAILURES}" -ne 0 ]]; then
   printf '%s FAIL %s of %s checks failed\n' "${LABEL}" "${FAILURES}" "${CHECKS}" >&2

@@ -36,7 +36,7 @@ for attempt in $(seq 1 30); do
   if curl --fail --silent "http://127.0.0.1:${PRIMARY_PORT}/api/health" > health.json; then break; fi
   sleep 1
 done
-node -e "const h=require('./health.json');if(!h.ok||h.adapters.letta.mode!=='mock'||h.adapters.hermes.mode!=='mock')process.exit(1)"
+node -e "const h=require('./health.json');if(!h.ok||h.adapters.openclaw.mode!=='mock'||h.adapters.hermes.mode!=='mock')process.exit(1)"
 
 curl --fail --silent "http://127.0.0.1:${PRIMARY_PORT}/api/ops/status" > ops-status.json
 node -e "const j=require('./ops-status.json');if(!j.ok||j.build.sha!=='${EXPECTED_SHA}'||j.auth.mode!=='disabled')process.exit(1)"

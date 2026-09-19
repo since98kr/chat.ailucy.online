@@ -44,12 +44,12 @@ export default function ChatHeader({
       <div className="chat-header__identity">
         <button className="icon-button mobile-menu" aria-label="메뉴 열기" onClick={onMobileMenu}><Menu size={20} /></button>
         <div className={`agent-avatar agent-avatar--${chat.selectedSystem}`}>
-          {chat.selectedSystem === 'letta' ? <Sparkles size={18} /> : <Bot size={19} />}
+          {chat.selectedSystem === 'openclaw' ? <Sparkles size={18} /> : <Bot size={19} />}
         </div>
         <div className="chat-header__text">
           <strong>{chat.activeConversation?.title ?? '새 Conversation'}</strong>
           <span>
-            {displayAgentId(chat.activeAgent)} · {federation.active ? 'Federated' : chat.selectedSystem === 'letta' ? 'OpenClaw Personal' : chat.activeAgent === '[Hermes] Lucy' ? 'Hermes Lead' : 'Direct Agent'}
+            {displayAgentId(chat.activeAgent)} · {federation.active ? 'Federated' : chat.selectedSystem === 'openclaw' ? 'OpenClaw Personal' : chat.activeAgent === '[Hermes] Lucy' ? 'Hermes Lead' : 'Direct Agent'}
             {chat.activeConversation?.branchedFromConversationId ? ' · Branched' : ''}
           </span>
         </div>

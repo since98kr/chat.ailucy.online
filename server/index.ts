@@ -41,7 +41,7 @@ import type {
 } from '../shared/contracts.js';
 
 const conversationStatusSchema = z.enum(['active', 'archived', 'trashed']);
-const systemIdSchema = z.enum(['letta', 'hermes', 'claude']);
+const systemIdSchema = z.enum(['openclaw', 'hermes', 'claude']);
 
 const createConversationSchema = z.object({
   systemId: systemIdSchema,
@@ -221,7 +221,7 @@ async function resolveConversationApproval(
       message: 'Conversation을 찾을 수 없습니다.',
     };
   }
-  if (!backend || conversation.systemId !== 'letta') {
+  if (!backend || conversation.systemId !== 'openclaw') {
     return {
       ok: false,
       statusCode: 409,
@@ -351,7 +351,7 @@ export function buildApp(options?: BuildAppOptions) {
     service: 'chat-ailucy-v2',
     adapters: await adapterHealth(),
     agents: {
-      letta: collaboration.listAgents('letta').filter((agent) => agent.enabled).length,
+      openclaw: collaboration.listAgents('openclaw').filter((agent) => agent.enabled).length,
       hermes: collaboration.listAgents('hermes').filter((agent) => agent.enabled).length,
       claude: collaboration.listAgents('claude').filter((agent) => agent.enabled).length,
     },
@@ -419,7 +419,7 @@ export function buildApp(options?: BuildAppOptions) {
     const { id } = z.object({ id: z.string().min(1) }).parse(request.params);
     let operatingContext = db.getConversationOperatingContext(id);
     if (!operatingContext) return reply.status(404).send({ error: 'CONVERSATION_NOT_FOUND' });
-    if (approvalBackend && operatingContext.backendSystem === 'letta') {
+    if (approvalBackend && operatingContext.backendSystem === 'openclaw') {
       try {
         operatingContext = (await synchronizePendingApproval(db, approvalBackend, operatingContext)).context;
       } catch {

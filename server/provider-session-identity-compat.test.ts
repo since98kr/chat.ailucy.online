@@ -2,12 +2,12 @@ import { afterEach, describe, expect, it } from 'vitest';
 import type { ConversationRecord } from '../shared/contracts.js';
 import { conversationRuntimeIdentity, providerSessionIdentity } from './provider-session-identity.js';
 
-const originalProtocol = process.env.LETTA_PROTOCOL;
+const originalProtocol = process.env.OPENCLAW_PROTOCOL;
 
 function conversation(agentId: string): ConversationRecord {
   return {
     id: 'personal-session-compat',
-    systemId: 'letta',
+    systemId: 'openclaw',
     agentId,
     title: 'Personal Lucy',
     preview: '',
@@ -23,33 +23,34 @@ function conversation(agentId: string): ConversationRecord {
 }
 
 afterEach(() => {
-  if (originalProtocol === undefined) delete process.env.LETTA_PROTOCOL;
-  else process.env.LETTA_PROTOCOL = originalProtocol;
+  if (originalProtocol === undefined) delete process.env.OPENCLAW_PROTOCOL;
+  else process.env.OPENCLAW_PROTOCOL = originalProtocol;
 });
 
 describe('personal Lucy provider session compatibility', () => {
-  it('keeps the native provider session key stable across the OpenClaw product identity rename', () => {
-    process.env.LETTA_PROTOCOL = 'native';
-    const legacy = conversation('[Letta] Lucy');
+  it('keeps only the provider-side agent key stable across the retired Letta identity rename', () => {
+    process.env.OPENCLAW_PROTOCOL = 'native';
+    const legacyProviderIdentity = conversation('[Letta] Lucy');
     const canonical = conversation('[OpenClaw] Lucy');
 
     expect(providerSessionIdentity(canonical, canonical.agentId)).toBe(
-      providerSessionIdentity(legacy, legacy.agentId),
+      providerSessionIdentity(legacyProviderIdentity, legacyProviderIdentity.agentId),
     );
     expect(providerSessionIdentity(canonical, canonical.agentId)).toBe(
-      'letta:personal-session-compat:[Letta] Lucy',
+      'openclaw:personal-session-compat:[Letta] Lucy',
     );
     expect(providerSessionIdentity(canonical, canonical.agentId, 'caller-1')).toBe(
-      providerSessionIdentity(legacy, legacy.agentId, 'caller-1'),
+      providerSessionIdentity(legacyProviderIdentity, legacyProviderIdentity.agentId, 'caller-1'),
     );
 
     const runtimeIdentity = conversationRuntimeIdentity(canonical);
+    expect(runtimeIdentity.backendSystem).toBe('openclaw');
     expect(runtimeIdentity.agentId).toBe('[OpenClaw] Lucy');
-    expect(runtimeIdentity.sessionIdentity).toBe('letta:personal-session-compat:[Letta] Lucy');
+    expect(runtimeIdentity.sessionIdentity).toBe('openclaw:personal-session-compat:[Letta] Lucy');
   });
 
-  it('leaves the dedicated OpenClaw transport session namespace unchanged', () => {
-    process.env.LETTA_PROTOCOL = 'openclaw';
+  it('uses the dedicated OpenClaw transport session namespace unchanged', () => {
+    process.env.OPENCLAW_PROTOCOL = 'openclaw';
     expect(providerSessionIdentity(conversation('[OpenClaw] Lucy'), '[OpenClaw] Lucy')).toBe(
       'agent:main:chat-v2:personal-session-compat',
     );

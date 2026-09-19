@@ -101,7 +101,7 @@ export default function MessageStream({
             <MessageItem
               key={message.id}
               message={message}
-              system={isOpenClawLucy(message.authorId) ? 'letta' : selectedSystem}
+              system={isOpenClawLucy(message.authorId) ? 'openclaw' : selectedSystem}
               artifacts={artifacts}
               liveDeliveries={liveDeliveries}
               deliveryResponses={deliveryResponses}

@@ -23,6 +23,6 @@ test('personal Lucy is OpenClaw and ChatGPT is shown only as an external connect
   const response = await createdResponse;
   expect(response.status()).toBe(201);
   const created = (await response.json()).conversation as { agentId: string; systemId: string };
-  expect(created).toMatchObject({ systemId: 'letta', agentId: '[OpenClaw] Lucy' });
+  expect(created).toMatchObject({ systemId: 'openclaw', agentId: '[OpenClaw] Lucy' });
   await expect(page.locator('.chat-header')).toContainText('[OpenClaw] Lucy');
 });

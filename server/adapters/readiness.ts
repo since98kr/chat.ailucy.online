@@ -1,6 +1,6 @@
 import type { SystemId } from '../../shared/contracts.js';
 import { httpAdapterConfig } from './http.js';
-import { openClawLettaConfigFromEnv } from './openclaw-letta.js';
+import { openClawConfigFromEnv } from './openclaw.js';
 
 export type AdapterReadinessRecord = {
   ok: boolean;
@@ -8,7 +8,7 @@ export type AdapterReadinessRecord = {
   latencyMs: number;
 };
 
-const READINESS_SYSTEMS: SystemId[] = ['hermes', 'letta', 'claude'];
+const READINESS_SYSTEMS: SystemId[] = ['hermes', 'openclaw', 'claude'];
 
 function trimSlash(value: string) {
   return value.replace(/\/+$/, '');
@@ -21,6 +21,10 @@ function normalizePath(value: string) {
 function truthy(value: string | undefined) {
   const normalized = (value ?? '').trim().toLowerCase();
   return normalized === '1' || normalized === 'true' || normalized === 'yes' || normalized === 'on';
+}
+
+function openClawEnv(canonical: string, legacy: string) {
+  return process.env[canonical]?.trim() || process.env[legacy]?.trim() || undefined;
 }
 
 export function sanitizeReadinessDetail(value: string) {
@@ -61,6 +65,9 @@ export function readinessStreamError(body: string): string | null {
 }
 
 export function readinessProbeEnabled(systemId: SystemId) {
+  if (systemId === 'openclaw') {
+    return truthy(openClawEnv('OPENCLAW_READINESS_PROBE_ENABLED', 'LETTA_READINESS_PROBE_ENABLED'));
+  }
   return truthy(process.env[`${systemId.toUpperCase()}_READINESS_PROBE_ENABLED`]);
 }
 
@@ -68,9 +75,11 @@ export async function probeAdapterReadiness(systemId: SystemId): Promise<Adapter
   if (!readinessProbeEnabled(systemId)) return null;
 
   const prefix = systemId.toUpperCase();
-  const prompt = process.env[`${prefix}_READINESS_PROBE_PROMPT`]?.trim() || 'ping';
-  const openClawLetta = systemId === 'letta'
-    && (process.env.LETTA_PROTOCOL ?? '').trim().toLowerCase() === 'openclaw';
+  const prompt = systemId === 'openclaw'
+    ? openClawEnv('OPENCLAW_READINESS_PROBE_PROMPT', 'LETTA_READINESS_PROBE_PROMPT') || 'ping'
+    : process.env[`${prefix}_READINESS_PROBE_PROMPT`]?.trim() || 'ping';
+  const openClawProtocol = (process.env.OPENCLAW_PROTOCOL ?? process.env.LETTA_PROTOCOL ?? '').trim().toLowerCase();
+  const openClaw = systemId === 'openclaw' && openClawProtocol === 'openclaw';
 
   let baseUrl: string;
   let chatPath: string;
@@ -78,14 +87,14 @@ export async function probeAdapterReadiness(systemId: SystemId): Promise<Adapter
   let timeoutMs: number;
   let body: Record<string, unknown>;
 
-  if (openClawLetta) {
-    const config = openClawLettaConfigFromEnv();
+  if (openClaw) {
+    const config = openClawConfigFromEnv();
     baseUrl = config.baseUrl;
     chatPath = config.chatPath;
     apiKey = config.apiKey;
     timeoutMs = config.timeoutMs;
     body = {
-      model: process.env.LETTA_READINESS_PROBE_MODEL?.trim() || config.agentTarget,
+      model: openClawEnv('OPENCLAW_READINESS_PROBE_MODEL', 'LETTA_READINESS_PROBE_MODEL') || config.agentTarget,
       user: `${config.sessionPrefix}:readiness-probe`,
       messages: [{ role: 'user', content: prompt }],
       stream: false,

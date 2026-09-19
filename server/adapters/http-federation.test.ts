@@ -27,7 +27,7 @@ async function startServer(handler: RequestListener) {
 
 const agents: AgentRecord[] = [
   {
-    id: '[Letta] Lucy', systemId: 'letta', displayName: '[Letta] Lucy', shortName: 'Lucy',
+    id: '[OpenClaw] Lucy', systemId: 'openclaw', displayName: '[OpenClaw] Lucy', shortName: 'OpenClaw',
     role: 'Personal', description: '', capabilities: ['memory'], enabled: true,
     directChatEnabled: true, isLead: true, sortOrder: 10, createdAt: timestamp, updatedAt: timestamp,
   },
@@ -51,7 +51,7 @@ const participants: ConversationParticipantRecord[] = [{
   addedAt: timestamp, updatedAt: timestamp, agent: agents[1],
 }];
 const approvedCapsule: MemoryCapsuleRecord = {
-  id: 'capsule-1', conversationId: conversation.id, sourceSystemId: 'hermes', targetSystemId: 'letta',
+  id: 'capsule-1', conversationId: conversation.id, sourceSystemId: 'hermes', targetSystemId: 'openclaw',
   title: 'Approved context', content: '승인된 최소 문맥', status: 'approved', sourceMessageIds: [], createdBy: 'tei',
   approvedBy: 'tei', approvedAt: timestamp, revokedAt: null, createdAt: timestamp, updatedAt: timestamp,
 };
@@ -68,7 +68,7 @@ describe('HttpAgentAdapter federation payload', () => {
         response.end('{"delta":"ok"}\n');
       });
     });
-    const adapter = new HttpAgentAdapter('letta', {
+    const adapter = new HttpAgentAdapter('openclaw', {
       baseUrl, chatPath: '/chat', healthPath: '/health', timeoutMs: 2_000,
     });
     const chunks = [];
@@ -76,7 +76,7 @@ describe('HttpAgentAdapter federation payload', () => {
       conversation,
       userMessage,
       history: [userMessage],
-      targetAgentId: '[Letta] Lucy',
+      targetAgentId: '[OpenClaw] Lucy',
       routingMode: 'team',
       participants,
       federatedAgents: agents,
@@ -86,8 +86,8 @@ describe('HttpAgentAdapter federation payload', () => {
 
     expect(chunks).toEqual([{ type: 'delta', delta: 'ok' }]);
     expect(received).toMatchObject({
-      system_id: 'letta',
-      agent_id: '[Letta] Lucy',
+      system_id: 'openclaw',
+      agent_id: '[OpenClaw] Lucy',
       metadata: {
         workflow_run_id: 'workflow-run-1',
         memory_policy: 'explicit-capsules-only',
@@ -96,14 +96,14 @@ describe('HttpAgentAdapter federation payload', () => {
     expect(received['memory_capsules']).toEqual([expect.objectContaining({
       capsule_id: 'capsule-1',
       source_system_id: 'hermes',
-      target_system_id: 'letta',
+      target_system_id: 'openclaw',
       content: '승인된 최소 문맥',
     })]);
     expect(received['federated_agents']).toEqual([{
-      agent_id: '[Letta] Lucy', system_id: 'letta', capabilities: ['memory'],
+      agent_id: '[OpenClaw] Lucy', system_id: 'openclaw', capabilities: ['memory'],
     }]);
     expect(received['capability_handshake']).toMatchObject({
-      selected_agent_id: '[Letta] Lucy',
+      selected_agent_id: '[OpenClaw] Lucy',
       approved_subagents: [],
       cross_agent_isolation: 'selected-agent-only',
     });
@@ -135,7 +135,7 @@ describe('HttpAgentAdapter federation payload', () => {
       modelMap: { '[Hermes] Lucy': 'lucy' },
     });
     const chunks = [];
-    const hermesCapsule = { ...approvedCapsule, sourceSystemId: 'letta' as const, targetSystemId: 'hermes' as const };
+    const hermesCapsule = { ...approvedCapsule, sourceSystemId: 'openclaw' as const, targetSystemId: 'hermes' as const };
     for await (const item of adapter.streamReply({
       conversation,
       userMessage,

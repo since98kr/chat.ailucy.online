@@ -6,13 +6,13 @@ import type {
   ConversationRecord,
   MessageRecord,
 } from '../../shared/contracts.js';
-import { OpenClawLettaAdapter } from './openclaw-letta.js';
+import { OpenClawAdapter } from './openclaw.js';
 
 const timestamp = '2026-08-08T00:00:00.000Z';
 const conversation: ConversationRecord = {
   id: 'conversation-1',
-  systemId: 'letta',
-  agentId: '[Letta] Lucy',
+  systemId: 'openclaw',
+  agentId: '[OpenClaw] Lucy',
   title: 'OpenClaw transport',
   preview: '',
   status: 'active',
@@ -39,7 +39,7 @@ const oldAnswer: MessageRecord = {
   id: 'message-answer',
   conversationId: conversation.id,
   role: 'assistant',
-  authorId: '[Letta] Lucy',
+  authorId: '[OpenClaw] Lucy',
   content: '이전 답변',
   state: 'complete',
   parentMessageId: oldMessage.id,
@@ -59,17 +59,17 @@ const userMessage: MessageRecord = {
 };
 const participant: ConversationParticipantRecord = {
   conversationId: conversation.id,
-  agentId: '[Letta] Lucy',
+  agentId: '[OpenClaw] Lucy',
   role: 'lead',
   state: 'active',
   addedAt: timestamp,
   updatedAt: timestamp,
   agent: {
-    id: '[Letta] Lucy',
-    systemId: 'letta',
-    displayName: '[Letta] Lucy',
-    shortName: 'Lucy',
-    role: 'Primary Cognitive Agent',
+    id: '[OpenClaw] Lucy',
+    systemId: 'openclaw',
+    displayName: '[OpenClaw] Lucy',
+    shortName: 'OpenClaw',
+    role: 'Personal AI',
     description: '',
     capabilities: ['memory', 'planning', 'orchestration'],
     enabled: true,
@@ -97,7 +97,7 @@ async function startServer(handler: RequestListener) {
 }
 
 function adapter(baseUrl: string) {
-  return new OpenClawLettaAdapter({
+  return new OpenClawAdapter({
     baseUrl,
     chatPath: '/v1/chat/completions',
     healthPath: '/health',
@@ -111,8 +111,8 @@ function adapter(baseUrl: string) {
   });
 }
 
-describe('OpenClawLettaAdapter', () => {
-  it('preserves Letta identity while routing a stable Chat conversation to the OpenClaw main agent session', async () => {
+describe('OpenClawAdapter', () => {
+  it('routes the canonical OpenClaw conversation to a stable main-agent session', async () => {
     let authorization = '';
     let sessionKey = '';
     let receivedBody: Record<string, unknown> = {};
@@ -131,7 +131,7 @@ describe('OpenClawLettaAdapter', () => {
         response.writeHead(200, { 'Content-Type': 'text/event-stream' });
         response.write('data: {"choices":[{"delta":{"role":"assistant"}}]}\n\n');
         response.write('data: {"choices":[{"delta":{"content":"OpenClaw를 통해 "}}]}\n\n');
-        response.write('data: {"choices":[{"delta":{"content":"Letta Lucy 응답"}}]}\n\n');
+        response.write('data: {"choices":[{"delta":{"content":"Lucy 응답"}}]}\n\n');
         response.end('data: [DONE]\n\n');
       });
     });
@@ -146,11 +146,11 @@ describe('OpenClawLettaAdapter', () => {
       conversation,
       userMessage,
       history: [oldMessage, oldAnswer, userMessage],
-      targetAgentId: '[Letta] Lucy',
-      selectedAgentId: '[Letta] Lucy',
+      targetAgentId: '[OpenClaw] Lucy',
+      selectedAgentId: '[OpenClaw] Lucy',
       routingMode: 'direct',
       participants: [participant],
-      sessionId: 'legacy-chat-session-id-is-not-the-openclaw-key',
+      sessionId: 'caller-session-does-not-replace-the-openclaw-key',
       idempotencyKey: 'operation-1',
     })) items.push(item);
 
@@ -164,7 +164,7 @@ describe('OpenClawLettaAdapter', () => {
     expect(receivedBody.messages).toEqual([{ role: 'user', content: '현재 질문' }]);
     expect(items).toEqual([
       { type: 'delta', delta: 'OpenClaw를 통해 ' },
-      { type: 'delta', delta: 'Letta Lucy 응답' },
+      { type: 'delta', delta: 'Lucy 응답' },
     ]);
   });
 
@@ -180,8 +180,8 @@ describe('OpenClawLettaAdapter', () => {
         conversation,
         userMessage,
         history: [userMessage],
-        targetAgentId: '[Letta] Lucy',
-        selectedAgentId: '[Letta] Lucy',
+        targetAgentId: '[OpenClaw] Lucy',
+        selectedAgentId: '[OpenClaw] Lucy',
         routingMode: 'direct',
         participants: [participant],
       })) items.push(item);
@@ -207,8 +207,8 @@ describe('OpenClawLettaAdapter', () => {
       conversation,
       userMessage,
       history: [userMessage],
-      targetAgentId: '[Letta] Lucy',
-      selectedAgentId: '[Letta] Lucy',
+      targetAgentId: '[OpenClaw] Lucy',
+      selectedAgentId: '[OpenClaw] Lucy',
       routingMode: 'direct',
       participants: [participant],
     })) items.push(item);
@@ -233,8 +233,8 @@ describe('OpenClawLettaAdapter', () => {
       conversation,
       userMessage,
       history: [userMessage],
-      targetAgentId: '[Letta] Lucy',
-      selectedAgentId: '[Letta] Lucy',
+      targetAgentId: '[OpenClaw] Lucy',
+      selectedAgentId: '[OpenClaw] Lucy',
       routingMode: 'direct',
       participants: [participant],
     })) items.push(item);

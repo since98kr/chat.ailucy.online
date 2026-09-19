@@ -172,14 +172,14 @@ export default function ConversationComposer({
         />
         <div className="composer__send">
           {chat.isStreaming && !approvalTurnEnabled ? <button type="button" className="stop-button" onClick={chat.stopStreaming} aria-label="응답 중단"><Square size={15} /></button>
-            : externalBusy ? <button type="button" className="stop-button" disabled aria-label="응답 재생성 중"><LoaderCircle size={15} className="spin" /></button>
+            : externalBusy ? <button type="button" className="stop-button" disabled aria-label="응답 재생성 중"><LoaderCircle size={18} className="spin" /></button>
               : approvalTurnEnabled ? <><button type="button" className="stop-button" onClick={chat.stopStreaming} aria-label="응답 중단"><Square size={15} /></button><button type="submit" className="send-button" aria-label="승인 전송"><Send size={18} /></button></>
                 : <><button type="button" className="icon-button"><Mic size={18} /></button><button type="submit" className="send-button" aria-label="전송" disabled={hasUploading}><Send size={18} /></button></>}
         </div>
       </form>
       <p className="composer-footnote">
         {federation.active ? '선택한 시스템·에이전트는 병렬 실행되고, 승인된 Memory Capsule만 경계를 통과하며 Hermes Lucy가 마지막에 종합합니다.'
-          : chat.selectedSystem === 'letta' ? 'OpenClaw Lucy와 직접 대화 중입니다. 이 Conversation의 실행은 다른 방으로 이동해도 계속됩니다.'
+          : chat.selectedSystem === 'openclaw' ? 'OpenClaw Lucy와 직접 대화 중입니다. 이 Conversation의 실행은 다른 방으로 이동해도 계속됩니다.'
             : chat.activeAgent === '[Hermes] Lucy' ? '명시적으로 멘션한 subagent의 원문을 보존하고 Lucy가 마지막에 종합합니다.'
               : `${displayAgentId(chat.activeAgent)}와 직접 대화 중입니다. 이 Conversation의 문맥은 다른 에이전트와 자동 공유되지 않습니다.`}
       </p>

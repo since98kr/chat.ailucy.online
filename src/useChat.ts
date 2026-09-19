@@ -31,7 +31,7 @@ import type { TranscriptState } from './run-transcript';
 import { emptyTranscriptState, reduceTranscript } from './run-transcript';
 
 const defaultAgent: Record<SystemId, string> = {
-  letta: '[OpenClaw] Lucy',
+  openclaw: '[OpenClaw] Lucy',
   hermes: '[Hermes] Lucy',
   claude: '[Claude] 테이아',
 };
@@ -53,9 +53,9 @@ function upsertArtifactDelivery(current: ArtifactDeliveryRecord[], next: Artifac
 }
 
 export function useChat() {
-  const [selectedSystem, setSelectedSystem] = useState<SystemId>('letta');
+  const [selectedSystem, setSelectedSystem] = useState<SystemId>('openclaw');
   const [selectedStatus, setSelectedStatus] = useState<ConversationStatus>('active');
-  const [activeAgent, setActiveAgent] = useState(defaultAgent.letta);
+  const [activeAgent, setActiveAgent] = useState(defaultAgent.openclaw);
   const [conversations, setConversations] = useState<ConversationRecord[]>([]);
   const [activeConversation, setActiveConversation] = useState<ConversationDetail | null>(null);
   const [operatingContext, setOperatingContext] = useState<ConversationOperatingContext | null>(null);
@@ -119,7 +119,7 @@ export function useChat() {
 
   useEffect(() => {
     const conversationId = activeConversation?.id;
-    if (!isStreaming || approvingApproval || selectedSystem !== 'letta' || !conversationId) return;
+    if (!isStreaming || approvingApproval || selectedSystem !== 'openclaw' || !conversationId) return;
     let cancelled = false;
     let refreshing = false;
     const refreshOperatingContext = async () => {

@@ -27,7 +27,7 @@ export default function AppSidebar({
   const conversations = search.trim()
     ? chat.searchResults.map((result) => ({ ...result.conversation, preview: result.snippet }))
     : chat.conversations;
-  const openClawAgents = agents.filter((agent) => agent.systemId === 'letta' && agent.id !== LEGACY_LETTA_LUCY_ID);
+  const openClawAgents = agents.filter((agent) => agent.systemId === 'openclaw' && agent.id !== LEGACY_LETTA_LUCY_ID);
   const hermesAgents = agents.filter((agent) => agent.systemId === 'hermes');
   const claudeAgents = agents.filter((agent) => agent.systemId === 'claude');
 
@@ -59,7 +59,7 @@ export default function AppSidebar({
             <span>SYSTEMS</span>
             <button className="icon-button" aria-label="시스템 설정"><Settings size={15} /></button>
           </div>
-          <SystemCard id="letta" label="OpenClaw" accent="blue" agents={openClawAgents} selectedSystem={chat.selectedSystem} activeAgent={chat.activeAgent} onSelect={onOpenAgent} />
+          <SystemCard id="openclaw" label="OpenClaw" accent="blue" agents={openClawAgents} selectedSystem={chat.selectedSystem} activeAgent={chat.activeAgent} onSelect={onOpenAgent} />
           <ConnectedParticipantCard />
           <SystemCard id="hermes" label="Hermes" accent="violet" agents={hermesAgents} selectedSystem={chat.selectedSystem} activeAgent={chat.activeAgent} onSelect={onOpenAgent} />
           <SystemCard id="claude" label="Claude" accent="amber" agents={claudeAgents} selectedSystem={chat.selectedSystem} activeAgent={chat.activeAgent} onSelect={onOpenAgent} />
@@ -136,8 +136,8 @@ function SystemCard({ id, label, accent, agents, selectedSystem, activeAgent, on
   return (
     <div className={`system-card system-card--${accent} ${selectedSystem === id ? 'is-selected' : ''}`}>
       <button className="system-card__header" onClick={() => lead && onSelect(lead)} disabled={!lead}>
-        <span className="system-card__icon">{id === 'letta' ? <Sparkles size={16} /> : <Bot size={17} />}</span>
-        <span><strong>{label}</strong><small>{!lead ? 'Backend not configured' : id === 'letta' ? 'Personal OpenClaw runtime' : id === 'claude' ? 'Independent review system' : 'Collaborative system'}</small></span>
+        <span className="system-card__icon">{id === 'openclaw' ? <Sparkles size={16} /> : <Bot size={17} />}</span>
+        <span><strong>{label}</strong><small>{!lead ? 'Backend not configured' : id === 'openclaw' ? 'Personal OpenClaw runtime' : id === 'claude' ? 'Independent review system' : 'Collaborative system'}</small></span>
         <ChevronDown size={15} />
       </button>
       <div className="agent-list">
@@ -145,7 +145,7 @@ function SystemCard({ id, label, accent, agents, selectedSystem, activeAgent, on
           <button key={agent.id} className={`agent-row ${selectedSystem === id && activeAgent === agent.id ? 'is-active' : ''}`} onClick={() => agent.enabled && agent.directChatEnabled && onSelect(agent)} disabled={!agent.enabled || !agent.directChatEnabled} title={`${agent.role} · ${agent.capabilities.join(', ')}`}>
             <span className="mini-avatar">{isOpenClawLucy(agent.id) ? <Sparkles size={13} /> : <Bot size={14} />}</span>
             <span className="agent-row__name">{displayAgentId(agent.displayName)}</span>
-            {agent.systemId === 'letta' ? <em>Personal</em> : agent.isLead ? <em>Lead</em> : <span className="presence presence--active" />}
+            {agent.systemId === 'openclaw' ? <em>Personal</em> : agent.isLead ? <em>Lead</em> : <span className="presence presence--active" />}
           </button>
         ))}
       </div>

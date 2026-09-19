@@ -13,8 +13,8 @@ import {
 
 const identity = {
   conversationId: 'conversation-199',
-  backendSystem: 'letta' as const,
-  agentId: '[Letta] Lucy',
+  backendSystem: 'openclaw' as const,
+  agentId: '[OpenClaw] Lucy',
   sessionIdentity: 'opaque-session-1',
 };
 

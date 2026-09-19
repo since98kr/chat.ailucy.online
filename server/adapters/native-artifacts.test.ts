@@ -14,8 +14,8 @@ import { augmentNativeArtifactContext } from './native-artifacts.js';
 const timestamp = '2026-07-19T00:00:00.000Z';
 const conversation: ConversationRecord = {
   id: 'conversation-1',
-  systemId: 'letta',
-  agentId: '[Letta] Lucy',
+  systemId: 'openclaw',
+  agentId: '[OpenClaw] Lucy',
   title: 'Native artifact test',
   preview: '',
   status: 'active',
@@ -64,39 +64,39 @@ function request(artifacts: ArtifactRecord[]): AdapterRequest {
     userMessage,
     history: [userMessage],
     artifacts,
-    targetAgentId: '[Letta] Lucy',
+    targetAgentId: '[OpenClaw] Lucy',
     routingMode: 'direct',
     participants,
   };
 }
 
 afterEach(async () => {
-  delete process.env.LETTA_MAX_TEXT_ARTIFACT_BYTES;
-  delete process.env.LETTA_NATIVE_BINARY_ARTIFACTS;
+  delete process.env.OPENCLAW_MAX_TEXT_ARTIFACT_BYTES;
+  delete process.env.OPENCLAW_NATIVE_BINARY_ARTIFACTS;
   await Promise.all(directories.splice(0).map((directory) => rm(directory, { recursive: true, force: true })));
 });
 
 describe('augmentNativeArtifactContext', () => {
   it('injects a marker found only inside a text attachment', async () => {
-    const input = await artifact('marker.md', 'text/markdown', Buffer.from('LEtta_DOC_ONLY_7F92', 'utf8'));
-    const result = await augmentNativeArtifactContext('letta', request([input]));
+    const input = await artifact('marker.md', 'text/markdown', Buffer.from('OPENCLAW_DOC_ONLY_7F92', 'utf8'));
+    const result = await augmentNativeArtifactContext('openclaw', request([input]));
 
-    expect(result.userMessage.content).toContain('LEtta_DOC_ONLY_7F92');
+    expect(result.userMessage.content).toContain('OPENCLAW_DOC_ONLY_7F92');
     expect(result.userMessage.content).toContain('<ATTACHMENTS>');
     expect(result.history[0].content).toBe(result.userMessage.content);
-    expect(userMessage.content).not.toContain('LEtta_DOC_ONLY_7F92');
+    expect(userMessage.content).not.toContain('OPENCLAW_DOC_ONLY_7F92');
   });
 
   it('rejects binary input when the native backend has no declared capability', async () => {
     const input = await artifact('photo.png', 'image/png', Buffer.from('png', 'utf8'));
-    await expect(augmentNativeArtifactContext('letta', request([input])))
-      .rejects.toThrow('letta native backend does not support attachment type: image/png');
+    await expect(augmentNativeArtifactContext('openclaw', request([input])))
+      .rejects.toThrow('openclaw native backend does not support attachment type: image/png');
   });
 
   it('enforces the native document extraction input limit', async () => {
-    process.env.LETTA_MAX_TEXT_ARTIFACT_BYTES = '4';
+    process.env.OPENCLAW_MAX_TEXT_ARTIFACT_BYTES = '4';
     const input = await artifact('large.txt', 'text/plain', Buffer.from('12345', 'utf8'));
-    await expect(augmentNativeArtifactContext('letta', request([input])))
+    await expect(augmentNativeArtifactContext('openclaw', request([input])))
       .rejects.toThrow('document attachments exceed the 4-byte extraction input limit');
   });
 });
