@@ -42,6 +42,9 @@ jobs:
       - name: Install dependencies
         run: npm ci --no-audit --no-fund
 
+      - name: Rebuild native SQLite binding for self-hosted CPU
+        run: npm rebuild better-sqlite3 --build-from-source
+
       - name: Validate deployment, preflight, runner, and recovery scripts
         shell: bash
         run: |
