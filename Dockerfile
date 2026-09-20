@@ -42,7 +42,7 @@ COPY --from=build /app/dist ./dist
 COPY --from=build /app/dist-server ./dist-server
 
 RUN mkdir -p /data/artifacts /data/backups \
-  && chown -R node:node /app /data
+  && chown -R node:node /data
 
 USER node
 
