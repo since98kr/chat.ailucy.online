@@ -17,7 +17,7 @@ concurrency:
 jobs:
   application:
     name: Typecheck, test, browser regression, build, and container smoke
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, linux, x64, hni-node-04, docker]
     timeout-minutes: 55
 
     steps:
