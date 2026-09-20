@@ -132,7 +132,7 @@ jobs:
         shell: bash
         run: |
           set -o pipefail
-          npm test 2>&1 | tee test.log
+          (npx vitest run --testTimeout=15000 && npm run test:bridge && npm run test:qa-gates) 2>&1 | tee test.log
 
       - name: Upload integration test diagnostics
         if: always()
@@ -147,7 +147,7 @@ jobs:
         run: npm run build
 
       - name: Install Chromium for browser regression
-        run: npx playwright install --with-deps chromium
+        run: npx playwright install chromium
 
       - name: Desktop and mobile browser regression
         run: npm run test:e2e
