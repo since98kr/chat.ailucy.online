@@ -1,5 +1,7 @@
 import { defineConfig } from '@playwright/test';
 
+const useExternalServer = process.env.CHAT_E2E_EXTERNAL_SERVER === '1';
+
 export default defineConfig({
   testDir: './e2e-auth',
   outputDir: 'test-results-auth',
@@ -18,13 +20,15 @@ export default defineConfig({
     screenshot: 'only-on-failure',
     video: 'retain-on-failure',
   },
-  webServer: {
-    command:
-      "bash -lc 'rm -rf .e2e-auth-data && mkdir -p .e2e-auth-data/artifacts && CHAT_API_PORT=4191 CHAT_AUTH_MODE=token CHAT_ACCESS_TOKEN=e2e-only-value CHAT_DB_PATH=.e2e-auth-data/chat.sqlite CHAT_ARTIFACT_ROOT=.e2e-auth-data/artifacts CHAT_WEB_ROOT=dist CHAT_ALLOW_MOCK_ADAPTERS=true node dist-server/runtime.js'",
-    url: 'http://127.0.0.1:4191/api/health',
-    reuseExistingServer: false,
-    timeout: 30_000,
-  },
+  webServer: useExternalServer
+    ? undefined
+    : {
+        command:
+          "bash -lc 'rm -rf .e2e-auth-data && mkdir -p .e2e-auth-data/artifacts && CHAT_API_PORT=4191 CHAT_AUTH_MODE=token CHAT_ACCESS_TOKEN=e2e-only-value CHAT_DB_PATH=.e2e-auth-data/chat.sqlite CHAT_ARTIFACT_ROOT=.e2e-auth-data/artifacts CHAT_WEB_ROOT=dist CHAT_ALLOW_MOCK_ADAPTERS=true node dist-server/runtime.js'",
+        url: 'http://127.0.0.1:4191/api/health',
+        reuseExistingServer: false,
+        timeout: 30_000,
+      },
   projects: [
     {
       name: 'token-desktop',
