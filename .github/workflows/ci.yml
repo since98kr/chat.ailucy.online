@@ -180,6 +180,8 @@ jobs:
             -e CHAT_RATE_LIMIT_UPLOAD=1000 \
             -e CHAT_ALLOW_MOCK_ADAPTERS=true \
             -e CHAT_TEST_MOCK_FAILURE_PATTERN=TEST_BACKEND_FAILURE_MARKER \
+            -e CHAT_TEST_MOCK_SLOW_PATTERN=SAME_STATUS_STOP_OWNER \
+            -e CHAT_TEST_MOCK_SLOW_DELAY_MS=250 \
             chat-ailucy-v2:ci >/dev/null
           ready=0
           for _ in $(seq 1 60); do
