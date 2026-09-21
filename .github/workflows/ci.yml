@@ -139,7 +139,7 @@ jobs:
         shell: bash
         run: |
           set -o pipefail
-          (npx vitest run --testTimeout=15000 && npm run test:bridge && npm run test:qa-gates) 2>&1 | tee test.log
+          (npx vitest run --testTimeout=15000 && npm run test:legacy-bridge && npm run test:qa-gates) 2>&1 | tee test.log
 
       - name: Upload integration test diagnostics
         if: always()
