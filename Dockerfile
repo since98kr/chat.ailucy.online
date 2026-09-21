@@ -10,7 +10,9 @@ COPY package.json package-lock.json ./
 RUN npm ci --no-audit --no-fund
 
 COPY . .
-RUN npm run test \
+RUN npx vitest run --testTimeout=15000 \
+  && npm run test:bridge \
+  && npm run test:qa-gates \
   && npm run build \
   && npm prune --omit=dev
 
@@ -40,7 +42,7 @@ COPY --from=build /app/dist ./dist
 COPY --from=build /app/dist-server ./dist-server
 
 RUN mkdir -p /data/artifacts /data/backups \
-  && chown -R node:node /app /data
+  && chown -R node:node /data
 
 USER node
 
