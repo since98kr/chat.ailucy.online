@@ -11,13 +11,13 @@ permissions:
   contents: read
 
 concurrency:
-  group: chat-v2-ci-${{ github.ref }}
+  group: chat-v2-ci-selfhosted-v2-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
   application:
     name: Typecheck, test, browser regression, build, and container smoke
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, linux, x64, hni-node-04, docker]
     timeout-minutes: 55
 
     steps:
@@ -41,6 +41,9 @@ jobs:
 
       - name: Install dependencies
         run: npm ci --no-audit --no-fund
+
+      - name: Rebuild native SQLite binding for self-hosted CPU
+        run: npm rebuild better-sqlite3 --build-from-source
 
       - name: Validate deployment, preflight, runner, and recovery scripts
         shell: bash
@@ -136,7 +139,7 @@ jobs:
         shell: bash
         run: |
           set -o pipefail
-          npm test 2>&1 | tee test.log
+          (npx vitest run --testTimeout=15000 && npm run test:bridge && npm run test:qa-gates) 2>&1 | tee test.log
 
       - name: Upload integration test diagnostics
         if: always()
@@ -150,14 +153,76 @@ jobs:
       - name: Production build
         run: npm run build
 
+      - name: Build versioned production container
+        run: |
+          docker build \
+            --build-arg CHAT_BUILD_SHA=ci-sha \
+            --build-arg CHAT_BUILD_TIME=2026-07-18T00:00:00Z \
+            --build-arg CHAT_VERSION=0.8.0 \
+            --tag chat-ailucy-v2:ci .
+
       - name: Install Chromium for browser regression
-        run: npx playwright install --with-deps chromium
+        run: npx playwright install chromium
 
       - name: Desktop and mobile browser regression
-        run: npm run test:e2e
+        shell: bash
+        run: |
+          set -euo pipefail
+          name="chat-v2-e2e-${GITHUB_RUN_ID}"
+          cleanup() { docker rm -f "$name" >/dev/null 2>&1 || true; }
+          trap cleanup EXIT
+          cleanup
+          docker run -d --rm --name "$name" \
+            -p 127.0.0.1:4190:4174 \
+            -e CHAT_API_PORT=4174 \
+            -e CHAT_RATE_LIMIT_GENERAL=10000 \
+            -e CHAT_RATE_LIMIT_CHAT=1000 \
+            -e CHAT_RATE_LIMIT_UPLOAD=1000 \
+            -e CHAT_ALLOW_MOCK_ADAPTERS=true \
+            -e CHAT_TEST_MOCK_FAILURE_PATTERN=TEST_BACKEND_FAILURE_MARKER \
+            chat-ailucy-v2:ci >/dev/null
+          ready=0
+          for _ in $(seq 1 60); do
+            if curl -fsS http://127.0.0.1:4190/api/health >/dev/null; then
+              ready=1
+              break
+            fi
+            sleep 1
+          done
+          if [[ "$ready" != 1 ]]; then
+            docker logs "$name" || true
+            exit 1
+          fi
+          CHAT_E2E_EXTERNAL_SERVER=1 npm run test:e2e
 
       - name: Token-authenticated desktop and mobile regression
-        run: npm run test:e2e:auth
+        shell: bash
+        run: |
+          set -euo pipefail
+          name="chat-v2-e2e-auth-${GITHUB_RUN_ID}"
+          cleanup() { docker rm -f "$name" >/dev/null 2>&1 || true; }
+          trap cleanup EXIT
+          cleanup
+          docker run -d --rm --name "$name" \
+            -p 127.0.0.1:4191:4174 \
+            -e CHAT_API_PORT=4174 \
+            -e CHAT_AUTH_MODE=token \
+            -e CHAT_ACCESS_TOKEN=e2e-only-value \
+            -e CHAT_ALLOW_MOCK_ADAPTERS=true \
+            chat-ailucy-v2:ci >/dev/null
+          ready=0
+          for _ in $(seq 1 60); do
+            if curl -fsS -H 'Authorization: Bearer e2e-only-value' http://127.0.0.1:4191/api/health >/dev/null; then
+              ready=1
+              break
+            fi
+            sleep 1
+          done
+          if [[ "$ready" != 1 ]]; then
+            docker logs "$name" || true
+            exit 1
+          fi
+          CHAT_E2E_EXTERNAL_SERVER=1 npm run test:e2e:auth
 
       - name: Upload browser screenshots and diagnostics
         if: always()
@@ -187,14 +252,6 @@ jobs:
           path: dist-server
           if-no-files-found: error
           retention-days: 7
-
-      - name: Build versioned production container
-        run: |
-          docker build \
-            --build-arg CHAT_BUILD_SHA=ci-sha \
-            --build-arg CHAT_BUILD_TIME=2026-07-18T00:00:00Z \
-            --build-arg CHAT_VERSION=0.8.0 \
-            --tag chat-ailucy-v2:ci .
 
       - name: Exercise host staging-preflight wrapper
         shell: bash
