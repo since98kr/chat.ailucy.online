@@ -8,6 +8,7 @@ import { FederationService } from './federation.js';
 import { runFederatedWorkflow } from './federated-runner.js';
 
 process.env.NODE_ENV = 'test';
+delete process.env.OPENCLAW_BASE_URL;
 delete process.env.LETTA_BASE_URL;
 delete process.env.HERMES_BASE_URL;
 
@@ -25,17 +26,19 @@ describe('OpenClaw Lucy workflow identity migration', () => {
     rmSync(directory, { recursive: true, force: true });
   });
 
-  it('migrates a resumable legacy Letta step without changing dependency UUIDs and resumes it as OpenClaw Lucy', async () => {
+  it('migrates a resumable legacy agent id without changing dependency UUIDs and resumes it as OpenClaw Lucy', async () => {
     const collaboration = new CollaborationService(database);
     const federation = new FederationService(database);
     const stamp = new Date().toISOString();
 
+    // System IDs are canonicalized by the database migration before workflow
+    // identity repair runs. This fixture keeps only the historical agent id.
     database.db.prepare(`
       INSERT INTO agents (
         id, system_id, display_name, short_name, role, description,
         capabilities_json, enabled, direct_chat_enabled, is_lead,
         sort_order, created_at, updated_at
-      ) VALUES (?, 'letta', ?, 'Lucy', 'Personal AI', 'legacy', '[]', 1, 1, 1, 5, ?, ?)
+      ) VALUES (?, 'openclaw', ?, 'Lucy', 'Personal AI', 'legacy', '[]', 1, 1, 1, 5, ?, ?)
     `).run('[Letta] Lucy', '[Letta] Lucy', stamp, stamp);
 
     const conversation = database.createConversation('hermes', '[Hermes] Lucy', 'Legacy workflow migration');
@@ -55,7 +58,7 @@ describe('OpenClaw Lucy workflow identity migration', () => {
       requestedAgentIds: ['[Letta] Lucy', '[Hermes] Lucy'],
     });
     const steps = federation.createSteps(created.run.id, [
-      { agentId: '[Letta] Lucy', systemId: 'letta', position: 0, parallelGroup: 0 },
+      { agentId: '[Letta] Lucy', systemId: 'openclaw', position: 0, parallelGroup: 0 },
       {
         agentId: '[Hermes] Lucy',
         systemId: 'hermes',
@@ -75,7 +78,7 @@ describe('OpenClaw Lucy workflow identity migration', () => {
     const migrated = migratedFederation.getRun(created.run.id)!;
 
     expect(migrated.requestedAgentIds).toEqual(['[OpenClaw] Lucy', '[Hermes] Lucy']);
-    expect(migrated.steps.find((step) => step.systemId === 'letta')).toMatchObject({
+    expect(migrated.steps.find((step) => step.systemId === 'openclaw')).toMatchObject({
       id: legacyStep.id,
       agentId: '[OpenClaw] Lucy',
       status: 'failed',
@@ -103,6 +106,7 @@ describe('OpenClaw Lucy workflow identity migration', () => {
     const final = migratedFederation.getRun(created.run.id)!;
     expect(final.status).toBe('completed');
     expect(final.steps.find((step) => step.agentId === '[OpenClaw] Lucy')).toMatchObject({
+      systemId: 'openclaw',
       status: 'completed',
       attempt: 2,
     });

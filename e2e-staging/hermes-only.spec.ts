@@ -4,7 +4,7 @@ import { randomUUID } from 'node:crypto';
 type ApiContext = Awaited<ReturnType<typeof apiRequest.newContext>>;
 type Agent = {
   id: string;
-  systemId: 'letta' | 'hermes';
+  systemId: 'openclaw' | 'hermes';
   displayName: string;
   shortName: string;
   role: string;
@@ -128,7 +128,7 @@ test('Hermes registry, routing, participants, and fail-closed contracts', async 
 
     for (const input of [
       { systemId: 'hermes', agentId: 'DOES_NOT_EXIST', title: 'invalid-agent-contract' },
-      { systemId: 'letta', agentId: 'Xixi', title: 'system-mismatch-contract' },
+      { systemId: 'openclaw', agentId: 'Xixi', title: 'system-mismatch-contract' },
     ]) {
       const rejected = await api.post('/api/conversations', { data: input });
       expect(rejected.status()).toBe(409);

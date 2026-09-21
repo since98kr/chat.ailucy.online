@@ -18,6 +18,10 @@ type WorkflowRunIdentityRow = {
   requested_agent_ids_json: string;
 };
 
+function legacyBackendSystem(value: ConversationRuntimeIdentity) {
+  return (value as unknown as { backendSystem: string }).backendSystem === 'letta';
+}
+
 function migrateBoundIdentity<T extends ConversationRuntimeIdentity>(
   value: T | null,
   previous: ConversationOperatingContext,
@@ -52,9 +56,10 @@ function migrateAgentIdsJson(value: string, legacyAgentId: string, canonicalAgen
  * Rebind only identity-bearing fields of a valid legacy personal Lucy context.
  * User/task/status text is deliberately never string-replaced.
  *
- * The conversation row must already point at the canonical OpenClaw Lucy agent
- * when this runs, so the authoritative post-migration session identity can be
- * recomputed from the same provider-session contract used by normal reads.
+ * ChatDatabase has already migrated the owning conversation row from the
+ * retired `letta` system id to canonical `openclaw` before this function runs.
+ * The stored JSON may still contain the legacy backend id; that value is read
+ * only inside this migration boundary and is never written back as live truth.
  */
 export function migrateLegacyPersonalLucyOperatingContexts(
   database: ChatDatabase,
@@ -62,9 +67,6 @@ export function migrateLegacyPersonalLucyOperatingContexts(
   legacyAgentId: string,
   canonicalAgentId: string,
 ) {
-  // Canonical user-facing mentions should resolve through the normal short-name
-  // index without reintroducing an enabled legacy Letta agent. CollaborationService
-  // has already created/seeded the agents table before this migration runs.
   if (tableExists(db, 'agents')) {
     db.prepare(`
       UPDATE agents
@@ -77,16 +79,19 @@ export function migrateLegacyPersonalLucyOperatingContexts(
     SELECT coc.conversation_id, coc.context_json
     FROM conversation_operating_context coc
     JOIN conversations c ON c.id = coc.conversation_id
-    WHERE c.system_id = 'letta' AND c.agent_id = ?
+    WHERE c.system_id = 'openclaw' AND c.agent_id = ?
   `).all(canonicalAgentId) as StoredContextRow[];
 
   let migrated = 0;
   for (const row of rows) {
     try {
+      // The validator checks binding shape. `legacyBackendSystem` performs the
+      // one migration-only raw-string check that current SystemId deliberately
+      // no longer represents.
       const previous = validateConversationOperatingContext(JSON.parse(row.context_json));
       if (
         previous.conversationId !== row.conversation_id
-        || previous.backendSystem !== 'letta'
+        || !legacyBackendSystem(previous)
         || previous.agentId !== legacyAgentId
       ) continue;
       if (
@@ -95,7 +100,7 @@ export function migrateLegacyPersonalLucyOperatingContexts(
       ) continue;
 
       const conversation = database.getConversation(row.conversation_id);
-      if (!conversation || conversation.systemId !== 'letta' || conversation.agentId !== canonicalAgentId) continue;
+      if (!conversation || conversation.systemId !== 'openclaw' || conversation.agentId !== canonicalAgentId) continue;
       const nextIdentity = conversationRuntimeIdentity(conversation);
       const next = validateConversationOperatingContext({
         ...previous,
@@ -111,7 +116,7 @@ export function migrateLegacyPersonalLucyOperatingContexts(
       migrated += 1;
     } catch {
       // Invalid or stale context stays untouched. The normal fail-closed reader
-      // will replace it rather than migration fabricating continuity.
+      // replaces it instead of migration fabricating continuity.
     }
   }
 
@@ -124,9 +129,10 @@ export function migrateLegacyPersonalLucyOperatingContexts(
  * prose or event-ledger payloads. `depends_on_step_ids_json` contains step UUIDs
  * after createSteps(), so it must remain byte-for-byte untouched.
  *
- * On a pristine database CollaborationService runs before FederationService,
- * therefore these tables may not exist yet; in that case there is no legacy
- * workflow state to migrate.
+ * FederationService owns the system-id table migration. Depending on startup
+ * order this function may see either raw legacy `letta` or already-canonical
+ * `openclaw`; both are migration candidates only when the agent id is the
+ * retired `[Letta] Lucy` identity.
  */
 export function migrateLegacyPersonalLucyWorkflowIdentity(
   db: Database.Database,
@@ -157,13 +163,10 @@ export function migrateLegacyPersonalLucyWorkflowIdentity(
   `).run(canonicalAgentId, legacyAgentId);
   migrated += runCoordinator.changes;
 
-  // Normal pre-migration data cannot contain the canonical identity yet. Use a
-  // guarded update anyway so an unusual partially-migrated database does not
-  // hit the (run_id, agent_id) uniqueness constraint or lose either step.
   const steps = db.prepare(`
     UPDATE workflow_steps AS legacy
     SET agent_id = ?
-    WHERE legacy.system_id = 'letta'
+    WHERE legacy.system_id IN ('letta', 'openclaw')
       AND legacy.agent_id = ?
       AND NOT EXISTS (
         SELECT 1 FROM workflow_steps AS canonical

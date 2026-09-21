@@ -31,17 +31,27 @@ describe('OpenClaw Lucy operating-context migration', () => {
       UPDATE conversations SET agent_id = '[Letta] Lucy' WHERE id = 'weekly'
     `).run();
     const legacyConversation = database.getConversation('weekly');
-    expect(legacyConversation).not.toBeNull();
-    const legacyIdentity = conversationRuntimeIdentity(legacyConversation!);
-    expect(legacyIdentity.agentId).toBe('[Letta] Lucy');
+    expect(legacyConversation).toMatchObject({ systemId: 'openclaw', agentId: '[Letta] Lucy' });
+
+    const currentProviderIdentity = conversationRuntimeIdentity(legacyConversation!);
+    const legacyIdentity = {
+      ...currentProviderIdentity,
+      backendSystem: 'letta',
+    } as unknown as ConversationOperatingContext;
 
     const timestamp = '2026-09-11T00:00:00.000Z';
-    const legacyContext: ConversationOperatingContext = {
+    const legacyContext = {
       schemaVersion: CONVERSATION_OPERATING_CONTEXT_SCHEMA,
-      ...legacyIdentity,
+      conversationId: legacyConversation!.id,
+      backendSystem: 'letta',
+      agentId: '[Letta] Lucy',
+      sessionIdentity: currentProviderIdentity.sessionIdentity,
       activeTask: { taskId: 'task-keep', label: '사용자 작업 [Letta] Lucy 텍스트 유지' },
       continuationTarget: {
-        ...legacyIdentity,
+        conversationId: legacyConversation!.id,
+        backendSystem: 'letta',
+        agentId: '[Letta] Lucy',
+        sessionIdentity: currentProviderIdentity.sessionIdentity,
         taskId: 'task-keep',
         label: '사용자 작업 [Letta] Lucy 텍스트 유지',
         targetRef: 'opaque-target-ref',
@@ -60,7 +70,10 @@ describe('OpenClaw Lucy operating-context migration', () => {
       },
       nextAction: '보존할 next action [Letta] Lucy 텍스트',
       pendingApproval: {
-        ...legacyIdentity,
+        conversationId: legacyConversation!.id,
+        backendSystem: 'letta',
+        agentId: '[Letta] Lucy',
+        sessionIdentity: currentProviderIdentity.sessionIdentity,
         approvalId: 'approval-keep',
         kind: 'exec',
         summary: '보존할 approval [Letta] Lucy 텍스트',
@@ -68,7 +81,9 @@ describe('OpenClaw Lucy operating-context migration', () => {
         createdAt: timestamp,
         expiresAt: null,
       },
-    };
+    } as unknown as ConversationOperatingContext;
+    void legacyIdentity;
+
     database.db.prepare(`
       INSERT INTO conversation_operating_context (conversation_id, context_json, updated_at)
       VALUES ('weekly', ?, ?)
@@ -78,7 +93,7 @@ describe('OpenClaw Lucy operating-context migration', () => {
     new CollaborationService(database);
 
     const migratedConversation = database.getConversation('weekly');
-    expect(migratedConversation).toMatchObject({ systemId: 'letta', agentId: '[OpenClaw] Lucy' });
+    expect(migratedConversation).toMatchObject({ systemId: 'openclaw', agentId: '[OpenClaw] Lucy' });
     const expectedIdentity = conversationRuntimeIdentity(migratedConversation!);
     const migrated = database.getConversationOperatingContext('weekly');
     expect(migrated).not.toBeNull();

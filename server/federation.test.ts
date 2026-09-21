@@ -7,6 +7,7 @@ import type { StreamEvent, WorkflowRunRecord } from '../shared/contracts.js';
 import { buildApp } from './index.js';
 
 process.env.NODE_ENV = 'test';
+delete process.env.OPENCLAW_BASE_URL;
 delete process.env.LETTA_BASE_URL;
 delete process.env.HERMES_BASE_URL;
 
@@ -48,7 +49,7 @@ describe('Federated Conversation controller', () => {
       url: `/api/conversations/${conversationId}/memory-capsules`,
       payload: {
         sourceSystemId: 'hermes',
-        targetSystemId: 'letta',
+        targetSystemId: 'openclaw',
         title: '개인 일정 판단 문맥',
         content: '개인 일정 판단에는 이번 주 최우선 업무만 전달한다.',
       },
@@ -83,7 +84,7 @@ describe('Federated Conversation controller', () => {
     const detail = await app.inject({ method: 'GET', url: `/api/conversations/${conversationId}` });
     const messages = detail.json().conversation.messages as Array<{ authorId: string; content: string }>;
     expect(messages.some((message) => message.authorId === 'Xixi' && message.content.includes('Xixi 원문 결과'))).toBe(true);
-    expect(messages.some((message) => message.authorId === '[OpenClaw] Lucy' && message.content.includes('승인된 장기기억'))).toBe(true);
+    expect(messages.some((message) => message.authorId === '[OpenClaw] Lucy' && message.content.includes('검증된 현재 Conversation 문맥'))).toBe(true);
     expect(messages.some((message) => message.authorId === '[Hermes] Lucy' && message.content.includes('종합응답'))).toBe(true);
 
     const snapshot = await app.inject({ method: 'GET', url: `/api/conversations/${conversationId}/federation` });
@@ -148,7 +149,7 @@ describe('Federated Conversation controller', () => {
     const capsule = await app.inject({
       method: 'POST',
       url: `/api/conversations/${id}/memory-capsules`,
-      payload: { sourceSystemId: 'letta', targetSystemId: 'hermes', title: '승인 문맥', content: '필요한 사실만 전달한다.' },
+      payload: { sourceSystemId: 'openclaw', targetSystemId: 'hermes', title: '승인 문맥', content: '필요한 사실만 전달한다.' },
     });
     await app.inject({ method: 'PATCH', url: `/api/memory-capsules/${capsule.json().capsule.id}`, payload: { status: 'approved' } });
     await app.inject({

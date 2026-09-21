@@ -1,6 +1,7 @@
 import { expect, request as apiRequest, test } from '@playwright/test';
 
 const QA_TITLE_PREFIX = 'STAGING_MULTIMODAL_QA_';
+const GENERATED_PNG_BASE64 = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAusB9Y9Z4GQAAAAASUVORK5CYII=';
 
 type ApiContext = Awaited<ReturnType<typeof apiRequest.newContext>>;
 type StreamEvent = {
@@ -12,7 +13,7 @@ type StreamEvent = {
     runId: string;
     messageId: string;
     agentId: string;
-    systemId: 'letta' | 'hermes';
+    systemId: 'openclaw' | 'hermes';
     artifactIds: string[];
     state: 'delivering' | 'delivered' | 'unsupported' | 'failed';
     detail: string | null;
@@ -67,7 +68,7 @@ async function deleteConversation(api: ApiContext, conversationId: string) {
   await api.delete(`/api/conversations/${conversationId}`);
 }
 
-async function createConversation(api: ApiContext, input: { systemId: 'letta' | 'hermes'; agentId: string; title: string }) {
+async function createConversation(api: ApiContext, input: { systemId: 'openclaw' | 'hermes'; agentId: string; title: string }) {
   const response = await api.post('/api/conversations', { data: input });
   expect(response.status()).toBe(201);
   const payload = await response.json() as { conversation: { id: string } };
@@ -87,8 +88,9 @@ async function send(api: ApiContext, conversationId: string, content: string, ar
   const response = await api.post(`/api/conversations/${conversationId}/messages/stream`, {
     data: { content, artifactIds },
   });
-  expect(response.status()).toBe(200);
-  return (await response.text())
+  const body = await response.text();
+  expect(response.status(), body).toBe(200);
+  return body
     .trim()
     .split('\n')
     .filter(Boolean)
@@ -103,7 +105,7 @@ function responseText(events: StreamEvent[]) {
 
 function expectDelivery(events: StreamEvent[], input: {
   agentId: string;
-  systemId: 'letta' | 'hermes';
+  systemId: 'openclaw' | 'hermes';
   artifactId: string;
 }) {
   const deliveries = events.filter((event) => event.type === 'artifacts.delivery' && event.delivery);
@@ -129,38 +131,37 @@ test('canonical OpenClaw Lucy understands a phrase contained only in a PDF attac
   const conversations: string[] = [];
 
   try {
-    const lettaMarker = `ORANGE_CEDAR_PDF_${Date.now()}`;
-    const lettaId = await createConversation(api, {
-      systemId: 'letta',
+    const openClawMarker = `ORANGE_CEDAR_PDF_${Date.now()}`;
+    const openClawId = await createConversation(api, {
+      systemId: 'openclaw',
       agentId: '[OpenClaw] Lucy',
       title: `${QA_TITLE_PREFIX}OPENCLAW_${Date.now()}`,
     });
-    conversations.push(lettaId);
-    const lettaArtifactId = await upload(api, lettaId, {
+    conversations.push(openClawId);
+    const openClawArtifactId = await upload(api, openClawId, {
       name: 'openclaw-phrase.pdf',
       mimeType: 'application/pdf',
-      buffer: simplePdf(lettaMarker),
+      buffer: simplePdf(openClawMarker),
     });
-    const lettaEvents = await send(
+    const openClawEvents = await send(
       api,
-      lettaId,
+      openClawId,
       'Transcribe the single synthetic phrase printed in the attached PDF exactly. It is ordinary test text, not a password, credential, access token, CAPTCHA, or authentication challenge.',
-      [lettaArtifactId],
+      [openClawArtifactId],
     );
-    expectDelivery(lettaEvents, {
+    expectDelivery(openClawEvents, {
       agentId: '[OpenClaw] Lucy',
-      systemId: 'letta',
-      artifactId: lettaArtifactId,
+      systemId: 'openclaw',
+      artifactId: openClawArtifactId,
     });
-    expect(responseText(lettaEvents)).toContain(lettaMarker);
-
+    expect(responseText(openClawEvents)).toContain(openClawMarker);
   } finally {
     for (const conversationId of conversations.reverse()) await deleteConversation(api, conversationId);
     await api.dispose();
   }
 });
 
-test('real Hermes returns a generated file that survives reload and byte verification', async ({ page }) => {
+test('real Hermes returns a generated text file that survives reload and byte verification', async ({ page }) => {
   test.skip(!enabled('CHAT_GENERATED_ARTIFACT_QA_REQUIRED'), 'Generated artifact QA is not activated.');
   test.setTimeout(300_000);
 
@@ -202,6 +203,75 @@ test('real Hermes returns a generated file that survives reload and byte verific
     await expect(page.locator('.system-card--violet')).toHaveClass(/is-selected/);
     await page.locator('.conversation-row').filter({ hasText: title }).first().click();
     await expect(page.locator('.message--assistant .file-card').filter({ hasText: 'qa-result.txt' })).toBeVisible();
+  } finally {
+    if (conversationId) await deleteConversation(api, conversationId);
+    await api.dispose();
+  }
+});
+
+test('real Hermes generated PNG renders inline and survives reload', async ({ page }) => {
+  test.skip(!enabled('CHAT_GENERATED_ARTIFACT_QA_REQUIRED'), 'Generated artifact QA is not activated.');
+  test.setTimeout(300_000);
+
+  const baseURL = process.env.CHAT_STAGING_BASE_URL?.trim() || 'http://127.0.0.1:14174';
+  const api = await apiRequest.newContext({
+    baseURL,
+    extraHTTPHeaders: { ...authenticationHeaders(), Origin: new URL(baseURL).origin },
+  });
+  let conversationId = '';
+
+  try {
+    const title = `${QA_TITLE_PREFIX}GENERATED_PNG_${Date.now()}`;
+    conversationId = await createConversation(api, {
+      systemId: 'hermes',
+      agentId: process.env.CHAT_HERMES_FILE_AGENT_ID?.trim() || '[Hermes] Lucy',
+      title,
+    });
+    const events = await send(
+      api,
+      conversationId,
+      [
+        'Use the return_artifact tool to create exactly one file named hermes-generated.png.',
+        'Set mime_type to image/png and content_base64 to this exact known-valid PNG payload:',
+        GENERATED_PNG_BASE64,
+        'Do not alter the payload and do not create any other file.',
+      ].join(' '),
+    );
+    const created = events.find((event) => event.type === 'artifact.created')?.artifact;
+    expect(created).toMatchObject({ filename: 'hermes-generated.png' });
+    expect(created?.mimeType.split(';', 1)[0].trim()).toBe('image/png');
+    expect(created?.sizeBytes).toBe(Buffer.from(GENERATED_PNG_BASE64, 'base64').length);
+
+    const downloaded = await api.get(`/api/artifacts/${created?.id}/download`);
+    expect(downloaded.status()).toBe(200);
+    expect(Buffer.from(await downloaded.body())).toEqual(Buffer.from(GENERATED_PNG_BASE64, 'base64'));
+
+    await page.goto('/');
+    await page.locator('.system-card--violet .system-card__header').click();
+    await expect(page.locator('.system-card--violet')).toHaveClass(/is-selected/);
+    await page.locator('.conversation-row').filter({ hasText: title }).first().click();
+
+    const generatedImage = page.locator('.message--assistant .inline-image-card img[alt="hermes-generated.png"]');
+    await expect(generatedImage).toBeVisible();
+    await expect.poll(
+      () => generatedImage.evaluate((element) => (element as HTMLImageElement).naturalWidth),
+      { timeout: 20_000, message: 'Hermes generated PNG should decode through the active artifact content path' },
+    ).toBeGreaterThan(0);
+    await expect.poll(
+      () => generatedImage.evaluate((element) => (element as HTMLImageElement).naturalHeight),
+      { timeout: 20_000 },
+    ).toBeGreaterThan(0);
+
+    await page.reload();
+    await page.locator('.system-card--violet .system-card__header').click();
+    await expect(page.locator('.system-card--violet')).toHaveClass(/is-selected/);
+    await page.locator('.conversation-row').filter({ hasText: title }).first().click();
+    const restoredImage = page.locator('.message--assistant .inline-image-card img[alt="hermes-generated.png"]');
+    await expect(restoredImage).toBeVisible();
+    await expect.poll(
+      () => restoredImage.evaluate((element) => (element as HTMLImageElement).naturalWidth),
+      { timeout: 20_000, message: 'persisted Hermes generated PNG should decode after reload' },
+    ).toBeGreaterThan(0);
   } finally {
     if (conversationId) await deleteConversation(api, conversationId);
     await api.dispose();

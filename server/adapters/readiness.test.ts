@@ -79,9 +79,8 @@ describe('sanitizeReadinessDetail', () => {
   });
 });
 
-
 describe('probeAdapterReadiness', () => {
-  it('uses the canonical OpenClaw Letta target for generation readiness', async () => {
+  it('uses the canonical OpenClaw target for generation readiness', async () => {
     const fetchMock = vi.fn(async (
       _input: Parameters<typeof fetch>[0],
       _init?: Parameters<typeof fetch>[1],
@@ -90,14 +89,14 @@ describe('probeAdapterReadiness', () => {
       { status: 200, headers: { 'Content-Type': 'application/json' } },
     ));
     vi.stubGlobal('fetch', fetchMock);
-    vi.stubEnv('LETTA_READINESS_PROBE_ENABLED', 'true');
-    vi.stubEnv('LETTA_PROTOCOL', 'openclaw');
-    vi.stubEnv('LETTA_BASE_URL', 'http://127.0.0.1:18792');
-    vi.stubEnv('LETTA_CHAT_PATH', '/v1/chat/completions');
-    vi.stubEnv('LETTA_OPENCLAW_AGENT_TARGET', 'openclaw/main');
-    vi.stubEnv('LETTA_OPENCLAW_SESSION_PREFIX', 'chat-v2');
+    vi.stubEnv('OPENCLAW_READINESS_PROBE_ENABLED', 'true');
+    vi.stubEnv('OPENCLAW_PROTOCOL', 'openclaw');
+    vi.stubEnv('OPENCLAW_BASE_URL', 'http://127.0.0.1:18792');
+    vi.stubEnv('OPENCLAW_CHAT_PATH', '/v1/chat/completions');
+    vi.stubEnv('OPENCLAW_AGENT_TARGET', 'openclaw/main');
+    vi.stubEnv('OPENCLAW_SESSION_PREFIX', 'chat-v2');
 
-    const result = await probeAdapterReadiness('letta');
+    const result = await probeAdapterReadiness('openclaw');
     expect(result?.ok).toBe(true);
     expect(fetchMock).toHaveBeenCalledTimes(1);
     const [, init] = fetchMock.mock.calls[0] ?? [];

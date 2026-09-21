@@ -1,4 +1,3 @@
-// Current-main revalidation marker: Claude SystemId migration remains covered after syncing #206.
 import Database from 'better-sqlite3';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
@@ -9,11 +8,12 @@ import { buildApp } from './index.js';
 import { widenSystemIdCheckConstraints } from './sqlite-system-id-migration.js';
 
 process.env.NODE_ENV = 'test';
+delete process.env.OPENCLAW_BASE_URL;
 delete process.env.LETTA_BASE_URL;
 delete process.env.HERMES_BASE_URL;
 delete process.env.CLAUDE_BASE_URL;
 
-describe('Claude SystemId schema migration', () => {
+describe('canonical SystemId schema migration', () => {
   let app: FastifyInstance | undefined;
   let directory: string | undefined;
 
@@ -25,7 +25,7 @@ describe('Claude SystemId schema migration', () => {
     delete process.env.CLAUDE_BASE_URL;
   });
 
-  it('widens every legacy SystemId CHECK in a table and preserves rows', () => {
+  it('rebuilds every legacy SystemId CHECK, migrates Letta rows to OpenClaw, and accepts Claude', () => {
     const db = new Database(':memory:');
     db.exec(`
       CREATE TABLE capsules (
@@ -37,17 +37,18 @@ describe('Claude SystemId schema migration', () => {
     `);
     expect(widenSystemIdCheckConstraints(db, 'capsules')).toBe(true);
     expect(db.prepare('SELECT * FROM capsules WHERE id = ?').get('legacy')).toMatchObject({
-      source_system_id: 'letta',
+      source_system_id: 'openclaw',
       target_system_id: 'hermes',
     });
     expect(() => db.prepare('INSERT INTO capsules VALUES (?, ?, ?)').run('new', 'claude', 'hermes')).not.toThrow();
+    expect(() => db.prepare('INSERT INTO capsules VALUES (?, ?, ?)').run('retired', 'letta', 'hermes')).toThrow();
     expect(widenSystemIdCheckConstraints(db, 'capsules')).toBe(false);
     db.close();
   });
 
-  it('boots an existing pre-Claude database and enables Theia without losing existing state', async () => {
+  it('boots a legacy Letta/Hermes database into OpenClaw/Hermes/Claude without losing existing state', async () => {
     process.env.CLAUDE_BASE_URL = 'http://claude.test';
-    directory = mkdtempSync(join(tmpdir(), 'chat-v2-claude-migrate-'));
+    directory = mkdtempSync(join(tmpdir(), 'chat-v2-openclaw-migrate-'));
     const databasePath = join(directory, 'chat.sqlite');
     const legacy = new Database(databasePath);
     legacy.exec(`
@@ -111,9 +112,24 @@ describe('Claude SystemId schema migration', () => {
         'legacy-chat', 'hermes', '[Hermes] Lucy', '기존 대화', '보존되어야 함', 'active', 1,
         '2026-09-01T00:00:00.000Z', '2026-09-01T00:00:00.000Z', NULL, '', NULL, NULL
       );
+      INSERT INTO conversations VALUES (
+        'legacy-personal', 'letta', '[Letta] Lucy', '기존 개인 대화', 'OpenClaw로 이관', 'active', 0,
+        '2026-09-01T00:00:00.000Z', '2026-09-01T00:00:00.000Z', NULL, '', NULL, NULL
+      );
+      INSERT INTO agents VALUES (
+        '[Letta] Lucy', 'letta', '[Letta] Lucy', 'Lucy', 'Personal AI', 'legacy', '[]', 1, 1, 1, 10,
+        '2026-09-01T00:00:00.000Z', '2026-09-01T00:00:00.000Z'
+      );
       INSERT INTO conversation_federation VALUES (
         'legacy-chat', 'federated', '[Hermes] Lucy', '["letta","hermes"]',
         'explicit-capsules-only', '2026-09-01T00:00:00.000Z', '2026-09-01T00:00:00.000Z'
+      );
+      INSERT INTO memory_capsules (
+        id, conversation_id, source_system_id, target_system_id, title, content,
+        status, source_message_ids_json, created_by, created_at, updated_at
+      ) VALUES (
+        'legacy-capsule', 'legacy-chat', 'letta', 'hermes', '기존 개인 문맥', '보존',
+        'approved', '[]', 'tei', '2026-09-01T00:00:00.000Z', '2026-09-01T00:00:00.000Z'
       );
     `);
     legacy.close();
@@ -131,15 +147,33 @@ describe('Claude SystemId schema migration', () => {
     expect(existing.statusCode).toBe(200);
     expect(existing.json().conversation).toMatchObject({ id: 'legacy-chat', preview: '보존되어야 함' });
 
+    const personal = await app.inject({ method: 'GET', url: '/api/conversations/legacy-personal' });
+    expect(personal.statusCode).toBe(200);
+    expect(personal.json().conversation).toMatchObject({
+      systemId: 'openclaw',
+      agentId: '[OpenClaw] Lucy',
+      preview: 'OpenClaw로 이관',
+    });
+
     const config = await app.inject({ method: 'GET', url: '/api/conversations/legacy-chat/federation' });
-    expect(config.json().federation.config.allowedSystemIds).toEqual(['letta', 'hermes', 'claude']);
+    expect(config.json().federation.config.allowedSystemIds).toEqual(['openclaw', 'hermes', 'claude']);
+    expect(config.json().federation.capsules).toEqual(expect.arrayContaining([
+      expect.objectContaining({ id: 'legacy-capsule', sourceSystemId: 'openclaw', targetSystemId: 'hermes' }),
+    ]));
 
     const capsule = await app.inject({
       method: 'POST',
       url: '/api/conversations/legacy-chat/memory-capsules',
-      payload: { sourceSystemId: 'claude', targetSystemId: 'hermes', title: '테이아 검토', content: '독립 검토 결과' },
+      payload: { sourceSystemId: 'claude', targetSystemId: 'openclaw', title: '테이아 검토', content: '독립 검토 결과' },
     });
     expect(capsule.statusCode).toBe(201);
+
+    const retired = await app.inject({
+      method: 'POST',
+      url: '/api/conversations/legacy-chat/memory-capsules',
+      payload: { sourceSystemId: 'letta', targetSystemId: 'hermes', title: '금지', content: '신규 legacy identity 금지' },
+    });
+    expect(retired.statusCode).toBe(400);
 
     const created = await app.inject({
       method: 'POST',

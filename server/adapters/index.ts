@@ -3,7 +3,7 @@ import type { AdapterRequest, ChatBackendAdapter } from './types.js';
 import { wrapArtifactEnvelopeFallback } from './artifact-envelope.js';
 import { MockAdapter, UnavailableAdapter } from './mock.js';
 import { HttpAgentAdapter, httpAdapterConfig } from './http.js';
-import { OpenClawLettaAdapter, openClawLettaConfigFromEnv } from './openclaw-letta.js';
+import { OpenClawAdapter, openClawConfigFromEnv } from './openclaw.js';
 import { augmentNativeArtifactContext } from './native-artifacts.js';
 
 const LEGACY_PERSONAL_LUCY_ID = '[Letta] Lucy';
@@ -122,7 +122,7 @@ function wrapOpenAiPersonalLucyMapping(
       const executionAdapter = new HttpAgentAdapter(adapter.systemId, {
         ...adapter.config,
         // Keep Chat V2 authorization bound to the canonical selected agent,
-        // while mapping its provider model/target to the existing runtime ID.
+        // while mapping its provider model/target to an existing legacy runtime ID.
         modelMap: { ...modelMap, [OPENCLAW_PERSONAL_LUCY_ID]: targetAgentId },
       });
       yield* executionAdapter.streamReply({
@@ -135,8 +135,9 @@ function wrapOpenAiPersonalLucyMapping(
 }
 
 function createAdapter(systemId: SystemId): ChatBackendAdapter {
-  if (systemId === 'letta' && protocol(process.env.LETTA_PROTOCOL) === 'openclaw') {
-    return new OpenClawLettaAdapter(openClawLettaConfigFromEnv());
+  const openClawProtocol = protocol(process.env.OPENCLAW_PROTOCOL ?? process.env.LETTA_PROTOCOL);
+  if (systemId === 'openclaw' && openClawProtocol === 'openclaw') {
+    return new OpenClawAdapter(openClawConfigFromEnv());
   }
 
   const config = httpAdapterConfig(systemId);
@@ -144,7 +145,7 @@ function createAdapter(systemId: SystemId): ChatBackendAdapter {
   const httpAdapter = new HttpAgentAdapter(systemId, config);
   const adapter = config.protocol === 'native'
     ? wrapNativeAgentMapping(httpAdapter, config.agentId, config.modelMap)
-    : systemId === 'letta'
+    : systemId === 'openclaw'
       ? wrapOpenAiPersonalLucyMapping(httpAdapter, config.agentId, config.modelMap)
       : httpAdapter;
   return systemId === 'hermes'
@@ -155,7 +156,7 @@ function createAdapter(systemId: SystemId): ChatBackendAdapter {
 }
 
 const adapters: Record<SystemId, ChatBackendAdapter> = {
-  letta: createAdapter('letta'),
+  openclaw: createAdapter('openclaw'),
   hermes: createAdapter('hermes'),
   claude: createAdapter('claude'),
 };

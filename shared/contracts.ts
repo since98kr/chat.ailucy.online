@@ -1,4 +1,6 @@
-export type SystemId = 'letta' | 'hermes' | 'claude';
+export type SystemId = 'openclaw' | 'hermes' | 'claude';
+/** Persisted/input compatibility only. New product state must never use this value. */
+export type LegacySystemId = 'letta';
 export type ConversationStatus = 'active' | 'archived' | 'trashed';
 export type ConversationMode = 'single' | 'federated';
 export type MessageRole = 'user' | 'assistant' | 'system';

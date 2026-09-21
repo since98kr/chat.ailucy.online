@@ -8,6 +8,11 @@ import type { StreamEvent } from '../shared/contracts.js';
 
 const PROVIDER_ENV_KEYS = [
   'NODE_ENV',
+  'OPENCLAW_BASE_URL',
+  'OPENCLAW_PROTOCOL',
+  'OPENCLAW_API_KEY',
+  'OPENCLAW_AGENT_TARGET',
+  'OPENCLAW_SESSION_PREFIX',
   'LETTA_BASE_URL',
   'LETTA_PROTOCOL',
   'LETTA_API_KEY',
@@ -22,6 +27,11 @@ describe('durable Conversation operating-context continuity', () => {
       PROVIDER_ENV_KEYS.map((key) => [key, process.env[key]]),
     ) as Record<(typeof PROVIDER_ENV_KEYS)[number], string | undefined>;
     process.env.NODE_ENV = 'test';
+    delete process.env.OPENCLAW_BASE_URL;
+    delete process.env.OPENCLAW_PROTOCOL;
+    delete process.env.OPENCLAW_API_KEY;
+    delete process.env.OPENCLAW_AGENT_TARGET;
+    delete process.env.OPENCLAW_SESSION_PREFIX;
     delete process.env.LETTA_BASE_URL;
     delete process.env.LETTA_PROTOCOL;
     delete process.env.LETTA_API_KEY;
@@ -85,11 +95,11 @@ describe('durable Conversation operating-context continuity', () => {
       const created = await app.inject({
         method: 'POST',
         url: '/api/conversations',
-        payload: { systemId: 'letta', agentId: '[OpenClaw] Lucy' },
+        payload: { systemId: 'openclaw', agentId: '[OpenClaw] Lucy' },
       });
       expect(created.statusCode).toBe(201);
       const conversationId = created.json().conversation.id as string;
-      const expectedSessionIdentity = `letta:${conversationId}:[Letta] Lucy`;
+      const expectedSessionIdentity = `openclaw:${conversationId}:[Letta] Lucy`;
 
       const first = await app.inject({
         method: 'POST',
@@ -113,7 +123,7 @@ describe('durable Conversation operating-context continuity', () => {
       const beforeReload = synchronized.json().operatingContext;
       expect(beforeReload).toMatchObject({
         conversationId,
-        backendSystem: 'letta',
+        backendSystem: 'openclaw',
         agentId: '[OpenClaw] Lucy',
         sessionIdentity: expectedSessionIdentity,
         activeTask: {
@@ -122,14 +132,14 @@ describe('durable Conversation operating-context continuity', () => {
         },
         continuationTarget: {
           conversationId,
-          backendSystem: 'letta',
+          backendSystem: 'openclaw',
           agentId: '[OpenClaw] Lucy',
           taskId: originalTaskId,
           sessionIdentity: expectedSessionIdentity,
         },
         pendingApproval: {
           conversationId,
-          backendSystem: 'letta',
+          backendSystem: 'openclaw',
           agentId: '[OpenClaw] Lucy',
           approvalId: `approval:${conversationId}`,
           sessionIdentity: expectedSessionIdentity,
@@ -155,20 +165,20 @@ describe('durable Conversation operating-context continuity', () => {
       const afterReload = restored.json().operatingContext;
       expect(afterReload).toMatchObject({
         conversationId,
-        backendSystem: 'letta',
+        backendSystem: 'openclaw',
         agentId: '[OpenClaw] Lucy',
         sessionIdentity: expectedSessionIdentity,
         activeTask: beforeReload.activeTask,
         continuationTarget: {
           conversationId,
-          backendSystem: 'letta',
+          backendSystem: 'openclaw',
           agentId: '[OpenClaw] Lucy',
           taskId: originalTaskId,
           sessionIdentity: expectedSessionIdentity,
         },
         pendingApproval: {
           conversationId,
-          backendSystem: 'letta',
+          backendSystem: 'openclaw',
           agentId: '[OpenClaw] Lucy',
           approvalId: `approval:${conversationId}`,
           sessionIdentity: expectedSessionIdentity,
@@ -204,13 +214,13 @@ describe('durable Conversation operating-context continuity', () => {
         operatingIntent: 'continuation',
         operatingContext: {
           conversationId,
-          backendSystem: 'letta',
+          backendSystem: 'openclaw',
           agentId: '[OpenClaw] Lucy',
           sessionIdentity: expectedSessionIdentity,
           activeTask: beforeReload.activeTask,
           continuationTarget: {
             conversationId,
-            backendSystem: 'letta',
+            backendSystem: 'openclaw',
             agentId: '[OpenClaw] Lucy',
             taskId: originalTaskId,
             sessionIdentity: expectedSessionIdentity,

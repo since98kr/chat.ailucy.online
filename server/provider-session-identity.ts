@@ -17,10 +17,14 @@ function protocol(value: string | undefined) {
   return (value ?? '').trim().toLowerCase();
 }
 
+function openClawEnv(canonical: string, legacy: string) {
+  return process.env[canonical]?.trim() || process.env[legacy]?.trim() || undefined;
+}
+
 function openClawSessionAgentId(agentTarget: string | undefined) {
   const normalizedTarget = boundedIdentifier(
     agentTarget?.trim() || 'openclaw/main',
-    'LETTA_OPENCLAW_AGENT_TARGET',
+    'OPENCLAW_AGENT_TARGET',
     256,
   );
   const agentId = normalizedTarget === 'openclaw'
@@ -37,14 +41,11 @@ function openClawSessionAgentId(agentTarget: string | undefined) {
 
 function stableProviderAgentId(conversation: ConversationRecord, agentId: string) {
   if (
-    conversation.systemId === 'letta'
+    conversation.systemId === 'openclaw'
     && (agentId === LEGACY_PERSONAL_LUCY_PROVIDER_AGENT_ID || agentId === OPENCLAW_PERSONAL_LUCY_AGENT_ID)
   ) {
-    // `[OpenClaw] Lucy` is the product identity rename of the existing personal
-    // Lucy lane, not a new provider-side session namespace. Native/OpenAI-
-    // compatible transports historically keyed this lane with `[Letta] Lucy`.
-    // Keep that internal key stable so upgrading the UI identity does not split
-    // an already-running backend conversation.
+    // The legacy provider-side key remains only to preserve existing session
+    // continuity while product/runtime identity is canonically OpenClaw.
     return LEGACY_PERSONAL_LUCY_PROVIDER_AGENT_ID;
   }
   return agentId;
@@ -52,10 +53,10 @@ function stableProviderAgentId(conversation: ConversationRecord, agentId: string
 
 export function openClawConversationSessionIdentity(
   conversationId: string,
-  sessionPrefix = process.env.LETTA_OPENCLAW_SESSION_PREFIX?.trim() || 'chat-v2',
-  agentTarget = process.env.LETTA_OPENCLAW_AGENT_TARGET?.trim() || 'openclaw/main',
+  sessionPrefix = openClawEnv('OPENCLAW_SESSION_PREFIX', 'LETTA_OPENCLAW_SESSION_PREFIX') || 'chat-v2',
+  agentTarget = openClawEnv('OPENCLAW_AGENT_TARGET', 'LETTA_OPENCLAW_AGENT_TARGET') || 'openclaw/main',
 ) {
-  const normalizedPrefix = boundedIdentifier(sessionPrefix, 'LETTA_OPENCLAW_SESSION_PREFIX', 64);
+  const normalizedPrefix = boundedIdentifier(sessionPrefix, 'OPENCLAW_SESSION_PREFIX', 64);
   const normalizedConversation = boundedIdentifier(conversationId, 'conversation id', 256);
   return `agent:${openClawSessionAgentId(agentTarget)}:${normalizedPrefix}:${normalizedConversation}`;
 }
@@ -70,7 +71,8 @@ export function providerSessionIdentity(
   agentId: string,
   requestedSessionId?: string,
 ) {
-  if (conversation.systemId === 'letta' && protocol(process.env.LETTA_PROTOCOL) === 'openclaw') {
+  const openClawProtocol = protocol(process.env.OPENCLAW_PROTOCOL ?? process.env.LETTA_PROTOCOL);
+  if (conversation.systemId === 'openclaw' && openClawProtocol === 'openclaw') {
     return openClawConversationSessionIdentity(conversation.id);
   }
 

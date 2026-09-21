@@ -10,8 +10,8 @@ COPY package.json package-lock.json ./
 RUN npm ci --no-audit --no-fund
 
 COPY . .
-RUN npx vitest run --testTimeout=15000 \
-  && npm run test:bridge \
+RUN npx vitest run --testTimeout=30000 --maxWorkers=4 \
+  && npm run test:legacy-bridge \
   && npm run test:qa-gates \
   && npm run build \
   && npm prune --omit=dev

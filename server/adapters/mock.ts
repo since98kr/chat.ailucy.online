@@ -47,8 +47,8 @@ function statusReply(request: AdapterRequest) {
 function buildReply(systemId: SystemId, request: AdapterRequest) {
   if (request.operatingIntent === 'status') return statusReply(request);
   const latest = request.userMessage.content;
-  if (systemId === 'letta') {
-    return `Tei님, 이 Conversation은 다른 아젠다와 분리해서 유지하겠습니다. 다만 [OpenClaw] Lucy의 승인된 장기기억은 이어집니다. 방금 요청하신 “${latest.slice(0, 80)}”를 현재 Conversation의 중심 아젠다로 잡았습니다.`;
+  if (systemId === 'openclaw') {
+    return `Tei님, 이 Conversation은 다른 아젠다와 분리해서 유지하겠습니다. 검증된 현재 Conversation 문맥을 기준으로 “${latest.slice(0, 80)}”를 중심 아젠다로 잡았습니다.`;
   }
   return hermesReply(request);
 }
@@ -65,8 +65,8 @@ export class MockAdapter implements ChatBackendAdapter {
     if (failureMarker && request.userMessage.content.includes(failureMarker)) {
       throw new Error(`Test backend failure: ${failureMarker}`);
     }
-    const status = this.systemId === 'letta'
-      ? request.operatingIntent === 'status' ? '검증된 대화 상태를 확인하는 중' : '기억을 확인하는 중'
+    const status = this.systemId === 'openclaw'
+      ? request.operatingIntent === 'status' ? '검증된 대화 상태를 확인하는 중' : '요청을 분석하는 중'
       : request.targetAgentId === '[Hermes] Lucy'
         ? request.routingMode === 'team' ? '팀 결과를 종합하는 중' : '요청을 분석하는 중'
         : `${request.targetAgentId} 작업 중`;

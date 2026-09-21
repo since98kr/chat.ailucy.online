@@ -54,6 +54,8 @@ jobs:
           bash -n scripts/ops/staging-preflight.sh
           bash -n scripts/ops/production-preflight.sh
           bash -n scripts/ops/staging-smoke.sh
+          bash -n scripts/ops/openclaw-staging-smoke.sh
+          bash -n scripts/ops/openclaw-letta-staging-smoke.sh
           bash -n scripts/ops/staging-browser-smoke.sh
           bash -n scripts/ops/external-staging-browser-smoke.sh
           bash -n scripts/ops/configure-cloudflare-access-qa.sh
@@ -69,8 +71,10 @@ jobs:
             CHAT_PUBLIC_ORIGIN=https://chat.example.invalid \
             CHAT_ALLOWED_ORIGIN=https://chat.example.invalid \
             CHAT_AUTH_MODE=token \
-            LETTA_BASE_URL=http://letta.example.invalid \
-            LETTA_AGENT_ID=letta-validation \
+            OPENCLAW_BASE_URL=http://openclaw.example.invalid \
+            OPENCLAW_AGENT_ID='[OpenClaw] Lucy' \
+            OPENCLAW_PROTOCOL=openclaw \
+            OPENCLAW_AGENT_TARGET=openclaw/main \
             HERMES_BASE_URL=http://hermes.example.invalid \
             HERMES_AGENT_ID=hermes-validation \
             docker compose -f compose.production.yml config >/dev/null
@@ -135,7 +139,7 @@ jobs:
         shell: bash
         run: |
           set -o pipefail
-          (npx vitest run --testTimeout=15000 && npm run test:bridge && npm run test:qa-gates) 2>&1 | tee test.log
+          (npx vitest run --testTimeout=15000 && npm run test:legacy-bridge && npm run test:qa-gates) 2>&1 | tee test.log
 
       - name: Upload integration test diagnostics
         if: always()

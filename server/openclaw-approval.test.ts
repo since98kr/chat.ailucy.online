@@ -8,8 +8,8 @@ import { createConversationOperatingContext } from '../shared/conversation-opera
 
 const context = createConversationOperatingContext({
   conversationId: 'conversation-1',
-  backendSystem: 'letta',
-  agentId: '[Letta] Lucy',
+  backendSystem: 'openclaw',
+  agentId: '[OpenClaw] Lucy',
   sessionIdentity: 'chat-v2:conversation-1',
 });
 
