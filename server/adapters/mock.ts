@@ -3,6 +3,14 @@ import type { AdapterHealthRecord, SystemId } from '../../shared/contracts.js';
 
 const sleep = (milliseconds: number) => new Promise((resolve) => setTimeout(resolve, milliseconds));
 
+function testMockChunkDelay(request: AdapterRequest) {
+  const slowPattern = process.env.CHAT_TEST_MOCK_SLOW_PATTERN?.trim();
+  if (!slowPattern || !request.userMessage.content.includes(slowPattern)) return 18;
+  const configured = Number(process.env.CHAT_TEST_MOCK_SLOW_DELAY_MS);
+  if (!Number.isFinite(configured) || configured <= 0) return 250;
+  return Math.min(Math.max(configured, 18), 1000);
+}
+
 function hermesReply(request: AdapterRequest) {
   const latest = request.userMessage.content.slice(0, 100);
   if (request.targetAgentId === 'Xixi') {
@@ -74,11 +82,12 @@ export class MockAdapter implements ChatBackendAdapter {
     await sleep(90);
 
     const reply = buildReply(this.systemId, request);
+    const chunkDelayMs = testMockChunkDelay(request);
     const chunks = reply.match(/.{1,10}/gu) ?? [reply];
     for (const delta of chunks) {
       if (request.signal?.aborted) return;
       yield { type: 'delta', delta };
-      await sleep(18);
+      await sleep(chunkDelayMs);
     }
   }
 }
