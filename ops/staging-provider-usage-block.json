@@ -3,5 +3,6 @@
   "clearedAt": "2026-09-22T03:12:12.323Z",
   "recoveryIssue": 254,
   "recoveryEvidence": "github-actions://since98kr/chat.ailucy.online/runs/35682253496/jobs/106601508826",
+  "recoveryPath": "staging environment HERMES_BASE_URL + HERMES_CHAT_PATH via aicos-hermes-relay.yml",
   "reason": "Fresh bounded Hermes provider recovery canary passed through the existing staging Hermes configuration."
 }
