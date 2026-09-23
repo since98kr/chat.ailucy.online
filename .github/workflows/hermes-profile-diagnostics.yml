@@ -203,6 +203,104 @@ jobs:
                   print(f'=== {path} {type(e).__name__}: {e} ===')
           PY
 
+      - name: Ask default Hermes for bounded host profile inventory
+        shell: bash
+        env:
+          HERMES_API_KEY: ${{ secrets.HERMES_API_KEY }}
+        run: |
+          set -euo pipefail
+          [[ -n "${HERMES_API_KEY:-}" ]]
+          prompt_file="${RUNNER_TEMP}/hermes-profile-inventory-prompt.txt"
+          response_file="${RUNNER_TEMP}/hermes-profile-inventory-response.json"
+          cat >"${prompt_file}" <<'PROMPT'
+          READ-ONLY HOST DIAGNOSTIC. You are the default Hermes Agent running on this host as the Hermes service user.
+
+          Use your terminal tools to inspect the local Hermes installation. Do not modify files, services, profiles, credentials, config, permissions, or processes. Do not make network calls except local inspection commands.
+
+          Inspect:
+          1) id -un, HOME, Hermes CLI version;
+          2) hermes profile list and hermes gateway list;
+          3) whether profiles gemma, lynn, xixi exist under the real Hermes home;
+          4) for each existing profile, report ONLY non-secret provider/model and API server metadata:
+             API_SERVER_ENABLED, API_SERVER_HOST, API_SERVER_PORT, API_SERVER_MODEL_NAME;
+             provider/model names from config;
+             for credential variables report only boolean set/unset for API_SERVER_KEY, OPENROUTER_API_KEY, ANTHROPIC_API_KEY, OPENAI_API_KEY, DEEPSEEK_API_KEY, LLM_API_KEY.
+             NEVER print any credential value.
+          5) list profile-related backup/export candidates under ~/.hermes whose filenames indicate gemma, lynn, or xixi, paths only;
+          6) list user-level/system service names related to Hermes profiles, names/status only.
+
+          Return one compact JSON object and nothing else with:
+          {
+            "user": "...",
+            "home": "...",
+            "hermesVersion": "...",
+            "profiles": {
+              "gemma": {"exists":true/false,"provider":"","model":"","apiServerEnabled":"","apiServerHost":"","apiServerPort":"","apiServerModelName":"","credentialSet":{"API_SERVER_KEY":true/false,"OPENROUTER_API_KEY":true/false,"ANTHROPIC_API_KEY":true/false,"OPENAI_API_KEY":true/false,"DEEPSEEK_API_KEY":true/false,"LLM_API_KEY":true/false}},
+              "lynn": {...},
+              "xixi": {...}
+            },
+            "profileList": "...sanitized...",
+            "gatewayList": "...sanitized...",
+            "backupCandidates": ["path only"],
+            "services": ["name/status only"]
+          }
+          PROMPT
+
+          python3 - "${prompt_file}" "${response_file}" <<'PY'
+          import json, os, sys, urllib.request
+          prompt_path, out_path = sys.argv[1:3]
+          prompt = open(prompt_path, encoding='utf-8').read()
+          payload = json.dumps({
+              "model":"hermes-agent",
+              "messages":[{"role":"user","content":prompt}],
+              "stream":False
+          }).encode()
+          req = urllib.request.Request(
+              "http://172.17.0.1:8642/v1/chat/completions",
+              data=payload,
+              headers={
+                  "Authorization":"Bearer "+os.environ["HERMES_API_KEY"],
+                  "Content-Type":"application/json",
+                  "User-Agent":"Lucy-CDL-hermes-host-inventory"
+              },
+              method="POST",
+          )
+          with urllib.request.urlopen(req, timeout=180) as r:
+              raw = json.load(r)
+          text = raw.get("choices",[{}])[0].get("message",{}).get("content","")
+          # Keep the raw model answer out of logs. Parse the requested JSON and
+          # re-emit only approved fields.
+          start=text.find("{"); end=text.rfind("}")
+          if start < 0 or end < start:
+              raise SystemExit("Hermes inventory did not return JSON")
+          obj=json.loads(text[start:end+1])
+          safe={
+            "user":obj.get("user",""),
+            "home":obj.get("home",""),
+            "hermesVersion":obj.get("hermesVersion",""),
+            "profiles":obj.get("profiles",{}),
+            "profileList":obj.get("profileList",""),
+            "gatewayList":obj.get("gatewayList",""),
+            "backupCandidates":obj.get("backupCandidates",[]),
+            "services":obj.get("services",[]),
+          }
+          # Reject suspicious secret-like long values before printing.
+          def walk(v,path=""):
+              if isinstance(v,dict):
+                  for k,x in v.items():
+                      kl=k.lower()
+                      if any(s in kl for s in ("key","token","secret","password")) and not isinstance(x,bool):
+                          raise SystemExit(f"unsafe inventory field: {path}/{k}")
+                      walk(x,path+"/"+k)
+              elif isinstance(v,list):
+                  for i,x in enumerate(v): walk(x,path+f"/{i}")
+              elif isinstance(v,str) and len(v)>1800:
+                  raise SystemExit(f"oversized inventory string: {path}")
+          walk(safe)
+          open(out_path,"w",encoding="utf-8").write(json.dumps(safe,ensure_ascii=False,indent=2)+"\n")
+          print(json.dumps(safe,ensure_ascii=False,indent=2))
+          PY
+
       - name: Inspect staging map coverage
         shell: bash
         env:
