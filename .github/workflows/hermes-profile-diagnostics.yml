@@ -160,6 +160,24 @@ jobs:
           done
           command -v namei >/dev/null 2>&1 && namei -l /home/since98kr/.hermes/profiles/gemma 2>/dev/null || true
 
+      - name: Inspect Hermes service failure and sudo policy summary
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo '=== sudo policy raw ==='
+          sudo -n -l 2>&1 || true
+
+          echo '=== hermes-gateway status ==='
+          systemctl --no-pager --full status hermes-gateway.service 2>&1 | sed -n '1,80p' || true
+
+          echo '=== hermes-gateway recent journal ==='
+          journalctl -u hermes-gateway.service --since '10 minutes ago' --no-pager 2>/dev/null \
+            | sed -E 's/((KEY|TOKEN|SECRET|PASSWORD)[^= ]*=)[^ ;]*/\\1<redacted>/Ig' \
+            | tail -120 || true
+
+          echo '=== hermes-serve status ==='
+          systemctl --no-pager --full status hermes-serve.service 2>&1 | sed -n '1,60p' || true
+
       - name: Inspect staging map coverage
         shell: bash
         env:
