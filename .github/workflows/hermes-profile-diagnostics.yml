@@ -60,6 +60,40 @@ jobs:
             timeout 10s hermes $args 2>&1 | sed -E 's/(key|token|secret|password)=[^[:space:]]+/\1=<redacted>/Ig' | head -120 || true
           done
 
+
+      - name: Inspect Hermes host topology without reading secret values
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo '=== runner identity ==='
+          echo "user=$(id -un)"
+          echo "home=$HOME"
+
+          echo '=== system Hermes services ==='
+          systemctl list-units --type=service --all --no-pager 2>/dev/null \
+            | awk 'tolower($0) ~ /hermes|gemma|lynn|xixi/' || true
+          systemctl list-unit-files --type=service --no-pager 2>/dev/null \
+            | awk 'tolower($0) ~ /hermes|gemma|lynn|xixi/' || true
+
+          echo '=== Hermes process owners and executable paths ==='
+          for pid in $(pgrep -x hermes 2>/dev/null || true); do
+            user=$(ps -o user= -p "$pid" | xargs || true)
+            exe=$(readlink "/proc/$pid/exe" 2>/dev/null || echo '<unreadable>')
+            cwd=$(readlink "/proc/$pid/cwd" 2>/dev/null || echo '<unreadable>')
+            printf 'pid=%s user=%s exe=%s cwd=%s\n' "$pid" "$user" "$exe" "$cwd"
+          done
+
+          echo '=== Hermes homes/profile directory names only ==='
+          for root in /home/*/.hermes /root/.hermes /opt/*/.hermes; do
+            [[ -d "$root" ]] || continue
+            echo "root=$root"
+            if [[ -d "$root/profiles" ]]; then
+              find "$root/profiles" -mindepth 1 -maxdepth 1 -type d -printf 'profile=%f\n' 2>/dev/null | sort || true
+            else
+              echo 'profiles=<missing-or-unreadable>'
+            fi
+          done
+
       - name: Inspect staging map coverage
         shell: bash
         env:
