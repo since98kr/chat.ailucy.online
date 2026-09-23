@@ -94,6 +94,45 @@ jobs:
             fi
           done
 
+      - name: Inspect since98kr Hermes profile metadata read-only
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo '=== system unit metadata ==='
+          systemctl show hermes-gateway.service hermes-serve.service \
+            -p Id -p User -p Group -p WorkingDirectory -p ExecStart -p EnvironmentFiles --no-pager 2>/dev/null \
+            | sed -E 's/((KEY|TOKEN|SECRET|PASSWORD)[^= ]*=)[^ ;]*/\\1<redacted>/Ig' || true
+
+          echo '=== existing sudo capability ==='
+          if ! sudo -n -u since98kr true 2>/dev/null; then
+            echo 'sudo-since98kr=unavailable'
+            exit 0
+          fi
+          echo 'sudo-since98kr=available'
+
+          sudo -n -u since98kr bash -lc '\
+            set -euo pipefail; \
+            echo "home=$HOME"; \
+            echo "hermes_bin=$(command -v hermes 2>/dev/null || true)"; \
+            hermes --version 2>/dev/null || true; \
+            root="$HOME/.hermes"; \
+            echo "root_exists=$([[ -d "$root" ]] && echo yes || echo no)"; \
+            if [[ -d "$root/profiles" ]]; then \
+              for p in gemma lynn xixi; do \
+                envf="$root/profiles/$p/.env"; \
+                echo "--- profile=$p env=$([[ -f "$envf" ]] && echo present || echo missing) ---"; \
+                if [[ -f "$envf" ]]; then \
+                  awk -F= '\''\
+                    /^(API_SERVER_ENABLED|API_SERVER_HOST|API_SERVER_PORT|API_SERVER_MODEL_NAME)=/ {print $1"="$2} \
+                    /^(API_SERVER_KEY|OPENROUTER_API_KEY|ANTHROPIC_API_KEY|OPENAI_API_KEY|DEEPSEEK_API_KEY|LLM_API_KEY)=/ {print $1"=<set:"(length($2)>0?"yes":"no")">"} \
+                    /^(LLM_MODEL|MODEL|MODEL_NAME|LLM_PROVIDER|PROVIDER)=/ {print $1"="$2} \
+                  '\'' "$envf" | sort; \
+                fi; \
+              done; \
+            else \
+              echo profiles=missing; \
+            fi'
+
       - name: Inspect staging map coverage
         shell: bash
         env:
