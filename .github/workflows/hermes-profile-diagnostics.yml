@@ -133,6 +133,33 @@ jobs:
               echo profiles=missing; \
             fi'
 
+      - name: Inspect existing privilege and profile path metadata
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo '=== sudo noninteractive policy ==='
+          sudo -n -l 2>&1 | sed -E 's/((KEY|TOKEN|SECRET|PASSWORD)[^= ]*=)[^ ;]*/\\1<redacted>/Ig' || true
+
+          echo '=== system unit definitions ==='
+          systemctl cat hermes-gateway.service hermes-serve.service --no-pager 2>/dev/null \
+            | sed -E 's/((KEY|TOKEN|SECRET|PASSWORD)[^= ]*=)[^ ;]*/\\1<redacted>/Ig' || true
+
+          echo '=== profile path permission chain ==='
+          for p in \
+            /home/since98kr \
+            /home/since98kr/.hermes \
+            /home/since98kr/.hermes/profiles \
+            /home/since98kr/.hermes/profiles/gemma \
+            /home/since98kr/.hermes/profiles/lynn \
+            /home/since98kr/.hermes/profiles/xixi; do
+            if [[ -e "$p" ]]; then
+              stat -c '%A %a %U %G %n' "$p" 2>/dev/null || true
+            else
+              echo "missing-or-inaccessible $p"
+            fi
+          done
+          command -v namei >/dev/null 2>&1 && namei -l /home/since98kr/.hermes/profiles/gemma 2>/dev/null || true
+
       - name: Inspect staging map coverage
         shell: bash
         env:
@@ -140,12 +167,16 @@ jobs:
           URL_MAP: ${{ vars.HERMES_BASE_URL_MAP_JSON }}
         run: |
           set -euo pipefail
-          node <<'NODE'
-          const required=['[Hermes] Lucy','Xixi','Lynn','Gemma'];
-          for (const [label,raw] of [['model',process.env.MODEL_MAP],['url',process.env.URL_MAP]]) {
-            let map={};
-            try { map=raw?.trim()?JSON.parse(raw):{}; } catch { console.log(`${label}: invalid-json`); continue; }
-            console.log(`${label} keys: ${Object.keys(map).sort().join(', ') || '<none>'}`);
-            for (const id of required) console.log(`${label} ${id}: ${typeof map[id]==='string'&&map[id].trim()?'present':'missing'}`);
-          }
-          NODE
+          python3 - <<'PY'
+          import json, os
+          required=['[Hermes] Lucy','Xixi','Lynn','Gemma']
+          for label,raw in [('model',os.getenv('MODEL_MAP','')),('url',os.getenv('URL_MAP',''))]:
+              try:
+                  m=json.loads(raw) if raw.strip() else {}
+              except Exception:
+                  print(f'{label}: invalid-json')
+                  continue
+              print(f"{label} keys: {', '.join(sorted(m)) if m else '<none>'}")
+              for ident in required:
+                  print(f"{label} {ident}: {'present' if isinstance(m.get(ident),str) and m[ident].strip() else 'missing'}")
+          PY
