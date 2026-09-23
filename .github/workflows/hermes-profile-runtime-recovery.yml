@@ -1,0 +1,154 @@
+name: Recover Hermes staging profile runtimes
+
+on:
+  push:
+    branches:
+      - lucy/hermes-profile-runtime-recovery-20260923
+
+permissions:
+  contents: read
+
+concurrency:
+  group: chat-v2-hermes-profile-runtime-recovery
+  cancel-in-progress: false
+
+jobs:
+  recover:
+    runs-on: [self-hosted, linux, x64, chat-staging]
+    environment: staging
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Recover existing Hermes profile gateways through default Hermes host agent
+        shell: bash
+        env:
+          HERMES_API_KEY: ${{ secrets.HERMES_API_KEY }}
+        run: |
+          set -euo pipefail
+          [[ -n "${HERMES_API_KEY:-}" ]]
+          prompt_file="${RUNNER_TEMP}/hermes-profile-recovery-prompt.txt"
+          cat >"${prompt_file}" <<'PROMPT'
+          AUTHORIZED HOST RECOVERY. The operator explicitly approved restoring the existing Hermes staging profile runtimes.
+
+          You are the default Hermes Agent running as the Hermes service user on this host. Use terminal tools to perform ONLY the bounded recovery below.
+
+          Existing target profiles: gemma, lynn, xixi.
+          Do NOT create new profiles. Do NOT change provider/model selections. Do NOT change any API/provider credential values. Do NOT run Hermes update. Do NOT run gateway migrate/multiplex. Do NOT touch the default profile gateway except read-only verification. Do NOT change Chat, GitHub, Cloudflare/DNS, production, databases, firewall, or network policy.
+
+          For each target profile:
+          1) Confirm the profile exists and its configured API server port/model are respectively:
+             gemma -> 8643 / gemma
+             lynn  -> 8644 / lynn
+             xixi  -> 8645 / xixi
+             If any mismatch exists, STOP for that profile and report BLOCKED; do not rewrite config.
+          2) Confirm API_SERVER_KEY is set. Compare it to the default profile API_SERVER_KEY and report only same/different as a boolean. NEVER print either value.
+          3) Create a local backup/export before service changes. Store under ~/.hermes/backups/chat-staging-profile-recovery-20260923/ with restrictive permissions. Never print backup contents.
+          4) Install the profile gateway service if needed using the supported Hermes CLI for that profile, then start it. Prefer:
+               hermes -p <profile> gateway install
+               hermes -p <profile> gateway start
+             Treat already-installed/already-running as success. Do not migrate to multiplex mode.
+          5) Verify persistence/service state with Hermes gateway status/list and systemd information available to this user.
+          6) Verify the configured API listener is actually listening on 172.17.0.1:<port>.
+          7) Using that profile's own API_SERVER_KEY read locally and never printed, verify:
+             - GET /v1/models -> HTTP 200 and the expected model id;
+             - one POST /v1/chat/completions with a harmless marker prompt returns HTTP 200 and a non-empty assistant answer.
+             Do not include raw model responses in the final report.
+
+          Also verify default port 8642 remains listening and default gateway remains running.
+
+          Return exactly one JSON object and nothing else:
+          {
+            "status":"PASS|PARTIAL|BLOCKED",
+            "profiles":{
+              "gemma":{"configMatch":true,"apiKeySet":true,"apiKeyMatchesDefault":true/false,"backupCreated":true,"serviceInstalled":true,"serviceRunning":true,"listener":true,"modelsHttp":200,"modelId":"gemma","chatHttp":200,"chatNonEmpty":true},
+              "lynn":{"configMatch":true,"apiKeySet":true,"apiKeyMatchesDefault":true/false,"backupCreated":true,"serviceInstalled":true,"serviceRunning":true,"listener":true,"modelsHttp":200,"modelId":"lynn","chatHttp":200,"chatNonEmpty":true},
+              "xixi":{"configMatch":true,"apiKeySet":true,"apiKeyMatchesDefault":true/false,"backupCreated":true,"serviceInstalled":true,"serviceRunning":true,"listener":true,"modelsHttp":200,"modelId":"xixi","chatHttp":200,"chatNonEmpty":true}
+            },
+            "defaultGatewayRunning":true,
+            "default8642Listening":true,
+            "gatewayList":"sanitized status only",
+            "notes":["safe non-secret notes only"]
+          }
+          PROMPT
+
+          python3 - "${prompt_file}" <<'PY'
+          import json, os, sys, urllib.request
+          prompt=open(sys.argv[1],encoding='utf-8').read()
+          payload=json.dumps({
+              "model":"hermes-agent",
+              "messages":[{"role":"user","content":prompt}],
+              "stream":False
+          }).encode()
+          req=urllib.request.Request(
+              "http://172.17.0.1:8642/v1/chat/completions",
+              data=payload,
+              headers={
+                  "Authorization":"Bearer "+os.environ["HERMES_API_KEY"],
+                  "Content-Type":"application/json",
+                  "User-Agent":"Lucy-CDL-hermes-profile-recovery"
+              },
+              method="POST",
+          )
+          with urllib.request.urlopen(req,timeout=420) as r:
+              raw=json.load(r)
+          text=raw.get("choices",[{}])[0].get("message",{}).get("content","")
+          start=text.find("{"); end=text.rfind("}")
+          if start<0 or end<start:
+              raise SystemExit("Hermes recovery did not return JSON")
+          obj=json.loads(text[start:end+1])
+          allowed_profile_fields=[
+              "configMatch","apiKeySet","apiKeyMatchesDefault","backupCreated",
+              "serviceInstalled","serviceRunning","listener","modelsHttp","modelId",
+              "chatHttp","chatNonEmpty"
+          ]
+          safe_profiles={}
+          for name in ("gemma","lynn","xixi"):
+              src=(obj.get("profiles") or {}).get(name) or {}
+              safe_profiles[name]={k:src.get(k) for k in allowed_profile_fields}
+          safe={
+              "status":obj.get("status",""),
+              "profiles":safe_profiles,
+              "defaultGatewayRunning":obj.get("defaultGatewayRunning"),
+              "default8642Listening":obj.get("default8642Listening"),
+              "gatewayList":obj.get("gatewayList",""),
+              "notes":obj.get("notes",[]),
+          }
+          blob=json.dumps(safe,ensure_ascii=False).lower()
+          for marker in ("bearer ","sk-","api_key=","token=","password=","secret="):
+              if marker in blob:
+                  raise SystemExit("unsafe recovery output rejected")
+          print(json.dumps(safe,ensure_ascii=False,indent=2))
+          if safe["status"] != "PASS":
+              raise SystemExit("Hermes profile recovery was not PASS")
+          for name,p in safe_profiles.items():
+              required=[
+                  p.get("configMatch") is True,
+                  p.get("apiKeySet") is True,
+                  p.get("apiKeyMatchesDefault") is True,
+                  p.get("backupCreated") is True,
+                  p.get("serviceInstalled") is True,
+                  p.get("serviceRunning") is True,
+                  p.get("listener") is True,
+                  p.get("modelsHttp")==200,
+                  p.get("modelId")==name,
+                  p.get("chatHttp")==200,
+                  p.get("chatNonEmpty") is True,
+              ]
+              if not all(required):
+                  raise SystemExit(f"profile recovery validation failed: {name}")
+          if safe.get("defaultGatewayRunning") is not True or safe.get("default8642Listening") is not True:
+              raise SystemExit("default Hermes regression")
+          PY
+
+      - name: Verify host listeners without credentials
+        shell: bash
+        run: |
+          set -euo pipefail
+          ss -ltn | awk 'NR==1 || /172\.17\.0\.1:(8642|8643|8644|8645)[[:space:]]/'
+          for port in 8642 8643 8644 8645; do
+            ss -ltn | grep -qE "172\.17\.0\.1:${port}[[:space:]]" || {
+              echo "missing listener: ${port}" >&2
+              exit 1
+            }
+          done
