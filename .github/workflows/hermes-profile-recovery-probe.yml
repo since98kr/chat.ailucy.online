@@ -19,53 +19,33 @@ jobs:
     environment: staging
     timeout-minutes: 4
     steps:
-      - name: Probe existing since98kr persistence capabilities
+      - name: Verify profile listeners and authenticated model endpoints
         env:
           HERMES_API_KEY: ${{ secrets.HERMES_API_KEY }}
         shell: bash
         run: |
           set -euo pipefail
-          OUT=/tmp/lucy-hermes-persistence-capabilities-20260924.json
-          rm -f "$OUT" 2>/dev/null || true
+          echo '=== listeners ==='
+          ss -ltn 2>/dev/null | awk 'NR==1 || /:(8642|8643|8644|8645)[[:space:]]/' || true
+
           python3 - <<'PY'
-          import json,os,urllib.request
-          script=r'''python3 - <<'HOSTPY'
-          from pathlib import Path
-          import subprocess,json,os
-          def run(cmd,timeout=12):
+          import json,os,urllib.request,urllib.error
+          key=os.environ["HERMES_API_KEY"]
+          for name,port,expected in [
+              ("default",8642,"hermes-agent"),
+              ("gemma",8643,"gemma"),
+              ("lynn",8644,"lynn"),
+              ("xixi",8645,"xixi"),
+          ]:
+              url=f"http://172.17.0.1:{port}/v1/models"
+              req=urllib.request.Request(url,headers={"Authorization":"Bearer "+key,"User-Agent":"Lucy-CDL-profile-health"})
               try:
-                  p=subprocess.run(cmd,capture_output=True,text=True,timeout=timeout)
-                  return {"rc":p.returncode,"out":(p.stdout+"\n"+p.stderr)[:12000]}
+                  with urllib.request.urlopen(req,timeout=8) as r:
+                      obj=json.load(r)
+                  ids=[x.get("id") for x in obj.get("data",[]) if isinstance(x,dict)]
+                  print(json.dumps({"profile":name,"port":port,"http":200,"models":ids,"expectedPresent":expected in ids},sort_keys=True))
+              except urllib.error.HTTPError as e:
+                  print(json.dumps({"profile":name,"port":port,"http":e.code,"error":"http"},sort_keys=True))
               except Exception as e:
-                  return {"rc":-1,"out":type(e).__name__}
-          root=Path.home()/".hermes"
-          py=root/"hermes-agent"/"venv"/"bin"/"python"
-          sudo=run(["sudo","-n","-l"])
-          # Keep only command-policy lines; never emit passwords or env.
-          sudo_lines=[x.strip() for x in sudo["out"].splitlines() if x.strip() and not any(w in x.lower() for w in ("password","passwd"))][:100]
-          data={
-            "user":os.environ.get("USER",""),
-            "systemctlUserIsSystemRunning":run(["systemctl","--user","is-system-running"])["rc"],
-            "crontabAvailable":run(["sh","-lc","command -v crontab >/dev/null"])["rc"]==0,
-            "sudoNonInteractiveRc":sudo["rc"],
-            "sudoPolicyLines":sudo_lines,
-            "gatewayInstallHelp":run([str(py),"-m","hermes_cli.main","gateway","install","--help"])["out"][:12000],
-            "gatewayList":run([str(py),"-m","hermes_cli.main","gateway","list"])["out"][:12000]
-          }
-          dest=Path("/tmp/lucy-hermes-persistence-capabilities-20260924.json")
-          dest.write_text(json.dumps(data,ensure_ascii=False,indent=2)+"\n")
-          dest.chmod(0o644)
-          print("LUCY_PERSISTENCE_CAPS_WRITTEN")
-          HOSTPY'''
-          prompt=("AUTHORIZED READ-ONLY LOCAL DIAGNOSTIC. Execute the script below verbatim once with the terminal tool. "
-                  "It only checks existing privilege/service capabilities and prints no credential values. "
-                  "After success reply exactly LUCY_PERSISTENCE_CAPS_WRITTEN.\n\n"+script)
-          payload=json.dumps({"model":"hermes-agent","messages":[{"role":"user","content":prompt}],"stream":False}).encode()
-          req=urllib.request.Request("http://172.17.0.1:8642/v1/chat/completions",data=payload,headers={
-            "Authorization":"Bearer "+os.environ["HERMES_API_KEY"],"Content-Type":"application/json","User-Agent":"Lucy-CDL-persistence-caps"},method="POST")
-          with urllib.request.urlopen(req,timeout=90) as r: raw=json.load(r)
-          ans=raw.get("choices",[{}])[0].get("message",{}).get("content","")
-          if "LUCY_PERSISTENCE_CAPS_WRITTEN" not in ans: raise SystemExit("Hermes did not confirm persistence caps")
+                  print(json.dumps({"profile":name,"port":port,"http":None,"error":type(e).__name__},sort_keys=True))
           PY
-          [[ -r "$OUT" ]] || { echo "caps file missing"; exit 1; }
-          cat "$OUT"
