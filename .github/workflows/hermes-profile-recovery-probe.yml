@@ -31,27 +31,40 @@ jobs:
           import json,os,urllib.request
           script=r'''python3 - <<'HOSTPY'
           from pathlib import Path
-          import json, subprocess, urllib.request, urllib.error, re
+          import json, subprocess, urllib.request, urllib.error, re, os
 
-          def sh(cmd,timeout=5):
+          def run(args,timeout=5):
               try:
-                  p=subprocess.run(["sh","-lc",cmd],capture_output=True,text=True,timeout=timeout)
+                  p=subprocess.run(args,capture_output=True,text=True,timeout=timeout)
                   out=(p.stdout+"\n"+p.stderr)
                   out=re.sub(r'(?i)(api[_-]?key|token|secret|password)=\S+',r'\1=<redacted>',out)
                   return {"rc":p.returncode,"out":out[:12000]}
               except Exception as e:
                   return {"rc":-1,"out":type(e).__name__}
 
-          listener=sh("ss -ltnp 2>/dev/null | grep ':18793 ' || true")
-          pidcmd=r'''pid=$(ss -ltnp 2>/dev/null | sed -n 's/.*:18793 .*pid=\([0-9][0-9]*\).*/\1/p' | head -1); if [ -n "$pid" ]; then echo PID=$pid; ps -o pid=,ppid=,user=,comm=,args= -p "$pid"; echo EXE=$(readlink /proc/"$pid"/exe 2>/dev/null || true); echo CWD=$(readlink /proc/"$pid"/cwd 2>/dev/null || true); fi'''
-          process=sh(pidcmd)
-          units=sh("systemctl --user list-units --type=service --all --no-pager 2>/dev/null | grep -Ei '18793|qwen|vllm|tunnel|ssh|inference|gemma' || true")
+          ss=run(["ss","-ltnp"])
+          pid=None
+          for line in ss["out"].splitlines():
+              if ":18793 " not in line:
+                  continue
+              m=re.search(r'pid=(\d+)',line)
+              if m:
+                  pid=int(m.group(1))
+                  break
+
+          proc={"pid":pid}
+          if pid:
+              proc["ps"]=run(["ps","-o","pid=,ppid=,user=,comm=,args=","-p",str(pid)])
+              for kind in ("exe","cwd"):
+                  try: proc[kind]=os.readlink(f"/proc/{pid}/{kind}")
+                  except Exception as e: proc[kind]=type(e).__name__
+
+          units=run(["sh","-lc","systemctl --user list-units --type=service --all --no-pager 2>/dev/null | grep -Ei 'qwen|vllm|tunnel|ssh|inference|gemma' || true"])
 
           http=[]
-          for path in ["/v1/models","/version","/health"]:
-              url="http://127.0.0.1:18793"+path
+          for path in ("/v1/models","/version","/health"):
               try:
-                  req=urllib.request.Request(url,headers={"User-Agent":"Lucy-CDL-readonly"})
+                  req=urllib.request.Request("http://127.0.0.1:18793"+path,headers={"User-Agent":"Lucy-CDL-readonly"})
                   with urllib.request.urlopen(req,timeout=3) as r:
                       body=r.read(8000).decode("utf-8","replace")
                   http.append({"path":path,"status":r.status,"body":body[:8000]})
@@ -61,7 +74,7 @@ jobs:
                   http.append({"path":path,"status":None,"error":type(e).__name__})
 
           dest=Path("/tmp/lucy-gemma-backend-18793-fast-20260924.json")
-          dest.write_text(json.dumps({"listener":listener,"process":process,"units":units,"http":http},ensure_ascii=False,indent=2)+"\n")
+          dest.write_text(json.dumps({"listener":ss,"process":proc,"units":units,"http":http},ensure_ascii=False,indent=2)+"\n")
           dest.chmod(0o644)
           print("LUCY_GEMMA_BACKEND_FAST_WRITTEN")
           HOSTPY'''
