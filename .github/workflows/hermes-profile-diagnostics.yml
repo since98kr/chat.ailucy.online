@@ -324,8 +324,8 @@ jobs:
                   body=urllib.request.urlopen(url,timeout=10).read(5_000_000).decode('utf-8','replace')
               except Exception as e:
                   print('fetch-failed',src,type(e).__name__,str(e)); continue
-              for pat in [r'["\\\'](/api/[A-Za-z0-9_?&=./:{}-]+)', r'fetch\\(["\\\'](/api/[A-Za-z0-9_?&=./:{}-]+)']:
-                  for x in re.findall(pat,body): routes.add(x)
+              for x in re.findall(r'/api/[A-Za-z0-9_?&=./:{}-]+', body):
+                  routes.add(x)
           for route in sorted(routes): print(route)
           PY
 
