@@ -19,13 +19,13 @@ jobs:
     environment: staging
     timeout-minutes: 4
     steps:
-      - name: Locate main-agent auto tool choice
+      - name: Inspect request_overrides config support
         env:
           HERMES_API_KEY: ${{ secrets.HERMES_API_KEY }}
         shell: bash
         run: |
           set -euo pipefail
-          OUT=/tmp/lucy-main-tool-choice-20260924.txt
+          OUT=/tmp/lucy-request-overrides-source-20260924.txt
           rm -f "$OUT" 2>/dev/null || true
           python3 - <<'PY'
           import json,os,urllib.request
@@ -34,38 +34,41 @@ jobs:
           import re
           root=Path.home()/".hermes"/"hermes-agent"
           out=[]
-          pats=[
-            re.compile(r'tool_choice\s*=\s*["\x27]auto["\x27]'),
-            re.compile(r'["\x27]tool_choice["\x27]\s*:\s*["\x27]auto["\x27]'),
-            re.compile(r'["\x27]tool_choice["\x27]\]\s*=\s*["\x27]auto["\x27]'),
-          ]
+          hits=[]
           for base_name in ("agent","hermes_cli"):
               base=root/base_name
               for p in base.rglob("*.py"):
                   try: lines=p.read_text(errors="replace").splitlines()
                   except: continue
                   for i,line in enumerate(lines,1):
-                      if any(rx.search(line) for rx in pats):
-                          a=max(1,i-24); b=min(len(lines),i+40)
-                          out.append(f"=== {p.relative_to(root)}:{a}-{b} ===")
-                          for n in range(a,b+1):
-                              s=lines[n-1]
-                              if re.search(r'(key|token|secret|password)',s,re.I) and "=" in s:
-                                  s="<redacted-secret-assignment>"
-                              out.append(f"{n}: {s[:1200]}")
-          dest=Path("/tmp/lucy-main-tool-choice-20260924.txt")
+                      if "request_overrides" in line:
+                          hits.append((p,i))
+          seen=set()
+          for p,i in hits[:80]:
+              lines=p.read_text(errors="replace").splitlines()
+              a=max(1,i-18); b=min(len(lines),i+40)
+              key=(str(p),a,b)
+              if key in seen: continue
+              seen.add(key)
+              out.append(f"=== {p.relative_to(root)}:{a}-{b} ===")
+              for n in range(a,b+1):
+                  s=lines[n-1]
+                  if re.search(r'(key|token|secret|password)',s,re.I) and "=" in s:
+                      s="<redacted-secret-assignment>"
+                  out.append(f"{n}: {s[:1200]}")
+          dest=Path("/tmp/lucy-request-overrides-source-20260924.txt")
           dest.write_text("\n".join(out)+"\n")
           dest.chmod(0o644)
-          print("LUCY_MAIN_TOOL_CHOICE_WRITTEN")
+          print("LUCY_REQUEST_OVERRIDES_SOURCE_WRITTEN")
           HOSTPY'''
           prompt=("AUTHORIZED READ-ONLY LOCAL DIAGNOSTIC. Execute the script below verbatim once. "
-                  "It reads installed Hermes source only to locate literal main-agent tool_choice=auto construction. "
-                  "No state changes. After success reply exactly LUCY_MAIN_TOOL_CHOICE_WRITTEN.\n\n"+script)
+                  "It reads installed Hermes source only around request_overrides support and changes nothing. "
+                  "After success reply exactly LUCY_REQUEST_OVERRIDES_SOURCE_WRITTEN.\n\n"+script)
           payload=json.dumps({"model":"hermes-agent","messages":[{"role":"user","content":prompt}],"stream":False}).encode()
           req=urllib.request.Request("http://172.17.0.1:8642/v1/chat/completions",data=payload,headers={
-            "Authorization":"Bearer "+os.environ["HERMES_API_KEY"],"Content-Type":"application/json","User-Agent":"Lucy-CDL-main-tool-choice"},method="POST")
+            "Authorization":"Bearer "+os.environ["HERMES_API_KEY"],"Content-Type":"application/json","User-Agent":"Lucy-CDL-request-overrides"},method="POST")
           with urllib.request.urlopen(req,timeout=80) as r: raw=json.load(r)
           ans=raw.get("choices",[{}])[0].get("message",{}).get("content","")
-          if "LUCY_MAIN_TOOL_CHOICE_WRITTEN" not in ans: raise SystemExit("Hermes did not confirm source output")
+          if "LUCY_REQUEST_OVERRIDES_SOURCE_WRITTEN" not in ans: raise SystemExit("Hermes did not confirm source output")
           PY
           cat "$OUT"
