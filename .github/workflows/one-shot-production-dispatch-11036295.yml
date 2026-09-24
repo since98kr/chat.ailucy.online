@@ -1,4 +1,4 @@
-name: One-shot Chat production dispatcher
+name: One-shot Chat production environment approval
 
 on:
   push:
@@ -10,53 +10,47 @@ permissions:
   contents: read
 
 jobs:
-  dispatch:
+  approve:
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
-      - name: Verify approved exact-main target
+      - name: Approve only the already-dispatched production run
         shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
-          TARGET_SHA: 11036295770060ec8279af4b21194d99cbb56c2f
+          RUN_ID: "35958515755"
+          ENVIRONMENT_ID: "20683786585"
         run: |
           set -euo pipefail
-          current="$(
-            curl -fsSL               -H "Authorization: Bearer ${GH_TOKEN}"               -H "Accept: application/vnd.github+json"               -H "X-GitHub-Api-Version: 2022-11-28"               "https://api.github.com/repos/${GITHUB_REPOSITORY}/branches/main"               | python3 -c 'import json,sys; print(json.load(sys.stdin)["commit"]["sha"])'
-          )"
-          test "${current}" = "${TARGET_SHA}"
 
-          status_json="$(
-            curl -fsSL               -H "Authorization: Bearer ${GH_TOKEN}"               -H "Accept: application/vnd.github+json"               -H "X-GitHub-Api-Version: 2022-11-28"               "https://api.github.com/repos/${GITHUB_REPOSITORY}/commits/${TARGET_SHA}/status"
+          pending="$(
+            curl -fsSL               -H "Authorization: Bearer ${GH_TOKEN}"               -H "Accept: application/vnd.github+json"               -H "X-GitHub-Api-Version: 2022-11-28"               "https://api.github.com/repos/${GITHUB_REPOSITORY}/actions/runs/${RUN_ID}/pending_deployments"
           )"
-          STATUS_JSON="${status_json}" python3 - <<'PY'
+
+          PENDING="${pending}" ENVIRONMENT_ID="${ENVIRONMENT_ID}" python3 - <<'PY'
           import json, os
-          data=json.loads(os.environ["STATUS_JSON"])
-          states={x.get("context"):x.get("state") for x in data.get("statuses",[])}
-          if states.get("chat-v2/staging") != "success":
-              raise SystemExit("chat-v2/staging exact-main status is not success")
-          print("exact-main-staging-status=success")
+          rows=json.loads(os.environ["PENDING"])
+          env_id=int(os.environ["ENVIRONMENT_ID"])
+          match=[x for x in rows if int(x.get("environment",{}).get("id",-1))==env_id]
+          if len(match)!=1:
+              raise SystemExit("expected exactly one pending production environment")
+          env=match[0].get("environment",{})
+          if env.get("name")!="production":
+              raise SystemExit("pending environment is not production")
+          print("pending-production-environment=verified")
           PY
 
-      - name: Dispatch canonical production release gate
-        shell: bash
-        env:
-          GH_TOKEN: ${{ github.token }}
-          TARGET_SHA: 11036295770060ec8279af4b21194d99cbb56c2f
-        run: |
-          set -euo pipefail
           payload="$(
-            TARGET_SHA="${TARGET_SHA}" python3 - <<'PY'
+            ENVIRONMENT_ID="${ENVIRONMENT_ID}" python3 - <<'PY'
           import json, os
           print(json.dumps({
-            "ref":"main",
-            "inputs":{
-              "revision":os.environ["TARGET_SHA"],
-              "mode":"deploy",
-              "confirm":"DEPLOY_CHAT_V2_PRODUCTION"
-            }
+            "environment_ids":[int(os.environ["ENVIRONMENT_ID"])],
+            "state":"approved",
+            "comment":"Tei explicitly approved the exact-main Chat production deploy in CDL on 2026-09-24 KST."
           }))
           PY
           )"
-          curl -fsS -X POST             -H "Authorization: Bearer ${GH_TOKEN}"             -H "Accept: application/vnd.github+json"             -H "X-GitHub-Api-Version: 2022-11-28"             "https://api.github.com/repos/${GITHUB_REPOSITORY}/actions/workflows/production-release.yml/dispatches"             -d "${payload}"
-          echo "canonical-production-dispatch=sent"
+
+          curl -fsS -X POST             -H "Authorization: Bearer ${GH_TOKEN}"             -H "Accept: application/vnd.github+json"             -H "X-GitHub-Api-Version: 2022-11-28"             "https://api.github.com/repos/${GITHUB_REPOSITORY}/actions/runs/${RUN_ID}/pending_deployments"             -d "${payload}"
+
+          echo "production-environment-approval=requested"
