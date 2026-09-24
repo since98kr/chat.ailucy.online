@@ -26,33 +26,38 @@ jobs:
           set -euo pipefail
           python3 - <<'PY'
           import json, os, urllib.request
-          prompt = """AUTHORIZED READ-ONLY LOCAL PROBE.
-Use your terminal tool only on this host. Do not modify anything.
-Run only these checks:
-1) id -un
-2) test -d "$HOME/.hermes/profiles" and, if it exists, list only immediate directory names under it.
-3) for gemma, lynn, xixi report whether ~/.hermes/profiles/<name>/.env exists.
-4) report whether command 'systemctl --user is-system-running' succeeds (yes/no only).
-Return exactly one compact JSON object with keys user, profileDirExists, profileNames, envExists{gemma,lynn,xixi}, userSystemdAvailable. Never print secret/config values."""
+          prompt = (
+              "AUTHORIZED READ-ONLY LOCAL PROBE. Use your terminal tool only on this host. "
+              "Do not modify anything. Run only: id -un; test whether $HOME/.hermes/profiles exists; "
+              "list only immediate profile directory names; report whether gemma/lynn/xixi .env files exist; "
+              "report whether systemctl --user is-system-running succeeds. "
+              "Return exactly one compact JSON object with keys user, profileDirExists, profileNames, "
+              "envExists with gemma/lynn/xixi booleans, and userSystemdAvailable. Never print secret/config values."
+          )
           payload=json.dumps({"model":"hermes-agent","messages":[{"role":"user","content":prompt}],"stream":False}).encode()
           req=urllib.request.Request(
-            "http://172.17.0.1:8642/v1/chat/completions",
-            data=payload,
-            headers={"Authorization":"Bearer "+os.environ["HERMES_API_KEY"],"Content-Type":"application/json","User-Agent":"Lucy-CDL-profile-probe"},
-            method="POST"
+              "http://172.17.0.1:8642/v1/chat/completions",
+              data=payload,
+              headers={
+                  "Authorization":"Bearer "+os.environ["HERMES_API_KEY"],
+                  "Content-Type":"application/json",
+                  "User-Agent":"Lucy-CDL-profile-probe"
+              },
+              method="POST"
           )
           with urllib.request.urlopen(req,timeout=75) as r:
-            raw=json.load(r)
-          text=raw.get("choices",[{}])[0].get("message",{}).get("content","")
-          a=text.find("{"); b=text.rfind("}")
-          if a<0 or b<a: raise SystemExit("probe did not return JSON")
-          obj=json.loads(text[a:b+1])
+              raw=json.load(r)
+          ans=raw.get("choices",[{}])[0].get("message",{}).get("content","")
+          a=ans.find("{"); b=ans.rfind("}")
+          if a < 0 or b < a:
+              raise SystemExit("probe did not return JSON")
+          obj=json.loads(ans[a:b+1])
           safe={
-            "user":str(obj.get("user",""))[:80],
-            "profileDirExists":bool(obj.get("profileDirExists",False)),
-            "profileNames":[str(x)[:80] for x in obj.get("profileNames",[])][:20],
-            "envExists":{k:bool((obj.get("envExists") or {}).get(k,False)) for k in ("gemma","lynn","xixi")},
-            "userSystemdAvailable":bool(obj.get("userSystemdAvailable",False))
+              "user":str(obj.get("user",""))[:80],
+              "profileDirExists":bool(obj.get("profileDirExists",False)),
+              "profileNames":[str(x)[:80] for x in obj.get("profileNames",[])][:20],
+              "envExists":{k:bool((obj.get("envExists") or {}).get(k,False)) for k in ("gemma","lynn","xixi")},
+              "userSystemdAvailable":bool(obj.get("userSystemdAvailable",False))
           }
           print(json.dumps(safe,ensure_ascii=False,sort_keys=True))
           PY
