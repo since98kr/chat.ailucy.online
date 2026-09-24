@@ -11,87 +11,175 @@ permissions:
 
 concurrency:
   group: chat-v2-hermes-profile-recovery-probe
-  cancel-in-progress: true
+  cancel-in-progress: false
 
 jobs:
   probe:
     runs-on: [self-hosted, linux, x64, chat-staging]
     environment: staging
-    timeout-minutes: 6
+    timeout-minutes: 5
     steps:
-      - name: Inspect B200 vLLM 8080 runtime read-only
+      - name: Launch guarded B200 Qwen vision repair
         env:
           HERMES_API_KEY: ${{ secrets.HERMES_API_KEY }}
         shell: bash
         run: |
           set -euo pipefail
-          OUT=/tmp/lucy-b200-vllm-8080-20260924.json
-          rm -f "$OUT" 2>/dev/null || true
           python3 - <<'PY'
-          import json,os,urllib.request
-          script=r'''python3 - <<'HOSTPY'
-          from pathlib import Path
-          import json,re,subprocess
+          import base64,json,os,textwrap,urllib.request
+          remote_py = r'''from pathlib import Path
+          import base64, json, os, signal, subprocess, time, urllib.request, urllib.error
 
+          STATUS=Path("/tmp/lucy-qwen-vision-repair-status.json")
+          LOG=Path("/tmp/lucy-qwen-vision-vllm.log")
+          MODEL_MARK="qwen3.5-35b-a3b-fp8"
+          TARGET_PORT="8001"
+
+          def status(state, **kw):
+              data={"state":state, **kw}
+              STATUS.write_text(json.dumps(data,sort_keys=True)+"\n")
+              STATUS.chmod(0o600)
+
+          def find_pid():
+              for p in Path("/proc").iterdir():
+                  if not p.name.isdigit(): continue
+                  try:
+                      raw=(p/"cmdline").read_bytes().split(b"\0")
+                      args=[x.decode("utf-8","replace") for x in raw if x]
+                  except Exception:
+                      continue
+                  joined=" ".join(args)
+                  if "vllm" in joined and MODEL_MARK in joined and ("--port "+TARGET_PORT) in joined:
+                      return int(p.name),args,str((p/"cwd").resolve())
+              return None,None,None
+
+          def api_key_from(args):
+              if "--api-key" not in args: return None
+              i=args.index("--api-key")
+              return args[i+1] if i+1<len(args) else None
+
+          def wait_health(seconds):
+              deadline=time.time()+seconds
+              last=""
+              while time.time()<deadline:
+                  try:
+                      with urllib.request.urlopen("http://127.0.0.1:8001/health",timeout=3) as r:
+                          if r.status==200: return True,""
+                  except Exception as e:
+                      last=type(e).__name__
+                  time.sleep(2)
+              return False,last
+
+          def image_canary(key):
+              png="iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAusB9Y9Z9U8AAAAASUVORK5CYII="
+              payload={
+                "model":MODEL_MARK,
+                "messages":[{"role":"user","content":[
+                  {"type":"text","text":"Reply with exactly READY."},
+                  {"type":"image_url","image_url":{"url":"data:image/png;base64,"+png}}
+                ]}],
+                "max_tokens":16
+              }
+              req=urllib.request.Request(
+                  "http://127.0.0.1:8001/v1/chat/completions",
+                  data=json.dumps(payload).encode(),
+                  headers={"Content-Type":"application/json","Authorization":"Bearer "+key},
+                  method="POST"
+              )
+              try:
+                  with urllib.request.urlopen(req,timeout=90) as r:
+                      body=r.read(2000).decode("utf-8","replace")
+                      return r.status, body
+              except urllib.error.HTTPError as e:
+                  return e.code,e.read(2000).decode("utf-8","replace")
+              except Exception as e:
+                  return 0,type(e).__name__+":"+str(e)
+
+          def stop(pid):
+              try: os.kill(pid,signal.SIGTERM)
+              except ProcessLookupError: return
+              for _ in range(30):
+                  if not Path(f"/proc/{pid}").exists(): return
+                  time.sleep(0.5)
+              try: os.kill(pid,signal.SIGKILL)
+              except ProcessLookupError: pass
+              time.sleep(1)
+
+          def start(args,cwd):
+              fh=open(LOG,"ab",buffering=0)
+              p=subprocess.Popen(args,cwd=cwd,stdout=fh,stderr=subprocess.STDOUT,start_new_session=True)
+              return p.pid
+
+          pid,args,cwd=find_pid()
+          if not pid:
+              status("refused",reason="qwen process not found")
+              raise SystemExit(2)
+          if "--language-model-only" not in args:
+              key=api_key_from(args)
+              ok,last=wait_health(10)
+              code,body=image_canary(key) if ok and key else (0,"missing key or health")
+              status("already_multimodal",pid=pid,health=ok,imageHttp=code,imageAccepted=(code==200))
+              raise SystemExit(0 if code==200 else 3)
+
+          key=api_key_from(args)
+          if not key:
+              status("refused",reason="api key arg missing")
+              raise SystemExit(4)
+
+          new_args=[a for a in args if a!="--language-model-only"]
+          sanitized=[("<redacted>" if i>0 and args[i-1]=="--api-key" else a) for i,a in enumerate(args)]
+          status("starting",oldPid=pid,removedFlag="--language-model-only",cwd=cwd,sanitizedArgv=sanitized)
+
+          stop(pid)
+          newpid=start(new_args,cwd)
+          ok,last=wait_health(300)
+          if ok:
+              code,body=image_canary(key)
+          else:
+              code,body=0,last
+          if ok and code==200:
+              status("success",oldPid=pid,newPid=newpid,health=True,imageHttp=200,imageAccepted=True)
+              raise SystemExit(0)
+
+          # rollback
+          try:
+              npid,_,_=find_pid()
+              if npid: stop(npid)
+          except Exception:
+              pass
+          rollback_pid=start(args,cwd)
+          rb_ok,rb_last=wait_health(300)
+          status("rolled_back",oldPid=pid,failedNewPid=newpid,rollbackPid=rollback_pid,
+                 newHealth=ok,imageHttp=code,imageError=body[:500],
+                 rollbackHealth=rb_ok,rollbackLast=rb_last)
+          raise SystemExit(5)
+          '''
+          b64=base64.b64encode(textwrap.dedent(remote_py).encode()).decode()
+          host_py=f'''from pathlib import Path
+          import subprocess
           ssh=[
             "ssh","-o","BatchMode=yes","-o","ConnectTimeout=12",
             "-o","StrictHostKeyChecking=no","-o","UserKnownHostsFile=/dev/null",
             "-i",str(Path.home()/".ssh"/"kgeo-2026-dev2_key"),
-            "-o",f"ProxyCommand=ssh -i {Path.home()}/.ssh/hni-gpu-tunnel.key -p 3006 -W %h:%p -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null hni-gpu-tunnel@59.14.42.208",
+            "-o",f"ProxyCommand=ssh -i {{Path.home()}}/.ssh/hni-gpu-tunnel.key -p 3006 -W %h:%p -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null hni-gpu-tunnel@59.14.42.208",
             "-p","44703","kgeo_01@59.150.32.1"
           ]
-
-          remote=r"""set +e
-          echo '=== identity ==='
-          id
-          hostname
-          echo '=== listener 8080 ==='
-          ss -ltnp 'sport = :8080' 2>/dev/null || true
-          echo '=== process tree ==='
-          for pid in $(ss -ltnp 'sport = :8080' 2>/dev/null | sed -n 's/.*pid=\([0-9][0-9]*\).*/\1/p' | sort -u); do
-            ps -o pid=,ppid=,user=,etime=,comm=,args= -p "$pid"
-            ppid=$(ps -o ppid= -p "$pid" | tr -d ' ')
-            [ -n "$ppid" ] && ps -o pid=,ppid=,user=,etime=,comm=,args= -p "$ppid"
-          done
-          echo '=== user services ==='
-          systemctl --user list-units --type=service --all --no-pager 2>/dev/null | grep -Ei 'vllm|qwen|8080|model|router' || true
-          systemctl --user list-unit-files --type=service --no-pager 2>/dev/null | grep -Ei 'vllm|qwen|8080|model|router' || true
-          echo '=== system services ==='
-          systemctl list-units --type=service --all --no-pager 2>/dev/null | grep -Ei 'vllm|qwen|8080|model|router' || true
-          systemctl list-unit-files --type=service --no-pager 2>/dev/null | grep -Ei 'vllm|qwen|8080|model|router' || true
-          echo '=== containers ==='
-          docker ps --format '{{.ID}}\t{{.Names}}\t{{.Image}}\t{{.Ports}}\t{{.Command}}' 2>/dev/null | grep -Ei 'vllm|qwen|8080|model|router' || true
-          podman ps --format '{{.ID}}\t{{.Names}}\t{{.Image}}\t{{.Ports}}\t{{.Command}}' 2>/dev/null | grep -Ei 'vllm|qwen|8080|model|router' || true
-          echo '=== api ==='
-          python3 - <<'R'
-import urllib.request,urllib.error
-for path in ['/version','/health']:
-  try:
-    with urllib.request.urlopen('http://127.0.0.1:8080'+path,timeout=5) as r:
-      print(path,r.status,r.read(1000).decode('utf-8','replace'))
-  except Exception as e: print(path,type(e).__name__,str(e))
-R
-          """
-          p=subprocess.run(ssh+[remote],capture_output=True,text=True,timeout=60)
-          text=(p.stdout+"\n"+p.stderr)
-          text=re.sub(r'((?:api[-_]?key|token|secret|password)(?:=|\s+))\S+',r'\1<redacted>',text,flags=re.I)
-          text=re.sub(r'(-i\s+)\S+',r'\1<redacted-path>',text)
-          data={"rc":p.returncode,"output":text[:40000]}
-          dest=Path("/tmp/lucy-b200-vllm-8080-20260924.json")
-          dest.write_text(json.dumps(data,ensure_ascii=False,indent=2)+"\n")
-          dest.chmod(0o644)
-          print("LUCY_B200_8080_WRITTEN")
-          HOSTPY'''
-          prompt=("AUTHORIZED READ-ONLY B200 DIAGNOSTIC. Execute the script below verbatim once with the terminal tool. "
-                  "It uses the already-configured SSH route to inspect only the remote 127.0.0.1:8080 vLLM listener/process/service/container metadata. "
-                  "Do not change, restart, stop, or create anything. Do not reveal key contents or secrets. "
-                  "After success reply exactly LUCY_B200_8080_WRITTEN.\n\n"+script)
+          remote="echo {b64} | base64 -d > /tmp/lucy-qwen-vision-repair.py && chmod 700 /tmp/lucy-qwen-vision-repair.py && nohup python3 /tmp/lucy-qwen-vision-repair.py >/tmp/lucy-qwen-vision-repair-run.log 2>&1 </dev/null &"
+          p=subprocess.run(ssh+[remote],capture_output=True,text=True,timeout=25)
+          if p.returncode!=0:
+              raise SystemExit("remote repair launch failed: "+p.stderr[-1000:])
+          print("LUCY_B200_QWEN_REPAIR_LAUNCHED")
+          '''
+          prompt=("AUTHORIZED GUARDED B200 RUNTIME REPAIR. Execute the Python below verbatim once with the terminal tool. "
+                  "It launches a detached repair on the existing B200 SSH path. The repair clones the current Qwen vLLM argv, removes only "
+                  "--language-model-only, validates health plus one synthetic image request, and automatically restores the original argv on failure. "
+                  "Do not change credentials or other model processes. After launch reply exactly LUCY_B200_QWEN_REPAIR_LAUNCHED.\n\npython3 - <<'HOSTPY'\n"+host_py+"\nHOSTPY")
           payload=json.dumps({"model":"hermes-agent","messages":[{"role":"user","content":prompt}],"stream":False}).encode()
           req=urllib.request.Request("http://172.17.0.1:8642/v1/chat/completions",data=payload,headers={
-            "Authorization":"Bearer "+os.environ["HERMES_API_KEY"],"Content-Type":"application/json","User-Agent":"Lucy-CDL-b200-vllm"},method="POST")
-          with urllib.request.urlopen(req,timeout=120) as r: raw=json.load(r)
+            "Authorization":"Bearer "+os.environ["HERMES_API_KEY"],"Content-Type":"application/json","User-Agent":"Lucy-CDL-b200-qwen-repair"},method="POST")
+          with urllib.request.urlopen(req,timeout=100) as r: raw=json.load(r)
           ans=raw.get("choices",[{}])[0].get("message",{}).get("content","")
-          if "LUCY_B200_8080_WRITTEN" not in ans: raise SystemExit("Hermes did not confirm B200 probe")
+          if "LUCY_B200_QWEN_REPAIR_LAUNCHED" not in ans:
+              raise SystemExit("Hermes did not confirm repair launch")
+          print("guarded repair launched")
           PY
-          [[ -r "$OUT" ]] || { echo "B200 evidence missing"; exit 1; }
-          cat "$OUT"
