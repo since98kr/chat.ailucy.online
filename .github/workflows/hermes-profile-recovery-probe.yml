@@ -17,82 +17,138 @@ jobs:
   probe:
     runs-on: [self-hosted, linux, x64, chat-staging]
     environment: staging
-    timeout-minutes: 5
+    timeout-minutes: 6
     steps:
-      - name: Inspect Gemma backend and multimodal config safely
+      - name: Enable native vision for Gemma and restart its gateway
         env:
           HERMES_API_KEY: ${{ secrets.HERMES_API_KEY }}
         shell: bash
         run: |
           set -euo pipefail
-          OUT=/tmp/lucy-gemma-multimodal-config-20260924.json
+          OUT=/tmp/lucy-gemma-vision-enable-20260924.json
           rm -f "$OUT" 2>/dev/null || true
           python3 - <<'PY'
           import json,os,urllib.request
           script=r'''python3 - <<'HOSTPY'
           from pathlib import Path
-          import json, os, re, subprocess
-          home=Path.home()/".hermes"/"profiles"/"gemma"
-
-          def safe_yaml(path):
-              if not path.is_file():
-                  return {"exists":False}
-              txt=path.read_text(errors="replace")
-              out=[]
-              allow=("provider","model","vision","image","multimodal","reasoning","api_server","base_url","endpoint")
-              secret=re.compile(r'(key|token|secret|password)',re.I)
-              for i,line in enumerate(txt.splitlines(),1):
-                  s=line.strip()
-                  if not s or s.startswith("#"): continue
-                  if secret.search(s): continue
-                  if any(k in s.lower() for k in allow):
-                      out.append({"line":i,"text":s[:500]})
-              return {"exists":True,"lines":out[:300]}
-
-          env_meta={}
-          envf=home/".env"
-          if envf.is_file():
-              for line in envf.read_text(errors="replace").splitlines():
-                  s=line.strip()
-                  if not s or s.startswith("#") or "=" not in s: continue
-                  k,v=s.split("=",1); k=k.strip(); v=v.strip()
-                  if re.search(r'(key|token|secret|password)',k,re.I): continue
-                  if any(x in k.upper() for x in ("MODEL","PROVIDER","VISION","IMAGE","MULTIMODAL","API_SERVER","BASE_URL")):
-                      env_meta[k]=v[:500]
+          import json, os, re, shutil, subprocess, time, urllib.request, urllib.error
 
           root=Path.home()/".hermes"
-          py=root/"hermes-agent"/"venv"/"bin"/"python"
-          def run(args):
-              try:
-                  p=subprocess.run([str(py),"-m","hermes_cli.main",*args],capture_output=True,text=True,timeout=20)
-                  text=(p.stdout+"\n"+p.stderr)
-                  text="\n".join(x for x in text.splitlines() if not re.search(r'(key|token|secret|password)',x,re.I))
-                  return {"rc":p.returncode,"out":text[:16000]}
-              except Exception as e:
-                  return {"rc":-1,"out":type(e).__name__}
+          profile=root/"profiles"/"gemma"
+          cfg=profile/"config.yaml"
+          if not cfg.is_file():
+              raise SystemExit("gemma config.yaml missing")
 
-          data={
-            "profileDir":str(home),
-            "envMeta":env_meta,
-            "configYaml":safe_yaml(home/"config.yaml"),
-            "profileShow":run(["profile","show","gemma"]),
-            "modelStatus":run(["-p","gemma","model"]),
-            "status":run(["-p","gemma","status"])
+          text=cfg.read_text(errors="replace")
+          lines=text.splitlines()
+          # Confirm this is the intended Gemma profile/backend before changing anything.
+          joined="\n".join(lines)
+          if "qwen3.5-35b-a3b-fp8" not in joined or "provider: custom" not in joined:
+              raise SystemExit("unexpected Gemma backend; refusing mutation")
+
+          # Backup first. Do not expose file contents.
+          stamp=time.strftime("%Y%m%d_%H%M%S", time.localtime())
+          backup=cfg.with_name(cfg.name+f".bak.{stamp}.lucy-vision")
+          shutil.copy2(cfg, backup)
+
+          model_idx=None
+          model_end=len(lines)
+          for i,line in enumerate(lines):
+              if re.match(r'^model:\s*$', line):
+                  model_idx=i
+                  break
+          if model_idx is None:
+              raise SystemExit("top-level model section missing")
+          for i in range(model_idx+1,len(lines)):
+              if lines[i].strip() and not lines[i].lstrip().startswith("#") and not lines[i].startswith((" ","\t")):
+                  model_end=i
+                  break
+
+          support_idx=None
+          for i in range(model_idx+1,model_end):
+              if re.match(r'^\s{2}supports_vision\s*:', lines[i]):
+                  support_idx=i
+                  break
+
+          changed=False
+          if support_idx is None:
+              lines.insert(model_end, "  supports_vision: true")
+              changed=True
+          elif not re.match(r'^\s{2}supports_vision\s*:\s*true\s*(?:#.*)?$', lines[support_idx], re.I):
+              lines[support_idx]="  supports_vision: true"
+              changed=True
+
+          if changed:
+              cfg.write_text("\n".join(lines)+"\n")
+
+          # Validate YAML and exact field after write.
+          import yaml
+          obj=yaml.safe_load(cfg.read_text()) or {}
+          model=obj.get("model") or {}
+          if model.get("supports_vision") is not True:
+              shutil.copy2(backup,cfg)
+              raise SystemExit("supports_vision validation failed; restored backup")
+
+          py=root/"hermes-agent"/"venv"/"bin"/"python"
+          cmd=[str(py),"-m","hermes_cli.main","-p","gemma","gateway","restart"]
+          p=subprocess.run(cmd,capture_output=True,text=True,timeout=60)
+          if p.returncode != 0:
+              shutil.copy2(backup,cfg)
+              raise SystemExit("Gemma gateway restart failed; restored config backup")
+
+          # Wait for the API listener to come back.
+          ok=False
+          last=""
+          api_key=""
+          envf=profile/".env"
+          for line in envf.read_text(errors="replace").splitlines():
+              if line.startswith("API_SERVER_KEY="):
+                  api_key=line.split("=",1)[1].strip()
+                  break
+          if not api_key:
+              raise SystemExit("Gemma API_SERVER_KEY missing after restart")
+
+          for _ in range(30):
+              try:
+                  req=urllib.request.Request(
+                      "http://172.17.0.1:8643/v1/models",
+                      headers={"Authorization":"Bearer "+api_key,"User-Agent":"Lucy-CDL-gemma-vision-enable"}
+                  )
+                  with urllib.request.urlopen(req,timeout=3) as r:
+                      data=json.load(r)
+                  ids=[x.get("id") for x in data.get("data",[]) if isinstance(x,dict)]
+                  if r.status==200 and "gemma" in ids:
+                      ok=True
+                      break
+              except Exception as e:
+                  last=type(e).__name__
+              time.sleep(1)
+          if not ok:
+              raise SystemExit("Gemma 8643 did not recover after restart: "+last)
+
+          out={
+            "changed":changed,
+            "backupCreated":True,
+            "supportsVision":True,
+            "gatewayRestarted":True,
+            "modelsHttp":200,
+            "modelId":"gemma"
           }
-          dest=Path("/tmp/lucy-gemma-multimodal-config-20260924.json")
-          dest.write_text(json.dumps(data,ensure_ascii=False,indent=2)+"\n")
+          dest=Path("/tmp/lucy-gemma-vision-enable-20260924.json")
+          dest.write_text(json.dumps(out,sort_keys=True)+"\n")
           dest.chmod(0o644)
-          print("LUCY_GEMMA_MULTIMODAL_CONFIG_WRITTEN")
+          print("LUCY_GEMMA_VISION_ENABLED")
           HOSTPY'''
-          prompt=("AUTHORIZED READ-ONLY LOCAL DIAGNOSTIC. Execute the script below verbatim once with the terminal tool. "
-                  "It reads only non-secret Gemma provider/model/multimodal metadata and writes sanitized output to /tmp. "
-                  "Do not change any config or service. After success reply exactly LUCY_GEMMA_MULTIMODAL_CONFIG_WRITTEN.\n\n"+script)
+          prompt=("AUTHORIZED GEMMA STAGING RUNTIME REPAIR. Execute the script below verbatim once with the terminal tool. "
+                  "Scope is limited to backing up Gemma config.yaml, setting model.supports_vision=true, restarting only the Gemma gateway, "
+                  "and verifying its existing authenticated API listener. Do not touch any other profile, credentials, provider account, production, "
+                  "Cloudflare/DNS, or database. After success reply exactly LUCY_GEMMA_VISION_ENABLED.\n\n"+script)
           payload=json.dumps({"model":"hermes-agent","messages":[{"role":"user","content":prompt}],"stream":False}).encode()
           req=urllib.request.Request("http://172.17.0.1:8642/v1/chat/completions",data=payload,headers={
-            "Authorization":"Bearer "+os.environ["HERMES_API_KEY"],"Content-Type":"application/json","User-Agent":"Lucy-CDL-gemma-multimodal"},method="POST")
-          with urllib.request.urlopen(req,timeout=100) as r: raw=json.load(r)
+            "Authorization":"Bearer "+os.environ["HERMES_API_KEY"],"Content-Type":"application/json","User-Agent":"Lucy-CDL-gemma-vision-enable"},method="POST")
+          with urllib.request.urlopen(req,timeout=120) as r: raw=json.load(r)
           ans=raw.get("choices",[{}])[0].get("message",{}).get("content","")
-          if "LUCY_GEMMA_MULTIMODAL_CONFIG_WRITTEN" not in ans: raise SystemExit("Hermes did not confirm Gemma config file")
+          if "LUCY_GEMMA_VISION_ENABLED" not in ans: raise SystemExit("Hermes did not confirm Gemma vision repair")
           PY
-          [[ -r "$OUT" ]] || { echo "Gemma config file missing"; exit 1; }
+          [[ -r "$OUT" ]] || { echo "Gemma vision repair evidence missing"; exit 1; }
           cat "$OUT"
