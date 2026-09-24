@@ -1,0 +1,62 @@
+name: One-shot Chat production dispatcher
+
+on:
+  push:
+    branches:
+      - lucy/prod-dispatch-chat-11036295-20260924
+
+permissions:
+  actions: write
+  contents: read
+
+jobs:
+  dispatch:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Verify approved exact-main target
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TARGET_SHA: 11036295770060ec8279af4b21194d99cbb56c2f
+        run: |
+          set -euo pipefail
+          current="$(
+            curl -fsSL               -H "Authorization: Bearer ${GH_TOKEN}"               -H "Accept: application/vnd.github+json"               -H "X-GitHub-Api-Version: 2022-11-28"               "https://api.github.com/repos/${GITHUB_REPOSITORY}/branches/main"               | python3 -c 'import json,sys; print(json.load(sys.stdin)["commit"]["sha"])'
+          )"
+          test "${current}" = "${TARGET_SHA}"
+
+          status_json="$(
+            curl -fsSL               -H "Authorization: Bearer ${GH_TOKEN}"               -H "Accept: application/vnd.github+json"               -H "X-GitHub-Api-Version: 2022-11-28"               "https://api.github.com/repos/${GITHUB_REPOSITORY}/commits/${TARGET_SHA}/status"
+          )"
+          STATUS_JSON="${status_json}" python3 - <<'PY'
+          import json, os
+          data=json.loads(os.environ["STATUS_JSON"])
+          states={x.get("context"):x.get("state") for x in data.get("statuses",[])}
+          if states.get("chat-v2/staging") != "success":
+              raise SystemExit("chat-v2/staging exact-main status is not success")
+          print("exact-main-staging-status=success")
+          PY
+
+      - name: Dispatch canonical production release gate
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TARGET_SHA: 11036295770060ec8279af4b21194d99cbb56c2f
+        run: |
+          set -euo pipefail
+          payload="$(
+            TARGET_SHA="${TARGET_SHA}" python3 - <<'PY'
+          import json, os
+          print(json.dumps({
+            "ref":"main",
+            "inputs":{
+              "revision":os.environ["TARGET_SHA"],
+              "mode":"deploy",
+              "confirm":"DEPLOY_CHAT_V2_PRODUCTION"
+            }
+          }))
+          PY
+          )"
+          curl -fsS -X POST             -H "Authorization: Bearer ${GH_TOKEN}"             -H "Accept: application/vnd.github+json"             -H "X-GitHub-Api-Version: 2022-11-28"             "https://api.github.com/repos/${GITHUB_REPOSITORY}/actions/workflows/production-release.yml/dispatches"             -d "${payload}"
+          echo "canonical-production-dispatch=sent"
