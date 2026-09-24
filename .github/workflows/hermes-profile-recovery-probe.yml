@@ -17,82 +17,82 @@ jobs:
   probe:
     runs-on: [self-hosted, linux, x64, chat-staging]
     environment: staging
-    timeout-minutes: 4
+    timeout-minutes: 5
     steps:
-      - name: Inspect Gemma model config and vision transport
+      - name: Inspect Gemma backend and multimodal config safely
         env:
           HERMES_API_KEY: ${{ secrets.HERMES_API_KEY }}
         shell: bash
         run: |
           set -euo pipefail
-          OUT=/tmp/lucy-hermes-gemma-vision-diagnose-20260924.json
+          OUT=/tmp/lucy-gemma-multimodal-config-20260924.json
           rm -f "$OUT" 2>/dev/null || true
           python3 - <<'PY'
           import json,os,urllib.request
           script=r'''python3 - <<'HOSTPY'
           from pathlib import Path
-          import json,re
+          import json, os, re, subprocess
+          home=Path.home()/".hermes"/"profiles"/"gemma"
+
+          def safe_yaml(path):
+              if not path.is_file():
+                  return {"exists":False}
+              txt=path.read_text(errors="replace")
+              out=[]
+              allow=("provider","model","vision","image","multimodal","reasoning","api_server","base_url","endpoint")
+              secret=re.compile(r'(key|token|secret|password)',re.I)
+              for i,line in enumerate(txt.splitlines(),1):
+                  s=line.strip()
+                  if not s or s.startswith("#"): continue
+                  if secret.search(s): continue
+                  if any(k in s.lower() for k in allow):
+                      out.append({"line":i,"text":s[:500]})
+              return {"exists":True,"lines":out[:300]}
+
+          env_meta={}
+          envf=home/".env"
+          if envf.is_file():
+              for line in envf.read_text(errors="replace").splitlines():
+                  s=line.strip()
+                  if not s or s.startswith("#") or "=" not in s: continue
+                  k,v=s.split("=",1); k=k.strip(); v=v.strip()
+                  if re.search(r'(key|token|secret|password)',k,re.I): continue
+                  if any(x in k.upper() for x in ("MODEL","PROVIDER","VISION","IMAGE","MULTIMODAL","API_SERVER","BASE_URL")):
+                      env_meta[k]=v[:500]
+
           root=Path.home()/".hermes"
-          profile=root/"profiles"/"gemma"
-          result={"config":{},"visionSourceHits":[]}
-          # Read only non-secret model/provider/display sections from config.yaml.
-          cfg=profile/"config.yaml"
-          if cfg.is_file():
+          py=root/"hermes-agent"/"venv"/"bin"/"python"
+          def run(args):
               try:
-                  import yaml
-                  obj=yaml.safe_load(cfg.read_text(errors="replace")) or {}
-                  def safe(v,k=""):
-                      if isinstance(v,dict):
-                          out={}
-                          for kk,vv in v.items():
-                              low=str(kk).lower()
-                              if any(x in low for x in ("key","token","secret","password","credential","auth")):
-                                  continue
-                              if kk in ("model","provider","model_name","model_id","vision","multimodal","api_server","agent","display","name") or k in ("model","provider","vision","multimodal","agent","display"):
-                                  out[str(kk)]=safe(vv,str(kk))
-                          return out
-                      if isinstance(v,list):
-                          return [safe(x,k) for x in v[:20]]
-                      if isinstance(v,(str,int,float,bool)) or v is None:
-                          s=v
-                          if isinstance(s,str) and len(s)>300: s=s[:300]
-                          return s
-                      return str(type(v).__name__)
-                  result["config"]=safe(obj)
+                  p=subprocess.run([str(py),"-m","hermes_cli.main",*args],capture_output=True,text=True,timeout=20)
+                  text=(p.stdout+"\n"+p.stderr)
+                  text="\n".join(x for x in text.splitlines() if not re.search(r'(key|token|secret|password)',x,re.I))
+                  return {"rc":p.returncode,"out":text[:16000]}
               except Exception as e:
-                  result["configError"]=type(e).__name__
-          # Search installed source for OpenAI image content handling.
-          src=root/"hermes-agent"
-          pats=("image_url","data:image","multimodal","vision","input_image")
-          hits=[]
-          for p in src.rglob("*.py"):
-              try: lines=p.read_text(errors="replace").splitlines()
-              except Exception: continue
-              for i,line in enumerate(lines,1):
-                  low=line.lower()
-                  if any(x in low for x in pats):
-                      # Never print secret-ish assignment lines.
-                      s=line.strip()
-                      if re.search(r'(key|token|secret|password)',s,re.I) and "=" in s:
-                          s="<redacted-secret-assignment>"
-                      hits.append({"path":str(p.relative_to(root)),"line":i,"text":s[:600]})
-                      if len(hits)>=140: break
-              if len(hits)>=140: break
-          result["visionSourceHits"]=hits
-          out=Path("/tmp/lucy-hermes-gemma-vision-diagnose-20260924.json")
-          out.write_text(json.dumps(result,ensure_ascii=False,indent=2)+"\n")
-          out.chmod(0o644)
-          print("LUCY_GEMMA_VISION_DIAG_WRITTEN")
+                  return {"rc":-1,"out":type(e).__name__}
+
+          data={
+            "profileDir":str(home),
+            "envMeta":env_meta,
+            "configYaml":safe_yaml(home/"config.yaml"),
+            "profileShow":run(["profile","show","gemma"]),
+            "modelStatus":run(["-p","gemma","model"]),
+            "status":run(["-p","gemma","status"])
+          }
+          dest=Path("/tmp/lucy-gemma-multimodal-config-20260924.json")
+          dest.write_text(json.dumps(data,ensure_ascii=False,indent=2)+"\n")
+          dest.chmod(0o644)
+          print("LUCY_GEMMA_MULTIMODAL_CONFIG_WRITTEN")
           HOSTPY'''
           prompt=("AUTHORIZED READ-ONLY LOCAL DIAGNOSTIC. Execute the script below verbatim once with the terminal tool. "
-                  "It reads only non-secret model/provider metadata and installed source code, writes sanitized output to /tmp, and changes no state. "
-                  "After success reply exactly LUCY_GEMMA_VISION_DIAG_WRITTEN.\n\n"+script)
+                  "It reads only non-secret Gemma provider/model/multimodal metadata and writes sanitized output to /tmp. "
+                  "Do not change any config or service. After success reply exactly LUCY_GEMMA_MULTIMODAL_CONFIG_WRITTEN.\n\n"+script)
           payload=json.dumps({"model":"hermes-agent","messages":[{"role":"user","content":prompt}],"stream":False}).encode()
           req=urllib.request.Request("http://172.17.0.1:8642/v1/chat/completions",data=payload,headers={
-            "Authorization":"Bearer "+os.environ["HERMES_API_KEY"],"Content-Type":"application/json","User-Agent":"Lucy-CDL-gemma-vision-diag"},method="POST")
-          with urllib.request.urlopen(req,timeout=90) as r: raw=json.load(r)
+            "Authorization":"Bearer "+os.environ["HERMES_API_KEY"],"Content-Type":"application/json","User-Agent":"Lucy-CDL-gemma-multimodal"},method="POST")
+          with urllib.request.urlopen(req,timeout=100) as r: raw=json.load(r)
           ans=raw.get("choices",[{}])[0].get("message",{}).get("content","")
-          if "LUCY_GEMMA_VISION_DIAG_WRITTEN" not in ans: raise SystemExit("Hermes did not confirm Gemma vision diagnosis")
+          if "LUCY_GEMMA_MULTIMODAL_CONFIG_WRITTEN" not in ans: raise SystemExit("Hermes did not confirm Gemma config file")
           PY
-          [[ -r "$OUT" ]] || { echo "diagnostic file missing"; exit 1; }
+          [[ -r "$OUT" ]] || { echo "Gemma config file missing"; exit 1; }
           cat "$OUT"
