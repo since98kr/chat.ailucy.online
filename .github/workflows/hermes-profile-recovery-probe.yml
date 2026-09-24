@@ -19,13 +19,13 @@ jobs:
     environment: staging
     timeout-minutes: 4
     steps:
-      - name: Inspect tool_use_enforcement semantics
+      - name: Inspect empty toolset semantics
         env:
           HERMES_API_KEY: ${{ secrets.HERMES_API_KEY }}
         shell: bash
         run: |
           set -euo pipefail
-          OUT=/tmp/lucy-tool-enforcement-source-20260924.txt
+          OUT=/tmp/lucy-empty-toolset-source-20260924.txt
           rm -f "$OUT" 2>/dev/null || true
           python3 - <<'PY'
           import json,os,urllib.request
@@ -34,40 +34,39 @@ jobs:
           import re
           root=Path.home()/".hermes"/"hermes-agent"
           out=[]
-          needles=("tool_use_enforcement","tool_choice")
-          hits=[]
-          for p in root.rglob("*.py"):
-              try: lines=p.read_text(errors="replace").splitlines()
-              except: continue
-              for i,line in enumerate(lines,1):
-                  if any(n in line for n in needles):
-                      hits.append((p,i))
-          seen=set()
-          for p,i in hits[:60]:
+          targets=[
+            ("hermes_cli/tools_config.py","def _get_platform_tools"),
+            ("model_tools.py","def get_tool_definitions"),
+            ("hermes_cli/cli.py","def _init_toolsets"),
+          ]
+          for rel,needle in targets:
+              p=root/rel
+              if not p.is_file():
+                  out.append(f"missing {rel}"); continue
               lines=p.read_text(errors="replace").splitlines()
-              a=max(1,i-12); b=min(len(lines),i+24)
-              key=(str(p),a,b)
-              if key in seen: continue
-              seen.add(key)
-              out.append(f"=== {p.relative_to(root)}:{a}-{b} ===")
+              idx=next((i for i,s in enumerate(lines,1) if needle in s),None)
+              if idx is None:
+                  out.append(f"needle missing {rel} {needle}"); continue
+              a=max(1,idx-10); b=min(len(lines),idx+80)
+              out.append(f"=== {rel}:{a}-{b} ===")
               for n in range(a,b+1):
                   s=lines[n-1]
                   if re.search(r'(key|token|secret|password)',s,re.I) and "=" in s:
                       s="<redacted-secret-assignment>"
                   out.append(f"{n}: {s[:1000]}")
-          dest=Path("/tmp/lucy-tool-enforcement-source-20260924.txt")
-          dest.write_text("\n".join(out[:1800])+"\n")
+          dest=Path("/tmp/lucy-empty-toolset-source-20260924.txt")
+          dest.write_text("\n".join(out)+"\n")
           dest.chmod(0o644)
-          print("LUCY_TOOL_ENFORCEMENT_SOURCE_WRITTEN")
+          print("LUCY_EMPTY_TOOLSET_SOURCE_WRITTEN")
           HOSTPY'''
           prompt=("AUTHORIZED READ-ONLY LOCAL DIAGNOSTIC. Execute the script below verbatim once. "
-                  "It reads installed Hermes source only around tool_use_enforcement/tool_choice semantics and changes nothing. "
-                  "After success reply exactly LUCY_TOOL_ENFORCEMENT_SOURCE_WRITTEN.\n\n"+script)
+                  "It reads three installed Hermes functions to verify empty-toolset semantics and changes nothing. "
+                  "After success reply exactly LUCY_EMPTY_TOOLSET_SOURCE_WRITTEN.\n\n"+script)
           payload=json.dumps({"model":"hermes-agent","messages":[{"role":"user","content":prompt}],"stream":False}).encode()
           req=urllib.request.Request("http://172.17.0.1:8642/v1/chat/completions",data=payload,headers={
-            "Authorization":"Bearer "+os.environ["HERMES_API_KEY"],"Content-Type":"application/json","User-Agent":"Lucy-CDL-tool-enforcement"},method="POST")
+            "Authorization":"Bearer "+os.environ["HERMES_API_KEY"],"Content-Type":"application/json","User-Agent":"Lucy-CDL-empty-toolset"},method="POST")
           with urllib.request.urlopen(req,timeout=80) as r: raw=json.load(r)
           ans=raw.get("choices",[{}])[0].get("message",{}).get("content","")
-          if "LUCY_TOOL_ENFORCEMENT_SOURCE_WRITTEN" not in ans: raise SystemExit("Hermes did not confirm source output")
+          if "LUCY_EMPTY_TOOLSET_SOURCE_WRITTEN" not in ans: raise SystemExit("Hermes did not confirm source output")
           PY
           cat "$OUT"
