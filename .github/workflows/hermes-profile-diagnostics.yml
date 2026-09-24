@@ -2,9 +2,6 @@ name: Diagnose Hermes staging profiles
 
 on:
   workflow_dispatch:
-  push:
-    branches:
-      - lucy/hermes-profile-diagnostics-20260923
 
 permissions:
   contents: read
