@@ -19,66 +19,43 @@ jobs:
     environment: staging
     timeout-minutes: 3
     steps:
-      - name: Align Gemma custom provider with Kimi-VL
+      - name: Probe current Gemma image acceptance
         env:
           HERMES_API_KEY: ${{ secrets.HERMES_API_KEY }}
         shell: bash
         run: |
           set -euo pipefail
-          OUT=/tmp/lucy-gemma-kimi-config-20260924.json
-          rm -f "$OUT" 2>/dev/null || true
           python3 - <<'PY'
-          import json,os,urllib.request
-          script=r'''python3 - <<'HOSTPY'
-          from pathlib import Path
-          import json,yaml,shutil,time
-          p=Path.home()/".hermes"/"profiles"/"gemma"/"config.yaml"
-          obj=yaml.safe_load(p.read_text()) or {}
-          model=obj.get("model")
-          cps=obj.get("custom_providers")
-          if not isinstance(model,dict) or not isinstance(cps,list) or not cps or not isinstance(cps[0],dict):
-              raise SystemExit("unexpected Gemma config structure")
-          cp=cps[0]
-          if model.get("base_url")!="http://127.0.0.1:18793/v1" or cp.get("base_url")!="http://127.0.0.1:18793/v1":
-              raise SystemExit("unexpected Gemma base URL")
-          old_top=model.get("default")
-          old_cp=cp.get("model")
-          if old_top not in ("qwen3.5-35b-a3b-fp8","kimi-vl") or old_cp not in ("qwen3.5-35b-a3b-fp8","kimi-vl"):
-              raise SystemExit("unexpected Gemma model values")
-          backup=p.with_name("config.yaml.bak."+time.strftime("%Y%m%d_%H%M%S")+".lucy-kimi-provider")
-          shutil.copy2(p,backup)
-          model["default"]="kimi-vl"
-          model["supports_vision"]=True
-          cp["model"]="kimi-vl"
-          cp["models"]={"kimi-vl":{"context_length":16384}}
-          p.write_text(yaml.safe_dump(obj,sort_keys=False,allow_unicode=True))
-          check=yaml.safe_load(p.read_text()) or {}
-          cm=check.get("model") or {}
-          cc=(check.get("custom_providers") or [{}])[0]
-          ok=(cm.get("default")=="kimi-vl" and cm.get("supports_vision") is True and
-              cc.get("model")=="kimi-vl" and "kimi-vl" in (cc.get("models") or {}) and
-              cm.get("base_url")=="http://127.0.0.1:18793/v1")
-          if not ok:
-              shutil.copy2(backup,p)
-              raise SystemExit("post-write validation failed; restored backup")
-          out=Path("/tmp/lucy-gemma-kimi-config-20260924.json")
-          out.write_text(json.dumps({
-              "backupCreated":True,"oldTopModel":old_top,"oldProviderModel":old_cp,
-              "newTopModel":"kimi-vl","newProviderModel":"kimi-vl","supportsVision":True,
-              "contextLength":16384
-          },sort_keys=True)+"\n")
-          out.chmod(0o644)
-          print("LUCY_GEMMA_KIMI_CONFIG_OK")
-          HOSTPY'''
-          prompt=("AUTHORIZED STAGING GEMMA CONFIG REPAIR. Execute the short script below verbatim once. "
-                  "It backs up Gemma config.yaml and aligns only its existing custom-provider model metadata to kimi-vl on the same existing base URL. "
-                  "No service restart, credentials, other profiles, B200 processes, production, DNS, or databases are touched. "
-                  "After success reply exactly LUCY_GEMMA_KIMI_CONFIG_OK.\n\n"+script)
-          payload=json.dumps({"model":"hermes-agent","messages":[{"role":"user","content":prompt}],"stream":False}).encode()
-          req=urllib.request.Request("http://172.17.0.1:8642/v1/chat/completions",data=payload,headers={
-              "Authorization":"Bearer "+os.environ["HERMES_API_KEY"],"Content-Type":"application/json","User-Agent":"Lucy-CDL-gemma-kimi-config"},method="POST")
-          with urllib.request.urlopen(req,timeout=60) as r: raw=json.load(r)
-          ans=raw.get("choices",[{}])[0].get("message",{}).get("content","")
-          if "LUCY_GEMMA_KIMI_CONFIG_OK" not in ans: raise SystemExit("Hermes did not confirm config repair")
+          import json,os,urllib.request,urllib.error
+          png="iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAusB9Y9Z9U8AAAAASUVORK5CYII="
+          payload={
+            "model":"gemma",
+            "messages":[{"role":"user","content":[
+              {"type":"text","text":"Reply with READY."},
+              {"type":"image_url","image_url":{"url":"data:image/png;base64,"+png}}
+            ]}],
+            "max_tokens":16
+          }
+          req=urllib.request.Request(
+            "http://172.17.0.1:8643/v1/chat/completions",
+            data=json.dumps(payload).encode(),
+            headers={
+              "Content-Type":"application/json",
+              "Authorization":"Bearer "+os.environ["HERMES_API_KEY"],
+              "User-Agent":"Lucy-CDL-gemma-image-canary"
+            },
+            method="POST"
+          )
+          try:
+              with urllib.request.urlopen(req,timeout=90) as r:
+                  body=r.read(4000).decode("utf-8","replace")
+              print(json.dumps({"http":r.status,"imageAccepted":r.status==200,"bodyPrefix":body[:800]},ensure_ascii=False))
+              raise SystemExit(0 if r.status==200 else 2)
+          except urllib.error.HTTPError as e:
+              body=e.read(4000).decode("utf-8","replace")
+              print(json.dumps({"http":e.code,"imageAccepted":False,"bodyPrefix":body[:1200]},ensure_ascii=False))
+              raise SystemExit(3)
+          except Exception as e:
+              print(json.dumps({"http":None,"imageAccepted":False,"error":type(e).__name__+":"+str(e)},ensure_ascii=False))
+              raise SystemExit(4)
           PY
-          cat "$OUT"
