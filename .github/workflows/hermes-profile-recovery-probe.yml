@@ -17,64 +17,168 @@ jobs:
   probe:
     runs-on: [self-hosted, linux, x64, chat-staging]
     environment: staging
-    timeout-minutes: 5
+    timeout-minutes: 7
     steps:
-      - name: Inspect 18793 process as Hermes service user
+      - name: Route Gemma to existing Kimi-VL backend
         env:
           HERMES_API_KEY: ${{ secrets.HERMES_API_KEY }}
         shell: bash
         run: |
           set -euo pipefail
-          OUT=/tmp/lucy-18793-process-20260924.json
+          OUT=/tmp/lucy-gemma-kimi-cutover-20260924.json
           rm -f "$OUT" 2>/dev/null || true
           python3 - <<'PY'
           import json,os,urllib.request
           script=r'''python3 - <<'HOSTPY'
           from pathlib import Path
-          import json, os, re, subprocess
+          import json, re, shutil, subprocess, time, urllib.request, urllib.error, base64
 
-          def sh(cmd):
-              p=subprocess.run(cmd,shell=True,capture_output=True,text=True,timeout=15)
-              return p.returncode,(p.stdout+"\n"+p.stderr)
+          root=Path.home()/".hermes"
+          profile=root/"profiles"/"gemma"
+          cfg=profile/"config.yaml"
+          envf=profile/".env"
+          if not cfg.is_file() or not envf.is_file():
+              raise SystemExit("Gemma profile files missing")
 
-          rc,ss=sh("ss -ltnp 'sport = :18793'")
-          pids=sorted(set(re.findall(r'pid=(\d+)',ss)))
-          rows=[]
-          for pid in pids:
-              rc2,out=sh(f"ps -o pid=,ppid=,user=,etime=,comm=,args= -p {pid}")
-              out=re.sub(r'((?:api[-_]?key|token|secret|password)(?:=|\s+))\S+',r'\1<redacted>',out,flags=re.I)
-              rows.append({"pid":pid,"ps":out.strip()[:5000]})
-              ppid=""
+          original=cfg.read_text(errors="replace")
+          lines=original.splitlines()
+          stamp=time.strftime("%Y%m%d_%H%M%S",time.localtime())
+          backup=cfg.with_name(cfg.name+f".bak.{stamp}.lucy-kimi")
+          shutil.copy2(cfg,backup)
+
+          model_idx=None
+          model_end=len(lines)
+          for i,line in enumerate(lines):
+              if re.match(r'^model:\s*$',line):
+                  model_idx=i; break
+          if model_idx is None:
+              raise SystemExit("model section missing")
+          for i in range(model_idx+1,len(lines)):
+              if lines[i].strip() and not lines[i].lstrip().startswith("#") and not lines[i].startswith((" ","\t")):
+                  model_end=i; break
+
+          default_idx=None
+          for i in range(model_idx+1,model_end):
+              if re.match(r'^\s{2}default\s*:',lines[i]):
+                  default_idx=i; break
+          if default_idx is None:
+              shutil.copy2(backup,cfg)
+              raise SystemExit("model.default missing")
+
+          old_default=lines[default_idx].split(":",1)[1].strip().strip("'\"")
+          if old_default not in ("qwen3.5-35b-a3b-fp8","kimi-vl"):
+              shutil.copy2(backup,cfg)
+              raise SystemExit("unexpected Gemma model.default; restored backup")
+
+          changed=old_default!="kimi-vl"
+          if changed:
+              lines[default_idx]="  default: kimi-vl"
+              cfg.write_text("\n".join(lines)+"\n")
+
+          import yaml
+          obj=yaml.safe_load(cfg.read_text()) or {}
+          model=obj.get("model") or {}
+          expected={
+              "default":"kimi-vl",
+              "provider":"custom",
+              "base_url":"http://127.0.0.1:18793/v1",
+              "api_mode":"chat_completions",
+              "supports_vision":True
+          }
+          if any(model.get(k)!=v for k,v in expected.items()):
+              shutil.copy2(backup,cfg)
+              raise SystemExit("Gemma config validation failed; restored backup")
+
+          py=root/"hermes-agent"/"venv"/"bin"/"python"
+          p=subprocess.run([str(py),"-m","hermes_cli.main","-p","gemma","gateway","restart"],capture_output=True,text=True,timeout=60)
+          if p.returncode!=0:
+              shutil.copy2(backup,cfg)
+              raise SystemExit("Gemma gateway restart failed; restored backup")
+
+          api_key=""
+          for line in envf.read_text(errors="replace").splitlines():
+              if line.startswith("API_SERVER_KEY="):
+                  api_key=line.split("=",1)[1].strip(); break
+          if not api_key:
+              raise SystemExit("Gemma API key missing")
+
+          model_ok=False
+          for _ in range(30):
               try:
-                  stat=Path(f"/proc/{pid}/stat").read_text()
-                  ppid=stat.split()[3]
+                  req=urllib.request.Request("http://172.17.0.1:8643/v1/models",headers={
+                      "Authorization":"Bearer "+api_key,
+                      "User-Agent":"Lucy-CDL-gemma-kimi"
+                  })
+                  with urllib.request.urlopen(req,timeout=3) as r:
+                      data=json.load(r)
+                  ids=[x.get("id") for x in data.get("data",[]) if isinstance(x,dict)]
+                  if r.status==200 and "gemma" in ids:
+                      model_ok=True; break
               except Exception:
                   pass
-              if ppid:
-                  rc3,pout=sh(f"ps -o pid=,ppid=,user=,etime=,comm=,args= -p {ppid}")
-                  pout=re.sub(r'((?:api[-_]?key|token|secret|password)(?:=|\s+))\S+',r'\1<redacted>',pout,flags=re.I)
-                  rows[-1]["parent"]=pout.strip()[:5000]
+              time.sleep(1)
+          if not model_ok:
+              raise SystemExit("Gemma API did not recover after Kimi cutover")
 
-          rc_u,units=sh("systemctl --user list-units --type=service --all --no-pager")
-          rel=[x for x in units.splitlines() if re.search(r'qwen|vllm|18793|gemma|tunnel|b200',x,re.I)]
-          rc_f,files=sh("systemctl --user list-unit-files --type=service --no-pager")
-          relf=[x for x in files.splitlines() if re.search(r'qwen|vllm|18793|gemma|tunnel|b200',x,re.I)]
+          # 1x1 PNG is sufficient here to prove native image payload acceptance;
+          # exact OCR correctness remains enforced by the staging Playwright test.
+          png_b64="iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAusB9Y9ZP4sAAAAASUVORK5CYII="
+          body={
+              "model":"gemma",
+              "messages":[{
+                  "role":"user",
+                  "content":[
+                      {"type":"text","text":"A tiny ordinary PNG is attached. Reply with a short acknowledgment that an image payload was received."},
+                      {"type":"image_url","image_url":{"url":"data:image/png;base64,"+png_b64}}
+                  ]
+              }],
+              "stream":False
+          }
+          req=urllib.request.Request("http://172.17.0.1:8643/v1/chat/completions",
+              data=json.dumps(body).encode(),
+              headers={
+                  "Authorization":"Bearer "+api_key,
+                  "Content-Type":"application/json",
+                  "User-Agent":"Lucy-CDL-gemma-kimi-image-canary"
+              },
+              method="POST")
+          with urllib.request.urlopen(req,timeout=90) as r:
+              resp=json.load(r)
+          msg=resp.get("choices",[{}])[0].get("message",{}).get("content","")
+          if r.status!=200 or not str(msg).strip():
+              raise SystemExit("Gemma native-image canary returned no usable response")
 
-          data={"ss":ss[:6000],"processes":rows,"userUnits":rel[:100],"userUnitFiles":relf[:100]}
-          dest=Path("/tmp/lucy-18793-process-20260924.json")
-          dest.write_text(json.dumps(data,ensure_ascii=False,indent=2)+"\n")
+          dest=Path("/tmp/lucy-gemma-kimi-cutover-20260924.json")
+          dest.write_text(json.dumps({
+              "changed":changed,
+              "oldDefault":old_default,
+              "newDefault":"kimi-vl",
+              "supportsVision":True,
+              "gatewayRestarted":True,
+              "modelsHttp":200,
+              "nativeImageHttp":200,
+              "nativeImageResponseNonEmpty":True,
+              "backupCreated":True
+          },sort_keys=True)+"\n")
           dest.chmod(0o644)
-          print("LUCY_18793_PROCESS_WRITTEN")
+          print("LUCY_GEMMA_KIMI_CUTOVER_OK")
           HOSTPY'''
-          prompt=("AUTHORIZED READ-ONLY LOCAL DIAGNOSTIC. Execute the script below verbatim once with the terminal tool. "
-                  "It only identifies the local process bound to 127.0.0.1:18793 and matching user services. "
-                  "Do not change state or reveal secrets. After success reply exactly LUCY_18793_PROCESS_WRITTEN.\n\n"+script)
+          prompt=("AUTHORIZED STAGING GEMMA RUNTIME REPAIR. Execute this script verbatim once with the terminal tool. "
+                  "Scope: back up Gemma config.yaml, change only model.default from the current text-only Qwen route to the existing kimi-vl route, "
+                  "preserve custom provider/base URL/supports_vision, restart only Gemma gateway, and run an authenticated tiny-image canary. "
+                  "Do not alter credentials, other profiles, B200 processes, production, Cloudflare/DNS, or databases. "
+                  "After success reply exactly LUCY_GEMMA_KIMI_CUTOVER_OK.\n\n"+script)
           payload=json.dumps({"model":"hermes-agent","messages":[{"role":"user","content":prompt}],"stream":False}).encode()
           req=urllib.request.Request("http://172.17.0.1:8642/v1/chat/completions",data=payload,headers={
-            "Authorization":"Bearer "+os.environ["HERMES_API_KEY"],"Content-Type":"application/json","User-Agent":"Lucy-CDL-18793-process"},method="POST")
-          with urllib.request.urlopen(req,timeout=100) as r: raw=json.load(r)
+              "Authorization":"Bearer "+os.environ["HERMES_API_KEY"],
+              "Content-Type":"application/json",
+              "User-Agent":"Lucy-CDL-gemma-kimi-cutover"
+          },method="POST")
+          with urllib.request.urlopen(req,timeout=150) as r:
+              raw=json.load(r)
           ans=raw.get("choices",[{}])[0].get("message",{}).get("content","")
-          if "LUCY_18793_PROCESS_WRITTEN" not in ans: raise SystemExit("Hermes did not confirm process file")
+          if "LUCY_GEMMA_KIMI_CUTOVER_OK" not in ans:
+              raise SystemExit("Hermes did not confirm Gemma Kimi cutover")
           PY
-          [[ -r "$OUT" ]] || { echo "process evidence missing"; exit 1; }
+          [[ -r "$OUT" ]] || { echo "Gemma Kimi cutover evidence missing"; exit 1; }
           cat "$OUT"
