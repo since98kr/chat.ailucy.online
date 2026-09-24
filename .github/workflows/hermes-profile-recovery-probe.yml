@@ -17,45 +17,39 @@ jobs:
   probe:
     runs-on: [self-hosted, linux, x64, chat-staging]
     environment: staging
-    timeout-minutes: 4
+    timeout-minutes: 3
     steps:
-      - name: Read API server agent toolset wiring
+      - name: Prove Gemma image completion with tool_choice none
         env:
           HERMES_API_KEY: ${{ secrets.HERMES_API_KEY }}
         shell: bash
         run: |
           set -euo pipefail
-          OUT=/tmp/lucy-api-server-toolset-wiring-20260924.txt
-          rm -f "$OUT" 2>/dev/null || true
           python3 - <<'PY'
-          import json,os,urllib.request
-          script=r'''python3 - <<'HOSTPY'
-          from pathlib import Path
-          import re
-          root=Path.home()/".hermes"/"hermes-agent"
-          out=[]
-          files=list(root.glob("gateway/platforms/*api*server*.py"))+list(root.glob("gateway/**/*api*server*.py"))
-          seen=set()
-          for p in files:
-              if p in seen: continue
-              seen.add(p)
-              lines=p.read_text(errors="replace").splitlines()
-              hits=[i for i,s in enumerate(lines,1) if "enabled_toolsets" in s or "_get_platform_tools" in s or "platform_toolsets" in s or "AIAgent(" in s or "HermesCLI(" in s]
-              for i in hits:
-                  a=max(1,i-15); b=min(len(lines),i+30)
-                  out.append(f"=== {p.relative_to(root)}:{a}-{b} ===")
-                  for n in range(a,b+1): out.append(f"{n}: {lines[n-1][:1000]}")
-          Path("/tmp/lucy-api-server-toolset-wiring-20260924.txt").write_text("\n".join(out[:1200])+"\n")
-          Path("/tmp/lucy-api-server-toolset-wiring-20260924.txt").chmod(0o644)
-          print("LUCY_API_SERVER_TOOLSET_WIRING_WRITTEN")
-          HOSTPY'''
-          prompt=("AUTHORIZED READ-ONLY CHECK. Execute the script below verbatim once. It reads only installed Hermes API-server source "
-                  "around agent/toolset wiring and changes nothing. Reply exactly LUCY_API_SERVER_TOOLSET_WIRING_WRITTEN after success.\n\n"+script)
-          payload=json.dumps({"model":"hermes-agent","messages":[{"role":"user","content":prompt}],"stream":False}).encode()
-          req=urllib.request.Request("http://172.17.0.1:8642/v1/chat/completions",data=payload,headers={
-            "Authorization":"Bearer "+os.environ["HERMES_API_KEY"],"Content-Type":"application/json","User-Agent":"Lucy-CDL-api-wiring"},method="POST")
-          with urllib.request.urlopen(req,timeout=70) as r: raw=json.load(r)
-          ans=raw.get("choices",[{}])[0].get("message",{}).get("content","")
-          if "LUCY_API_SERVER_TOOLSET_WIRING_WRITTEN" not in ans: raise SystemExit("Hermes did not confirm source")
+          import json,os,urllib.request,urllib.error
+          png="iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAusB9Y9Z9U8AAAAASUVORK5CYII="
+          payload={
+            "model":"gemma",
+            "messages":[{"role":"user","content":[
+              {"type":"text","text":"Reply with READY after processing this attached image."},
+              {"type":"image_url","image_url":{"url":"data:image/png;base64,"+png}}
+            ]}],
+            "tool_choice":"none",
+            "max_tokens":16
+          }
+          req=urllib.request.Request("http://172.17.0.1:8643/v1/chat/completions",
+            data=json.dumps(payload).encode(),
+            headers={"Content-Type":"application/json","Authorization":"Bearer "+os.environ["HERMES_API_KEY"],"User-Agent":"Lucy-CDL-gemma-tool-none"},
+            method="POST")
+          try:
+            with urllib.request.urlopen(req,timeout=90) as r:
+              raw=json.load(r)
+            h=raw.get("hermes") or {}
+            msg=((raw.get("choices") or [{}])[0].get("message") or {}).get("content")
+            passed=(r.status==200 and h.get("completed") is True and not h.get("failed"))
+            print(json.dumps({"http":r.status,"completed":h.get("completed"),"failed":h.get("failed"),"contentPrefix":str(msg)[:300],"passed":passed},ensure_ascii=False))
+            raise SystemExit(0 if passed else 2)
+          except urllib.error.HTTPError as e:
+            print(json.dumps({"http":e.code,"errorPrefix":e.read(1600).decode("utf-8","replace")},ensure_ascii=False))
+            raise
           PY
-          cat "$OUT"
