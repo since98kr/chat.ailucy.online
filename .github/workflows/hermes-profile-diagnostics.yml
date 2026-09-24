@@ -301,6 +301,33 @@ jobs:
           print(json.dumps(safe,ensure_ascii=False,indent=2))
           PY
 
+      - name: Discover Hermes serve API routes read-only
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import re, urllib.request, urllib.parse
+          base='http://127.0.0.1:9119'
+          html=urllib.request.urlopen(base+'/',timeout=5).read().decode('utf-8','replace')
+          print('=== index script refs ===')
+          refs=[]
+          for m in re.finditer(r'<script[^>]+src=["\\\']([^"\\\']+)', html):
+              src=m.group(1)
+              refs.append(src)
+              print(src)
+          routes=set()
+          print('=== discovered /api/ route strings ===')
+          for src in refs[:20]:
+              url=urllib.parse.urljoin(base+'/',src)
+              try:
+                  body=urllib.request.urlopen(url,timeout=10).read(5_000_000).decode('utf-8','replace')
+              except Exception as e:
+                  print('fetch-failed',src,type(e).__name__,str(e)); continue
+              for pat in [r'["\\\'](/api/[A-Za-z0-9_?&=./:{}-]+)', r'fetch\\(["\\\'](/api/[A-Za-z0-9_?&=./:{}-]+)']:
+                  for x in re.findall(pat,body): routes.add(x)
+          for route in sorted(routes): print(route)
+          PY
+
       - name: Inspect staging map coverage
         shell: bash
         env:
