@@ -16,9 +16,9 @@ jobs:
   probe:
     runs-on: [self-hosted, linux, x64, chat-staging]
     environment: staging
-    timeout-minutes: 4
+    timeout-minutes: 3
     steps:
-      - name: Ask default Hermes for bounded profile metadata
+      - name: Read Gemma profile metadata via default Hermes
         env:
           HERMES_API_KEY: ${{ secrets.HERMES_API_KEY }}
         shell: bash
@@ -27,60 +27,24 @@ jobs:
           python3 - <<'PY'
           import json, os, urllib.request
           prompt = (
-              "AUTHORIZED READ-ONLY LOCAL PROBE. Use terminal tools only on this host and do not modify anything. "
-              "Inspect the real Hermes home as the current service user. For profiles gemma, lynn, xixi, read only these NON-SECRET metadata: "
-              "API_SERVER_ENABLED, API_SERVER_HOST, API_SERVER_PORT, API_SERVER_MODEL_NAME; provider/model names; "
-              "for API_SERVER_KEY, OPENROUTER_API_KEY, ANTHROPIC_API_KEY, OPENAI_API_KEY, DEEPSEEK_API_KEY, LLM_API_KEY report only true/false set status, never values. "
-              "Also inspect Hermes CLI help using the installed venv python module, and report the exact non-secret command pattern or environment/profile selector that would start an OpenAI-compatible API server for one existing profile, if the help or installed code makes it clear. "
-              "Finally report whether crontab is available and whether any existing user-owned persistence mechanism (cron, tmux/screen, supervisor, pm2, user systemd) is already present, names/status only. "
-              "Return exactly one JSON object with keys hermesVersion, profiles, apiStart, persistence. Do not print any secret value."
+            "AUTHORIZED READ-ONLY LOCAL PROBE. Use one terminal command only. "
+            "Inspect $HOME/.hermes/profiles/gemma/.env. Never print credential values. "
+            "Return exactly JSON with exists plus strings API_SERVER_ENABLED, API_SERVER_HOST, API_SERVER_PORT, API_SERVER_MODEL_NAME, PROVIDER, MODEL, LLM_PROVIDER, LLM_MODEL, "
+            "and credentialSet booleans for API_SERVER_KEY, OPENROUTER_API_KEY, ANTHROPIC_API_KEY, OPENAI_API_KEY, DEEPSEEK_API_KEY, LLM_API_KEY. "
+            "Do not inspect anything else."
           )
           payload=json.dumps({"model":"hermes-agent","messages":[{"role":"user","content":prompt}],"stream":False}).encode()
-          req=urllib.request.Request(
-              "http://172.17.0.1:8642/v1/chat/completions",
-              data=payload,
-              headers={
-                  "Authorization":"Bearer "+os.environ["HERMES_API_KEY"],
-                  "Content-Type":"application/json",
-                  "User-Agent":"Lucy-CDL-profile-metadata"
-              },
-              method="POST"
-          )
-          with urllib.request.urlopen(req,timeout=90) as r:
-              raw=json.load(r)
+          req=urllib.request.Request("http://172.17.0.1:8642/v1/chat/completions",data=payload,headers={
+            "Authorization":"Bearer "+os.environ["HERMES_API_KEY"],"Content-Type":"application/json","User-Agent":"Lucy-CDL-gemma-probe"},method="POST")
+          with urllib.request.urlopen(req,timeout=60) as r: raw=json.load(r)
           ans=raw.get("choices",[{}])[0].get("message",{}).get("content","")
           a=ans.find("{"); b=ans.rfind("}")
-          if a < 0 or b < a:
-              raise SystemExit("metadata probe did not return JSON")
+          if a<0 or b<a: raise SystemExit("no JSON")
           obj=json.loads(ans[a:b+1])
-          profiles={}
-          for name in ("gemma","lynn","xixi"):
-              p=(obj.get("profiles") or {}).get(name) or {}
-              creds=p.get("credentialSet") or {}
-              profiles[name]={
-                  "exists":bool(p.get("exists",False)),
-                  "apiServerEnabled":str(p.get("apiServerEnabled",""))[:40],
-                  "apiServerHost":str(p.get("apiServerHost",""))[:120],
-                  "apiServerPort":str(p.get("apiServerPort",""))[:20],
-                  "apiServerModelName":str(p.get("apiServerModelName",""))[:100],
-                  "provider":str(p.get("provider",""))[:120],
-                  "model":str(p.get("model",""))[:200],
-                  "credentialSet":{k:bool(creds.get(k,False)) for k in (
-                      "API_SERVER_KEY","OPENROUTER_API_KEY","ANTHROPIC_API_KEY","OPENAI_API_KEY","DEEPSEEK_API_KEY","LLM_API_KEY"
-                  )}
-              }
-          safe={
-              "hermesVersion":str(obj.get("hermesVersion",""))[:100],
-              "profiles":profiles,
-              "apiStart":{
-                  "clear":bool((obj.get("apiStart") or {}).get("clear",False)),
-                  "commandPattern":str((obj.get("apiStart") or {}).get("commandPattern",""))[:800],
-                  "profileSelector":str((obj.get("apiStart") or {}).get("profileSelector",""))[:300]
-              },
-              "persistence":{
-                  "crontabAvailable":bool((obj.get("persistence") or {}).get("crontabAvailable",False)),
-                  "existing":[str(x)[:200] for x in ((obj.get("persistence") or {}).get("existing") or [])][:30]
-              }
-          }
+          allowed=["API_SERVER_ENABLED","API_SERVER_HOST","API_SERVER_PORT","API_SERVER_MODEL_NAME","PROVIDER","MODEL","LLM_PROVIDER","LLM_MODEL"]
+          safe={"exists":bool(obj.get("exists",False))}
+          for k in allowed: safe[k]=str(obj.get(k,""))[:200]
+          creds=obj.get("credentialSet") or {}
+          safe["credentialSet"]={k:bool(creds.get(k,False)) for k in ["API_SERVER_KEY","OPENROUTER_API_KEY","ANTHROPIC_API_KEY","OPENAI_API_KEY","DEEPSEEK_API_KEY","LLM_API_KEY"]}
           print(json.dumps(safe,ensure_ascii=False,sort_keys=True))
           PY
