@@ -17,60 +17,58 @@ jobs:
   probe:
     runs-on: [self-hosted, linux, x64, chat-staging]
     environment: staging
-    timeout-minutes: 5
+    timeout-minutes: 4
     steps:
-      - name: Inspect remote Qwen serving process read-only
+      - name: Verify Gemma vision mutation state read-only
         env:
           HERMES_API_KEY: ${{ secrets.HERMES_API_KEY }}
         shell: bash
         run: |
           set -euo pipefail
-          OUT=/tmp/lucy-qwen-remote-serving-20260924.txt
+          OUT=/tmp/lucy-gemma-vision-state-20260924.json
           rm -f "$OUT" 2>/dev/null || true
           python3 - <<'PY'
           import json,os,urllib.request
           script=r'''python3 - <<'HOSTPY'
           from pathlib import Path
-          import subprocess,re
-          home=Path.home()
-          remote_script=r"""
-          set +e
-          echo '=== hostname ==='
-          hostname
-          echo '=== 8080 listener ==='
-          ss -ltnp 2>/dev/null | awk 'NR==1 || /:8080[[:space:]]/'
-          echo '=== serving processes ==='
-          ps -eo pid=,ppid=,user=,etime=,comm=,args= | grep -E '[v]llm|[q]wen3[._-]?5|[a]pi_server|[o]penai.*server' | head -120
-          echo '=== relevant services ==='
-          systemctl list-units --type=service --all --no-pager 2>/dev/null | grep -Ei 'vllm|qwen|llm' | head -80
-          echo '=== containers ==='
-          docker ps --format '{{.ID}} {{.Image}} {{.Names}} {{.Status}} {{.Ports}}' 2>/dev/null | grep -Ei 'vllm|qwen|8080' | head -80
-          """
-          proxy=f"ssh -i {home}/.ssh/hni-gpu-tunnel.key -p 44703 -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null hni-gpu-tunnel@59.14.42.208 -W %h:%p"
-          cmd=[
-            "ssh","-o","ConnectTimeout=15","-o","ServerAliveInterval=30","-o","ServerAliveCountMax=3",
-            "-o","StrictHostKeyChecking=no","-o","UserKnownHostsFile=/dev/null",
-            "-i",str(home/".ssh"/"kgeo-2026-dev2_key"),
-            "-o","ProxyCommand="+proxy,
-            "kgeo_01@59.150.32.1","bash","-s"
-          ]
-          p=subprocess.run(cmd,input=remote_script,capture_output=True,text=True,timeout=45)
-          text=(p.stdout+"\n"+p.stderr)
-          # Redact command-line credentials if any.
-          text=re.sub(r'(?i)(--api-key(?:=|\s+))\S+',r'\1<redacted>',text)
-          text=re.sub(r'(?i)((?:token|secret|password|api_key)(?:=|\s+))\S+',r'\1<redacted>',text)
-          out=Path("/tmp/lucy-qwen-remote-serving-20260924.txt")
-          out.write_text(f"ssh_rc={p.returncode}\n"+text[:30000])
-          out.chmod(0o644)
+          import json, subprocess, yaml
+          root=Path.home()/".hermes"
+          profile=root/"profiles"/"gemma"
+          cfg=profile/"config.yaml"
+          obj=yaml.safe_load(cfg.read_text()) if cfg.is_file() else {}
+          model=(obj or {}).get("model") or {}
+          backups=sorted(profile.glob("config.yaml.bak.*.lucy-vision"))
+          py=root/"hermes-agent"/"venv"/"bin"/"python"
+          p=subprocess.run([str(py),"-m","hermes_cli.main","profile","show","gemma"],capture_output=True,text=True,timeout=15)
+          dest=Path("/tmp/lucy-gemma-vision-state-20260924.json")
+          dest.write_text(json.dumps({
+            "supportsVision": model.get("supports_vision"),
+            "backupCount": len(backups),
+            "gatewayShowRc": p.returncode,
+            "gatewayRunning": "Gateway: running" in p.stdout
+          },sort_keys=True)+"\n")
+          dest.chmod(0o644)
+          print("LUCY_GEMMA_VISION_STATE_WRITTEN")
           HOSTPY'''
-          prompt=("AUTHORIZED READ-ONLY GPU BACKEND DIAGNOSTIC. Use the terminal tool exactly once to execute the following script verbatim. "
-                  "It performs only read-only SSH inspection of the existing Qwen backend and redacts command-line credentials. "
-                  "Do not restart, stop, edit, install, or modify anything.\n\n"+script)
+          prompt=("AUTHORIZED READ-ONLY CHECK. Execute the script below verbatim once with the terminal tool. "
+                  "It reads only Gemma supports_vision, backup count, and gateway status and changes nothing. "
+                  "After success reply exactly LUCY_GEMMA_VISION_STATE_WRITTEN.\n\n"+script)
           payload=json.dumps({"model":"hermes-agent","messages":[{"role":"user","content":prompt}],"stream":False}).encode()
           req=urllib.request.Request("http://172.17.0.1:8642/v1/chat/completions",data=payload,headers={
-            "Authorization":"Bearer "+os.environ["HERMES_API_KEY"],"Content-Type":"application/json","User-Agent":"Lucy-CDL-qwen-remote-inspect"},method="POST")
-          with urllib.request.urlopen(req,timeout=120) as r:
-              r.read()
+            "Authorization":"Bearer "+os.environ["HERMES_API_KEY"],"Content-Type":"application/json","User-Agent":"Lucy-CDL-gemma-state"},method="POST")
+          with urllib.request.urlopen(req,timeout=80) as r: raw=json.load(r)
+          ans=raw.get("choices",[{}])[0].get("message",{}).get("content","")
+          if "LUCY_GEMMA_VISION_STATE_WRITTEN" not in ans: raise SystemExit("Hermes did not confirm state file")
           PY
-          [[ -r "$OUT" ]] || { echo "remote serving evidence missing"; exit 1; }
+          [[ -r "$OUT" ]] || { echo "Gemma state evidence missing"; exit 1; }
           cat "$OUT"
+
+          echo '=== authenticated Gemma endpoint ==='
+          python3 - <<'PY'
+          import json,os,urllib.request
+          req=urllib.request.Request("http://172.17.0.1:8643/v1/models",headers={
+            "Authorization":"Bearer "+os.environ["HERMES_API_KEY"],"User-Agent":"Lucy-CDL-gemma-state"})
+          with urllib.request.urlopen(req,timeout=8) as r:
+              obj=json.load(r)
+          print(json.dumps({"http":r.status,"models":[x.get("id") for x in obj.get("data",[]) if isinstance(x,dict)]},sort_keys=True))
+          PY
