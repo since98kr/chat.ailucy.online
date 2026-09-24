@@ -19,79 +19,82 @@ jobs:
     environment: staging
     timeout-minutes: 5
     steps:
-      - name: Read repair status and Gemma backend identity safely
+      - name: Set Kimi-VL 128K context and prove native image input
         env:
           HERMES_API_KEY: ${{ secrets.HERMES_API_KEY }}
         shell: bash
         run: |
           set -euo pipefail
-          OUT=/tmp/lucy-gemma-current-backend-20260924.json
+          OUT=/tmp/lucy-gemma-kimi-128k-20260924.json
           rm -f "$OUT" 2>/dev/null || true
           python3 - <<'PY'
-          import json,os,urllib.request
+          import json,os,urllib.request,urllib.error
           script=r'''python3 - <<'HOSTPY'
           from pathlib import Path
-          import json,re,subprocess,urllib.request,urllib.error,yaml
-
-          root=Path.home()/".hermes"
-          profile=root/"profiles"/"gemma"
-          cfg=yaml.safe_load((profile/"config.yaml").read_text()) or {}
-          model=cfg.get("model") or {}
-          custom=(cfg.get("custom_providers") or {})
-          safe_custom={}
-          for name,val in custom.items():
-              if isinstance(val,dict):
-                  safe_custom[name]={k:v for k,v in val.items() if not re.search(r'key|token|secret|password',k,re.I)}
-
-          # Read remote guarded-repair status with existing SSH path.
-          ssh=[
-            "ssh","-o","BatchMode=yes","-o","ConnectTimeout=12",
-            "-o","StrictHostKeyChecking=no","-o","UserKnownHostsFile=/dev/null",
-            "-i",str(Path.home()/".ssh"/"kgeo-2026-dev2_key"),
-            "-o",f"ProxyCommand=ssh -i {Path.home()}/.ssh/hni-gpu-tunnel.key -p 3006 -W %h:%p -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null hni-gpu-tunnel@59.14.42.208",
-            "-p","44703","kgeo_01@59.150.32.1"
-          ]
-          remote="cat /tmp/lucy-qwen-vision-repair-status.json 2>/dev/null || echo '{\"state\":\"missing\"}'; echo '---PS---'; ps -eo pid,ppid,etime,args | grep -E '[v]llm serve .*qwen3\\.5-35b-a3b-fp8' | head -3"
-          p=subprocess.run(ssh+[remote],capture_output=True,text=True,timeout=30)
-          remote_out=(p.stdout+"\n"+p.stderr)
-          remote_out=re.sub(r'(--api-key\s+)\S+',r'\1<redacted>',remote_out,flags=re.I)
-
-          # Query Gemma's own /v1/models with its existing API server key only in-memory.
-          key=""
-          for line in (profile/".env").read_text(errors="replace").splitlines():
-              if line.startswith("API_SERVER_KEY="):
-                  key=line.split("=",1)[1].strip(); break
-          models=[]
-          models_http=None
-          try:
-              req=urllib.request.Request("http://172.17.0.1:8643/v1/models",headers={"Authorization":"Bearer "+key})
-              with urllib.request.urlopen(req,timeout=8) as r:
-                  obj=json.load(r); models_http=r.status
-              models=[x for x in obj.get("data",[]) if isinstance(x,dict)]
-          except Exception as e:
-              models=[{"error":type(e).__name__}]
-
-          data={
-            "gemmaModel":{k:v for k,v in model.items() if not re.search(r'key|token|secret|password',str(k),re.I)},
-            "customProviders":safe_custom,
-            "gemmaApiModelsHttp":models_http,
-            "gemmaApiModels":models,
-            "remoteRepair":remote_out[:12000]
-          }
-          dest=Path("/tmp/lucy-gemma-current-backend-20260924.json")
-          dest.write_text(json.dumps(data,ensure_ascii=False,indent=2)+"\n")
+          import json,yaml,shutil,time
+          p=Path.home()/".hermes"/"profiles"/"gemma"/"config.yaml"
+          obj=yaml.safe_load(p.read_text()) or {}
+          model=obj.get("model")
+          cps=obj.get("custom_providers")
+          if not isinstance(model,dict) or model.get("default")!="kimi-vl" or model.get("supports_vision") is not True:
+              raise SystemExit("Gemma is not in expected Kimi-VL vision state")
+          if not isinstance(cps,list) or not cps or not isinstance(cps[0],dict):
+              raise SystemExit("custom provider missing")
+          cp=cps[0]
+          if cp.get("model")!="kimi-vl" or cp.get("base_url")!="http://127.0.0.1:18793/v1":
+              raise SystemExit("unexpected Kimi-VL provider route")
+          backup=p.with_name("config.yaml.bak."+time.strftime("%Y%m%d_%H%M%S")+".lucy-kimi-128k")
+          shutil.copy2(p,backup)
+          model["context_length"]=131072
+          models=cp.setdefault("models",{})
+          entry=models.setdefault("kimi-vl",{})
+          entry["context_length"]=131072
+          p.write_text(yaml.safe_dump(obj,sort_keys=False,allow_unicode=True))
+          chk=yaml.safe_load(p.read_text()) or {}
+          cm=chk.get("model") or {}
+          cc=(chk.get("custom_providers") or [{}])[0]
+          ok=(cm.get("context_length")==131072 and
+              ((cc.get("models") or {}).get("kimi-vl") or {}).get("context_length")==131072)
+          if not ok:
+              shutil.copy2(backup,p)
+              raise SystemExit("128K validation failed; restored backup")
+          dest=Path("/tmp/lucy-gemma-kimi-context-set-20260924.json")
+          dest.write_text(json.dumps({"contextLength":131072,"backupCreated":True},sort_keys=True)+"\n")
           dest.chmod(0o644)
-          print("LUCY_GEMMA_CURRENT_BACKEND_WRITTEN")
+          print("LUCY_KIMI_128K_SET")
           HOSTPY'''
-          prompt=("AUTHORIZED READ-ONLY CHECK. Execute the script below verbatim once with the terminal tool. "
-                  "It reads Gemma non-secret model metadata, its local model listing, and the existing remote guarded-repair status. "
-                  "No state changes. After success reply exactly LUCY_GEMMA_CURRENT_BACKEND_WRITTEN.\n\n"+script)
+          prompt=("AUTHORIZED STAGING GEMMA REPAIR. Execute the script below verbatim once. "
+                  "It backs up Gemma config.yaml and changes only Kimi-VL context metadata to its official 128K value (131072). "
+                  "No credentials, services, B200 process, other profiles, production, DNS, or DB are changed. "
+                  "After success reply exactly LUCY_KIMI_128K_SET.\n\n"+script)
           payload=json.dumps({"model":"hermes-agent","messages":[{"role":"user","content":prompt}],"stream":False}).encode()
           req=urllib.request.Request("http://172.17.0.1:8642/v1/chat/completions",data=payload,headers={
-            "Authorization":"Bearer "+os.environ["HERMES_API_KEY"],"Content-Type":"application/json","User-Agent":"Lucy-CDL-gemma-current-backend"},method="POST")
-          with urllib.request.urlopen(req,timeout=100) as r: raw=json.load(r)
+            "Authorization":"Bearer "+os.environ["HERMES_API_KEY"],"Content-Type":"application/json","User-Agent":"Lucy-CDL-kimi-128k"},method="POST")
+          with urllib.request.urlopen(req,timeout=80) as r: raw=json.load(r)
           ans=raw.get("choices",[{}])[0].get("message",{}).get("content","")
-          if "LUCY_GEMMA_CURRENT_BACKEND_WRITTEN" not in ans: raise SystemExit("Hermes did not confirm backend file")
+          if "LUCY_KIMI_128K_SET" not in ans: raise SystemExit("Hermes did not confirm Kimi 128K config")
+
+          png="iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAusB9Y9Z9U8AAAAASUVORK5CYII="
+          image_payload={
+            "model":"gemma",
+            "messages":[{"role":"user","content":[
+              {"type":"text","text":"Reply with READY."},
+              {"type":"image_url","image_url":{"url":"data:image/png;base64,"+png}}
+            ]}],
+            "max_tokens":16
+          }
+          canary=urllib.request.Request("http://172.17.0.1:8643/v1/chat/completions",
+            data=json.dumps(image_payload).encode(),
+            headers={"Content-Type":"application/json","Authorization":"Bearer "+os.environ["HERMES_API_KEY"],"User-Agent":"Lucy-CDL-kimi-128k-canary"},
+            method="POST")
+          try:
+              with urllib.request.urlopen(canary,timeout=90) as r:
+                  body=r.read(4000).decode("utf-8","replace")
+              print(json.dumps({"http":r.status,"imageAccepted":r.status==200,"bodyPrefix":body[:600]},ensure_ascii=False))
+              if r.status!=200: raise SystemExit(3)
+          except urllib.error.HTTPError as e:
+              body=e.read(4000).decode("utf-8","replace")
+              print(json.dumps({"http":e.code,"imageAccepted":False,"bodyPrefix":body[:1200]},ensure_ascii=False))
+              raise
           PY
-          [[ -r "$OUT" ]] || { echo "backend evidence missing"; exit 1; }
-          cat "$OUT"
+          cat /tmp/lucy-gemma-kimi-context-set-20260924.json
