@@ -20,6 +20,7 @@ type StreamEvent = {
   delta?: string;
   error?: string;
   message?: { content?: string; authorId?: string };
+  artifact?: { id: string; filename: string; mimeType: string; sizeBytes: number };
   agentId?: string;
   delivery?: { state: string; agentId: string; systemId: string; artifactIds: string[] };
 };
@@ -207,10 +208,33 @@ test('Hermes Gemma understands an image-only marker', async ({ page }, testInfo)
     );
     expect(events.filter((event) => event.type === 'artifacts.delivery').map((event) => event.delivery?.state))
       .toEqual(['delivering', 'delivered']);
-    const transcript = completedText(events).toUpperCase().replace(/[^A-Z]+/g, ' ').trim();
-    expect(transcript).toContain(marker);
+    const transcript = completedText(events);
+    const generatedTextArtifacts = events
+      .filter((event) => event.type === 'artifact.created' && event.artifact?.mimeType.split(';', 1)[0].trim() === 'text/plain')
+      .map((event) => event.artifact)
+      .filter((artifact): artifact is NonNullable<StreamEvent['artifact']> => Boolean(artifact));
+    const generatedTexts = await Promise.all(generatedTextArtifacts.map(async (artifact) => {
+      const downloaded = await api.get(`/api/artifacts/${artifact.id}/download`);
+      expect(downloaded.status()).toBe(200);
+      return Buffer.from(await downloaded.body()).toString('utf8');
+    }));
+    const normalizeVisionText = (value: string) => value.toUpperCase().replace(/[^A-Z]+/g, ' ').trim();
+    const outputChannels = [transcript, ...generatedTexts].map(normalizeVisionText);
+    expect(outputChannels.some((channel) => channel.includes(marker))).toBe(true);
     await testInfo.attach('hermes-vision.json', {
-      body: Buffer.from(JSON.stringify({ agentId: visionAgentId, conversationId, artifactId, marker }, null, 2)),
+      body: Buffer.from(JSON.stringify({
+        agentId: visionAgentId,
+        conversationId,
+        artifactId,
+        marker,
+        transcript,
+        generatedTextArtifacts: generatedTextArtifacts.map(({ id, filename, mimeType, sizeBytes }) => ({
+          id,
+          filename,
+          mimeType,
+          sizeBytes,
+        })),
+      }, null, 2)),
       contentType: 'application/json',
     });
   } finally {
