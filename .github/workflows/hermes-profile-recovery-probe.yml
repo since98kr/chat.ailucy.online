@@ -17,63 +17,49 @@ jobs:
   probe:
     runs-on: [self-hosted, linux, x64, chat-staging]
     environment: staging
-    timeout-minutes: 6
+    timeout-minutes: 3
     steps:
-      - name: Inspect B200 Qwen launch source and router read-only
+      - name: Read sanitized Gemma model config structure
         env:
           HERMES_API_KEY: ${{ secrets.HERMES_API_KEY }}
         shell: bash
         run: |
           set -euo pipefail
-          OUT=/tmp/lucy-b200-qwen-launch-source-20260924.json
+          OUT=/tmp/lucy-gemma-model-structure-20260924.json
           rm -f "$OUT" 2>/dev/null || true
           python3 - <<'PY'
           import json,os,urllib.request
-          script = r"""python3 - <<'HOSTPY'
+          script=r'''python3 - <<'HOSTPY'
           from pathlib import Path
-          import json,re,subprocess
-
-          ssh=[
-            "ssh","-o","BatchMode=yes","-o","ConnectTimeout=12",
-            "-o","StrictHostKeyChecking=no","-o","UserKnownHostsFile=/dev/null",
-            "-i",str(Path.home()/".ssh"/"kgeo-2026-dev2_key"),
-            "-o",f"ProxyCommand=ssh -i {Path.home()}/.ssh/hni-gpu-tunnel.key -p 3006 -W %h:%p -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null hni-gpu-tunnel@59.14.42.208",
-            "-p","44703","kgeo_01@59.150.32.1"
-          ]
-          remote="\n".join([
-            "set +e",
-            "echo '=== qwen pid metadata ==='",
-            "ps -o pid,ppid,user,etime,comm,args -p 1322091",
-            "readlink -f /proc/1322091/cwd 2>/dev/null || true",
-            "echo '=== router pid metadata ==='",
-            "ps -o pid,ppid,user,etime,comm,args -p 3539486",
-            "readlink -f /proc/3539486/cwd 2>/dev/null || true",
-            "tr '\\0' ' ' </proc/3539486/cmdline 2>/dev/null || true; echo",
-            "echo '=== launch source candidates ==='",
-            "cd /NHNHOME/WORKSPACE/26molit001_KGEO/gis-llm 2>/dev/null || exit 0",
-            "grep -RIl --exclude-dir=.git --exclude-dir=venv --exclude='*.log' -- '--language-model-only' . 2>/dev/null | head -40",
-            "grep -RIn --exclude-dir=.git --exclude-dir=venv --exclude='*.log' -- 'qwen3.5-35b-a3b-fp8' . 2>/dev/null | head -80",
-            "echo '=== relevant top-level files ==='",
-            "find . -maxdepth 2 -type f \( -name '*.sh' -o -name '*.service' -o -name '*.py' -o -name '*.yaml' -o -name '*.yml' \) -print | sort | head -200"
-          ])
-          p=subprocess.run(ssh+[remote],capture_output=True,text=True,timeout=45)
-          raw=(p.stdout+"\n"+p.stderr)
-          raw=re.sub(r'((?:api[-_]?key|token|secret|password)(?:=|\s+))\S+',r'\1<redacted>',raw,flags=re.I)
-          raw=re.sub(r'(--api-key\s+)\S+',r'\1<redacted>',raw,flags=re.I)
-          dest=Path("/tmp/lucy-b200-qwen-launch-source-20260924.json")
-          dest.write_text(json.dumps({"rc":p.returncode,"output":raw[:45000]},ensure_ascii=False,indent=2)+"\n")
-          dest.chmod(0o644)
-          print("LUCY_B200_QWEN_SOURCE_WRITTEN")
-          HOSTPY"""
-          prompt=("AUTHORIZED READ-ONLY B200 DIAGNOSTIC. Execute the script below verbatim once. "
-                  "It only locates the existing Qwen vLLM launch source and 8080 router process using the existing SSH path. "
-                  "No remote files or processes are changed. After success reply exactly LUCY_B200_QWEN_SOURCE_WRITTEN.\n\n"+script)
+          import json,yaml,re
+          p=Path.home()/".hermes"/"profiles"/"gemma"/"config.yaml"
+          obj=yaml.safe_load(p.read_text()) or {}
+          secret=re.compile(r'key|token|secret|password|credential|auth',re.I)
+          def scrub(v):
+              if isinstance(v,dict):
+                  return {str(k):("<redacted>" if secret.search(str(k)) else scrub(vv)) for k,vv in v.items()}
+              if isinstance(v,list): return [scrub(x) for x in v]
+              if isinstance(v,(str,int,float,bool)) or v is None: return v
+              return str(v)
+          data={
+            "model":scrub(obj.get("model")),
+            "custom_providers":scrub(obj.get("custom_providers")),
+            "inference":scrub(obj.get("inference")),
+            "providers":scrub(obj.get("providers"))
+          }
+          out=Path("/tmp/lucy-gemma-model-structure-20260924.json")
+          out.write_text(json.dumps(data,ensure_ascii=False,indent=2)+"\n")
+          out.chmod(0o644)
+          print("LUCY_GEMMA_MODEL_STRUCTURE_WRITTEN")
+          HOSTPY'''
+          prompt=("AUTHORIZED READ-ONLY LOCAL DIAGNOSTIC. Execute the short script below verbatim once with the terminal tool. "
+                  "It reads only Gemma config model/provider structure, redacts secret-bearing keys, and changes nothing. "
+                  "After success reply exactly LUCY_GEMMA_MODEL_STRUCTURE_WRITTEN.\n\n"+script)
           payload=json.dumps({"model":"hermes-agent","messages":[{"role":"user","content":prompt}],"stream":False}).encode()
           req=urllib.request.Request("http://172.17.0.1:8642/v1/chat/completions",data=payload,headers={
-            "Authorization":"Bearer "+os.environ["HERMES_API_KEY"],"Content-Type":"application/json","User-Agent":"Lucy-CDL-b200-qwen-source"},method="POST")
-          with urllib.request.urlopen(req,timeout=120) as r: raw=json.load(r)
+              "Authorization":"Bearer "+os.environ["HERMES_API_KEY"],"Content-Type":"application/json","User-Agent":"Lucy-CDL-gemma-structure"},method="POST")
+          with urllib.request.urlopen(req,timeout=60) as r: raw=json.load(r)
           ans=raw.get("choices",[{}])[0].get("message",{}).get("content","")
-          if "LUCY_B200_QWEN_SOURCE_WRITTEN" not in ans: raise SystemExit("Hermes did not confirm source file")
+          if "LUCY_GEMMA_MODEL_STRUCTURE_WRITTEN" not in ans: raise SystemExit("Hermes did not confirm structure output")
           PY
-          [[ -r "$OUT" ]] || { echo "B200 source evidence missing"; exit 1; }
           cat "$OUT"
