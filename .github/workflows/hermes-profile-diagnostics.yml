@@ -204,6 +204,7 @@ jobs:
           PY
 
       - name: Ask default Hermes for bounded host profile inventory
+        if: ${{ false }}
         shell: bash
         env:
           HERMES_API_KEY: ${{ secrets.HERMES_API_KEY }}
