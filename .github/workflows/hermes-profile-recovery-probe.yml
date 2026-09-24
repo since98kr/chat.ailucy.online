@@ -19,13 +19,13 @@ jobs:
     environment: staging
     timeout-minutes: 6
     steps:
-      - name: Inspect B200 vLLM launch mode read-only
+      - name: Inspect B200 Qwen launch source and router read-only
         env:
           HERMES_API_KEY: ${{ secrets.HERMES_API_KEY }}
         shell: bash
         run: |
           set -euo pipefail
-          OUT=/tmp/lucy-b200-vllm-launch-20260924.json
+          OUT=/tmp/lucy-b200-qwen-launch-source-20260924.json
           rm -f "$OUT" 2>/dev/null || true
           python3 - <<'PY'
           import json,os,urllib.request
@@ -42,38 +42,38 @@ jobs:
           ]
           remote="\n".join([
             "set +e",
-            "echo '=== 8080 listener ==='",
-            "ss -ltnp 2>/dev/null | awk 'NR==1 || /:8080[[:space:]]/'",
-            "echo '=== candidate processes ==='",
-            "ps -eo pid,ppid,user,etime,comm,args | grep -E '[v]llm|[a]pi_server|[q]wen3\\.5|[8]080' | head -80",
-            "echo '=== user units ==='",
-            "systemctl --user list-units --type=service --all --no-pager 2>/dev/null | grep -Ei 'vllm|qwen|8001|8080|model|router' || true",
-            "systemctl --user list-unit-files --type=service --no-pager 2>/dev/null | grep -Ei 'vllm|qwen|8001|8080|model|router' || true",
-            "echo '=== system units ==='",
-            "systemctl list-units --type=service --all --no-pager 2>/dev/null | grep -Ei 'vllm|qwen|8001|8080|model|router' || true",
-            "systemctl list-unit-files --type=service --no-pager 2>/dev/null | grep -Ei 'vllm|qwen|8001|8080|model|router' || true",
-            "echo '=== docker containers ==='",
-            "docker ps --format '{{.ID}} {{.Names}} {{.Image}} {{.Ports}} {{.Command}}' 2>/dev/null | grep -Ei 'vllm|qwen|8001|8080|model|router' || true"
+            "echo '=== qwen pid metadata ==='",
+            "ps -o pid,ppid,user,etime,comm,args -p 1322091",
+            "readlink -f /proc/1322091/cwd 2>/dev/null || true",
+            "echo '=== router pid metadata ==='",
+            "ps -o pid,ppid,user,etime,comm,args -p 3539486",
+            "readlink -f /proc/3539486/cwd 2>/dev/null || true",
+            "tr '\\0' ' ' </proc/3539486/cmdline 2>/dev/null || true; echo",
+            "echo '=== launch source candidates ==='",
+            "cd /NHNHOME/WORKSPACE/26molit001_KGEO/gis-llm 2>/dev/null || exit 0",
+            "grep -RIl --exclude-dir=.git --exclude-dir=venv --exclude='*.log' -- '--language-model-only' . 2>/dev/null | head -40",
+            "grep -RIn --exclude-dir=.git --exclude-dir=venv --exclude='*.log' -- 'qwen3.5-35b-a3b-fp8' . 2>/dev/null | head -80",
+            "echo '=== relevant top-level files ==='",
+            "find . -maxdepth 2 -type f \( -name '*.sh' -o -name '*.service' -o -name '*.py' -o -name '*.yaml' -o -name '*.yml' \) -print | sort | head -200"
           ])
           p=subprocess.run(ssh+[remote],capture_output=True,text=True,timeout=45)
           raw=(p.stdout+"\n"+p.stderr)
           raw=re.sub(r'((?:api[-_]?key|token|secret|password)(?:=|\s+))\S+',r'\1<redacted>',raw,flags=re.I)
           raw=re.sub(r'(--api-key\s+)\S+',r'\1<redacted>',raw,flags=re.I)
-          data={"rc":p.returncode,"output":raw[:30000]}
-          dest=Path("/tmp/lucy-b200-vllm-launch-20260924.json")
-          dest.write_text(json.dumps(data,ensure_ascii=False,indent=2)+"\n")
+          dest=Path("/tmp/lucy-b200-qwen-launch-source-20260924.json")
+          dest.write_text(json.dumps({"rc":p.returncode,"output":raw[:45000]},ensure_ascii=False,indent=2)+"\n")
           dest.chmod(0o644)
-          print("LUCY_B200_VLLM_LAUNCH_WRITTEN")
+          print("LUCY_B200_QWEN_SOURCE_WRITTEN")
           HOSTPY"""
-          prompt=("AUTHORIZED READ-ONLY B200 DIAGNOSTIC. Execute the script below verbatim once with the terminal tool. "
-                  "It uses the already-configured SSH path only to inspect the remote 8080 listener, process command, service names, and container metadata. "
-                  "It makes no remote changes and redacts credential-like arguments. After success reply exactly LUCY_B200_VLLM_LAUNCH_WRITTEN.\n\n"+script)
+          prompt=("AUTHORIZED READ-ONLY B200 DIAGNOSTIC. Execute the script below verbatim once. "
+                  "It only locates the existing Qwen vLLM launch source and 8080 router process using the existing SSH path. "
+                  "No remote files or processes are changed. After success reply exactly LUCY_B200_QWEN_SOURCE_WRITTEN.\n\n"+script)
           payload=json.dumps({"model":"hermes-agent","messages":[{"role":"user","content":prompt}],"stream":False}).encode()
           req=urllib.request.Request("http://172.17.0.1:8642/v1/chat/completions",data=payload,headers={
-            "Authorization":"Bearer "+os.environ["HERMES_API_KEY"],"Content-Type":"application/json","User-Agent":"Lucy-CDL-b200-vllm-readonly"},method="POST")
+            "Authorization":"Bearer "+os.environ["HERMES_API_KEY"],"Content-Type":"application/json","User-Agent":"Lucy-CDL-b200-qwen-source"},method="POST")
           with urllib.request.urlopen(req,timeout=120) as r: raw=json.load(r)
           ans=raw.get("choices",[{}])[0].get("message",{}).get("content","")
-          if "LUCY_B200_VLLM_LAUNCH_WRITTEN" not in ans: raise SystemExit("Hermes did not confirm B200 launch file")
+          if "LUCY_B200_QWEN_SOURCE_WRITTEN" not in ans: raise SystemExit("Hermes did not confirm source file")
           PY
-          [[ -r "$OUT" ]] || { echo "B200 launch evidence missing"; exit 1; }
+          [[ -r "$OUT" ]] || { echo "B200 source evidence missing"; exit 1; }
           cat "$OUT"
