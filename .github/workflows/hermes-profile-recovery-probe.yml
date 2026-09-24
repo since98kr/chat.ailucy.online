@@ -17,136 +17,78 @@ jobs:
   probe:
     runs-on: [self-hosted, linux, x64, chat-staging]
     environment: staging
-    timeout-minutes: 7
+    timeout-minutes: 4
     steps:
-      - name: Restart Gemma with no tools and prove image completion
+      - name: Snapshot current Gemma state
         env:
           HERMES_API_KEY: ${{ secrets.HERMES_API_KEY }}
         shell: bash
         run: |
           set -euo pipefail
-          OUT=/tmp/lucy-gemma-no-tools-restart-20260924.json
+          OUT=/tmp/lucy-gemma-current-state-20260924.json
           rm -f "$OUT" 2>/dev/null || true
           python3 - <<'PY'
           import json,os,urllib.request
           script=r'''python3 - <<'HOSTPY'
           from pathlib import Path
-          import json,yaml,shutil,time,subprocess,urllib.request,urllib.error
-
+          import json,yaml,subprocess
           root=Path.home()/".hermes"
-          profile=root/"profiles"/"gemma"
-          cfg=profile/"config.yaml"
-          obj=yaml.safe_load(cfg.read_text()) or {}
+          p=root/"profiles"/"gemma"/"config.yaml"
+          obj=yaml.safe_load(p.read_text()) or {}
           model=obj.get("model") or {}
-          if model.get("default")!="kimi-vl" or model.get("supports_vision") is not True or model.get("context_length")!=131072:
-              raise SystemExit("Gemma Kimi-VL vision/context state unexpected")
-          backup=cfg.with_name("config.yaml.bak."+time.strftime("%Y%m%d_%H%M%S")+".lucy-no-tools-restart")
-          shutil.copy2(cfg,backup)
-
-          pts=obj.setdefault("platform_toolsets",{})
-          pts["cli"]=[]
-          agent=obj.setdefault("agent",{})
-          agent["tool_use_enforcement"]=False
-          cfg.write_text(yaml.safe_dump(obj,sort_keys=False,allow_unicode=True))
-
+          pts=obj.get("platform_toolsets") or {}
+          agent=obj.get("agent") or {}
           py=root/"hermes-agent"/"venv"/"bin"/"python"
-          restart=[str(py),"-m","hermes_cli.main","-p","gemma","gateway","restart"]
-
-          def restart_gateway():
-              p=subprocess.run(restart,capture_output=True,text=True,timeout=60)
-              return p.returncode,(p.stdout+"\n"+p.stderr)
-
-          def api_key():
-              for line in (profile/".env").read_text(errors="replace").splitlines():
-                  if line.startswith("API_SERVER_KEY="):
-                      return line.split("=",1)[1].strip()
-              return ""
-
-          def wait_models(key):
-              last=""
-              for _ in range(40):
-                  try:
-                      req=urllib.request.Request("http://127.0.0.1:8643/v1/models",
-                          headers={"Authorization":"Bearer "+key,"User-Agent":"Lucy-CDL-gemma-restart"})
-                      with urllib.request.urlopen(req,timeout=3) as r:
-                          data=json.load(r)
-                      ids=[x.get("id") for x in data.get("data",[]) if isinstance(x,dict)]
-                      if r.status==200 and "gemma" in ids:
-                          return True
-                  except Exception as e:
-                      last=type(e).__name__
-                  time.sleep(1)
-              return False
-
-          key=api_key()
-          if not key:
-              shutil.copy2(backup,cfg)
-              raise SystemExit("Gemma API server key unavailable")
-
-          rc,txt=restart_gateway()
-          if rc!=0 or not wait_models(key):
-              shutil.copy2(backup,cfg)
-              restart_gateway()
-              raise SystemExit("Gemma restart failed; restored backup")
-
-          png="iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAusB9Y9Z9U8AAAAASUVORK5CYII="
-          payload={
-            "model":"gemma",
-            "messages":[{"role":"user","content":[
-              {"type":"text","text":"Reply with READY after processing this attached image."},
-              {"type":"image_url","image_url":{"url":"data:image/png;base64,"+png}}
-            ]}],
-            "max_tokens":32
+          s=subprocess.run([str(py),"-m","hermes_cli.main","profile","show","gemma"],capture_output=True,text=True,timeout=15)
+          ev=Path("/tmp/lucy-gemma-no-tools-restart-20260924.json")
+          out={
+            "defaultModel":model.get("default"),
+            "supportsVision":model.get("supports_vision"),
+            "contextLength":model.get("context_length"),
+            "cliToolsets":pts.get("cli"),
+            "toolUseEnforcement":agent.get("tool_use_enforcement"),
+            "gatewayRunning":"Gateway: running" in s.stdout,
+            "successEvidenceExists":ev.is_file()
           }
-          passed=False
-          evidence={}
-          try:
-              req=urllib.request.Request("http://127.0.0.1:8643/v1/chat/completions",
-                  data=json.dumps(payload).encode(),
-                  headers={"Content-Type":"application/json","Authorization":"Bearer "+key,"User-Agent":"Lucy-CDL-gemma-no-tools-restart-canary"},
-                  method="POST")
-              with urllib.request.urlopen(req,timeout=90) as r:
-                  body=json.load(r)
-              h=body.get("hermes") or {}
-              msg=((body.get("choices") or [{}])[0].get("message") or {}).get("content","")
-              passed=(r.status==200 and h.get("completed") is True and not h.get("failed"))
-              evidence={"http":r.status,"completed":h.get("completed"),"failed":h.get("failed"),"contentPrefix":str(msg)[:200]}
-          except urllib.error.HTTPError as e:
-              evidence={"http":e.code,"errorPrefix":e.read(1000).decode("utf-8","replace")}
-          except Exception as e:
-              evidence={"http":None,"error":type(e).__name__+":"+str(e)}
-
-          if not passed:
-              shutil.copy2(backup,cfg)
-              restart_gateway()
-              wait_models(key)
-              raise SystemExit("Gemma image canary failed after restart; restored backup; evidence="+json.dumps(evidence,ensure_ascii=False))
-
-          dest=Path("/tmp/lucy-gemma-no-tools-restart-20260924.json")
-          dest.write_text(json.dumps({
-              "backupCreated":True,
-              "cliToolsets":[],
-              "toolUseEnforcement":False,
-              "gatewayRestarted":True,
-              "modelsHttp":200,
-              "imageCanary":evidence
-          },ensure_ascii=False,sort_keys=True)+"\n")
-          dest.chmod(0o644)
-          print("LUCY_GEMMA_NO_TOOLS_RESTART_OK")
+          Path("/tmp/lucy-gemma-current-state-20260924.json").write_text(json.dumps(out,sort_keys=True)+"\n")
+          Path("/tmp/lucy-gemma-current-state-20260924.json").chmod(0o644)
+          print("LUCY_GEMMA_STATE_OK")
           HOSTPY'''
-          prompt=("AUTHORIZED STAGING GEMMA RUNTIME REPAIR. Execute the script below verbatim once. "
-                  "It backs up only Gemma config.yaml, makes its CLI toolset explicitly empty, disables tool-use enforcement, "
-                  "restarts only the Gemma gateway, verifies 8643, and runs one bounded image canary. "
-                  "If the canary fails it restores the backup and restarts Gemma again. "
-                  "Do not touch credentials, B200 process, other profiles, production, DNS, or databases. "
-                  "After success reply exactly LUCY_GEMMA_NO_TOOLS_RESTART_OK.\n\n"+script)
+          prompt=("AUTHORIZED READ-ONLY CHECK. Execute the script below verbatim once. It reads only sanitized Gemma runtime/config state, "
+                  "writes /tmp evidence, and changes nothing. After success reply exactly LUCY_GEMMA_STATE_OK.\n\n"+script)
           payload=json.dumps({"model":"hermes-agent","messages":[{"role":"user","content":prompt}],"stream":False}).encode()
           req=urllib.request.Request("http://172.17.0.1:8642/v1/chat/completions",data=payload,headers={
-            "Authorization":"Bearer "+os.environ["HERMES_API_KEY"],"Content-Type":"application/json","User-Agent":"Lucy-CDL-gemma-no-tools-restart"},method="POST")
-          with urllib.request.urlopen(req,timeout=180) as r: raw=json.load(r)
+            "Authorization":"Bearer "+os.environ["HERMES_API_KEY"],"Content-Type":"application/json","User-Agent":"Lucy-CDL-gemma-state-short"},method="POST")
+          with urllib.request.urlopen(req,timeout=70) as r: raw=json.load(r)
           ans=raw.get("choices",[{}])[0].get("message",{}).get("content","")
-          if "LUCY_GEMMA_NO_TOOLS_RESTART_OK" not in ans:
-              raise SystemExit("Hermes did not confirm Gemma repair")
+          if "LUCY_GEMMA_STATE_OK" not in ans: raise SystemExit("Hermes did not confirm state snapshot")
           PY
-          [[ -r "$OUT" ]] || { echo "repair evidence missing"; exit 1; }
           cat "$OUT"
+
+      - name: Direct Gemma image canary
+        env:
+          HERMES_API_KEY: ${{ secrets.HERMES_API_KEY }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import json,os,urllib.request,urllib.error
+          png="iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAusB9Y9Z9U8AAAAASUVORK5CYII="
+          payload={"model":"gemma","messages":[{"role":"user","content":[
+            {"type":"text","text":"Reply with READY after processing this attached image."},
+            {"type":"image_url","image_url":{"url":"data:image/png;base64,"+png}}
+          ]}],"max_tokens":32}
+          req=urllib.request.Request("http://172.17.0.1:8643/v1/chat/completions",data=json.dumps(payload).encode(),
+            headers={"Content-Type":"application/json","Authorization":"Bearer "+os.environ["HERMES_API_KEY"],"User-Agent":"Lucy-CDL-gemma-direct-state"},method="POST")
+          try:
+            with urllib.request.urlopen(req,timeout=90) as r: body=json.load(r)
+            h=body.get("hermes") or {}
+            msg=((body.get("choices") or [{}])[0].get("message") or {}).get("content","")
+            passed=(r.status==200 and h.get("completed") is True and not h.get("failed"))
+            print(json.dumps({"http":r.status,"completed":h.get("completed"),"failed":h.get("failed"),"contentPrefix":str(msg)[:300],"passed":passed},ensure_ascii=False))
+            raise SystemExit(0 if passed else 2)
+          except urllib.error.HTTPError as e:
+            body=e.read(1200).decode("utf-8","replace")
+            print(json.dumps({"http":e.code,"completed":False,"failed":True,"errorPrefix":body},ensure_ascii=False))
+            raise SystemExit(3)
+          PY
