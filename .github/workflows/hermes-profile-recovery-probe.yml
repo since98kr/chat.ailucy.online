@@ -10,54 +10,27 @@ permissions:
   contents: read
 
 concurrency:
-  group: chat-v2-hermes-profile-recovery-probe
+  group: chat-v2-staging-disk-probe
   cancel-in-progress: true
 
 jobs:
   probe:
     runs-on: [self-hosted, linux, x64, chat-staging]
-    environment: staging
     timeout-minutes: 4
     steps:
-      - name: Prove 8642 Hermes multiplexer personas
-        env:
-          HERMES_API_KEY: ${{ secrets.HERMES_API_KEY }}
+      - name: Inspect staging disk and Docker usage read-only
         shell: bash
         run: |
           set -euo pipefail
-          python3 - <<'PY'
-          import json, os, urllib.request, urllib.error
-
-          key=os.environ["HERMES_API_KEY"]
-          rows=[]
-          for model in ["hermes-agent","gemma","lynn","xixi"]:
-              payload={
-                "model":model,
-                "messages":[{"role":"user","content":"Reply exactly READY."}],
-                "max_tokens":16
-              }
-              req=urllib.request.Request(
-                "http://172.17.0.1:8642/v1/chat/completions",
-                data=json.dumps(payload).encode(),
-                headers={
-                  "Authorization":"Bearer "+key,
-                  "Content-Type":"application/json",
-                  "User-Agent":"Lucy-CDL-261-multiplexer-canary"
-                },
-                method="POST"
-              )
-              try:
-                  with urllib.request.urlopen(req,timeout=60) as r:
-                      body=json.load(r)
-                  msg=str(((body.get("choices") or [{}])[0].get("message") or {}).get("content",""))
-                  ok=(r.status==200 and "READY" in msg.upper())
-                  rows.append({"model":model,"http":r.status,"ready":ok,"contentPrefix":msg[:160]})
-                  if not ok:
-                      raise SystemExit(f"{model} did not return READY")
-              except urllib.error.HTTPError as e:
-                  detail=e.read(1200).decode("utf-8","replace")
-                  rows.append({"model":model,"http":e.code,"ready":False,"errorPrefix":detail})
-                  print(json.dumps(rows,ensure_ascii=False))
-                  raise
-          print(json.dumps(rows,ensure_ascii=False,sort_keys=True))
-          PY
+          echo '=== filesystem ==='
+          df -h / /opt/chat-v2/staging 2>/dev/null || true
+          echo '=== docker system df ==='
+          docker system df 2>/dev/null || true
+          echo '=== chat images ==='
+          docker images --format '{{.Repository}} {{.Tag}} {{.ID}} {{.Size}} {{.CreatedSince}}'             | grep -E '^chat-ailucy-v2 ' | head -80 || true
+          echo '=== running containers/images ==='
+          docker ps --format '{{.Names}} {{.Image}} {{.Status}}' | head -80 || true
+          echo '=== staging tree top-level ==='
+          du -x -h -d 2 /opt/chat-v2/staging 2>/dev/null | sort -h | tail -40 || true
+          echo '=== runner work usage ==='
+          du -x -h -d 2 /opt/actions-runner-chat-staging/_work 2>/dev/null | sort -h | tail -40 || true
