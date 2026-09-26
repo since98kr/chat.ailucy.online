@@ -16,26 +16,70 @@ concurrency:
 jobs:
   probe:
     runs-on: [self-hosted, linux, x64, chat-staging]
-    timeout-minutes: 6
+    timeout-minutes: 10
     steps:
-      - name: Reclaim unused Docker build cache only
+      - name: Reclaim old unused Chat images only
         shell: bash
         run: |
           set -euo pipefail
           echo '=== before ==='
-          df -B1 / | tail -1
+          df -h /
           docker system df || true
 
-          docker builder prune --force
+          python3 - <<'PY'
+          import datetime, json, subprocess
 
+          cutoff = datetime.datetime.now(datetime.timezone.utc) - datetime.timedelta(days=14)
+
+          def run(args):
+              return subprocess.run(args, check=True, capture_output=True, text=True).stdout.strip()
+
+          running = set()
+          ps = run(["docker","ps","-q"])
+          if ps:
+              for cid in ps.splitlines():
+                  info = json.loads(run(["docker","inspect",cid]))[0]
+                  running.add(info["Image"])
+
+          ids = sorted(set(x for x in run(["docker","images","chat-ailucy-v2","-q"]).splitlines() if x))
+          candidates=[]
+          kept=[]
+          for short in ids:
+              info = json.loads(run(["docker","image","inspect",short]))[0]
+              full=info["Id"]
+              created=datetime.datetime.fromisoformat(info["Created"].replace("Z","+00:00"))
+              tags=info.get("RepoTags") or []
+              record={"id":full,"short":short,"created":created.isoformat(),"tags":tags}
+              if full in running:
+                  kept.append((record,"running"))
+              elif created >= cutoff:
+                  kept.append((record,"newer-than-14d"))
+              else:
+                  candidates.append(record)
+
+          print("running_image_ids=", len(running))
+          print("kept=")
+          for rec,why in kept:
+              print(why, rec["short"], rec["created"], ",".join(rec["tags"]))
+          print("remove_candidates=")
+          for rec in candidates:
+              print(rec["short"], rec["created"], ",".join(rec["tags"]))
+
+          for rec in candidates:
+              subprocess.run(["docker","image","rm",rec["id"]], check=True)
+
+          print(f"removed={len(candidates)}")
+          PY
+
+          docker image prune --force
           echo '=== after ==='
-          df -B1 / | tail -1
+          df -h /
           docker system df || true
 
           free_bytes=$(df -B1 --output=avail / | tail -1 | tr -d ' ')
-          min_bytes=$((2147483648))
-          echo "free_bytes=$free_bytes minimum=$min_bytes"
-          if (( free_bytes < min_bytes )); then
-            echo "Insufficient space remains after build-cache prune." >&2
+          target_bytes=$((6 * 1024 * 1024 * 1024))
+          echo "free_bytes=$free_bytes target=$target_bytes"
+          if (( free_bytes < target_bytes )); then
+            echo "Less than 6 GiB free remains; stop before another staging build." >&2
             exit 2
           fi
