@@ -10,27 +10,32 @@ permissions:
   contents: read
 
 concurrency:
-  group: chat-v2-staging-disk-probe
+  group: chat-v2-staging-disk-recovery
   cancel-in-progress: true
 
 jobs:
   probe:
     runs-on: [self-hosted, linux, x64, chat-staging]
-    timeout-minutes: 4
+    timeout-minutes: 6
     steps:
-      - name: Inspect staging disk and Docker usage read-only
+      - name: Reclaim unused Docker build cache only
         shell: bash
         run: |
           set -euo pipefail
-          echo '=== filesystem ==='
-          df -h / /opt/chat-v2/staging 2>/dev/null || true
-          echo '=== docker system df ==='
-          docker system df 2>/dev/null || true
-          echo '=== chat images ==='
-          docker images --format '{{.Repository}} {{.Tag}} {{.ID}} {{.Size}} {{.CreatedSince}}'             | grep -E '^chat-ailucy-v2 ' | head -80 || true
-          echo '=== running containers/images ==='
-          docker ps --format '{{.Names}} {{.Image}} {{.Status}}' | head -80 || true
-          echo '=== staging tree top-level ==='
-          du -x -h -d 2 /opt/chat-v2/staging 2>/dev/null | sort -h | tail -40 || true
-          echo '=== runner work usage ==='
-          du -x -h -d 2 /opt/actions-runner-chat-staging/_work 2>/dev/null | sort -h | tail -40 || true
+          echo '=== before ==='
+          df -B1 / | tail -1
+          docker system df || true
+
+          docker builder prune --force
+
+          echo '=== after ==='
+          df -B1 / | tail -1
+          docker system df || true
+
+          free_bytes=$(df -B1 --output=avail / | tail -1 | tr -d ' ')
+          min_bytes=$((2147483648))
+          echo "free_bytes=$free_bytes minimum=$min_bytes"
+          if (( free_bytes < min_bytes )); then
+            echo "Insufficient space remains after build-cache prune." >&2
+            exit 2
+          fi
