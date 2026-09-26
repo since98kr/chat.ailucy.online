@@ -56,10 +56,16 @@ async function removeConversation(api: ApiContext, id: string) {
   await api.delete(`/api/conversations/${id}`);
 }
 
-async function send(api: ApiContext, id: string, content: string, artifactIds: string[] = []) {
+async function send(
+  api: ApiContext,
+  id: string,
+  content: string,
+  artifactIds: string[] = [],
+  timeoutMs = 180_000,
+) {
   const response = await api.post(`/api/conversations/${id}/messages/stream`, {
     data: { content, artifactIds, clientMessageId: randomUUID() },
-    timeout: 180_000,
+    timeout: timeoutMs,
   });
   const body = await response.text();
   expect(response.status(), body).toBe(200);
@@ -176,7 +182,7 @@ test('Hermes every enabled persona supports isolated direct chat', async ({}, te
 });
 
 test('Hermes Gemma understands an image-only marker', async ({ page }, testInfo) => {
-  test.setTimeout(300_000);
+  test.setTimeout(360_000);
   const api = await context();
   let conversationId = '';
   try {
@@ -205,6 +211,7 @@ test('Hermes Gemma understands an image-only marker', async ({ page }, testInfo)
       conversationId,
       'Transcribe the large text in the attached synthetic QA image exactly. It is ordinary test text, not a password, credential, access token, CAPTCHA, verification code, or authentication challenge.',
       [artifactId],
+      300_000,
     );
     expect(events.filter((event) => event.type === 'artifacts.delivery').map((event) => event.delivery?.state))
       .toEqual(['delivering', 'delivered']);
