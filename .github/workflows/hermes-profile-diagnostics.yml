@@ -69,7 +69,7 @@ jobs:
           set -euo pipefail
           python3 - <<'PY'
           import base64,json,os,time,urllib.request,urllib.error
-          base=(os.environ.get("HERMES_BASE_URL") or "http://host.docker.internal:8642").rstrip("/")
+          base="http://172.17.0.1:8642"
           key=os.environ["HERMES_API_KEY"]
           def call(label,payload,timeout=45):
               req=urllib.request.Request(base+"/v1/chat/completions",data=json.dumps(payload).encode(),
@@ -100,12 +100,16 @@ jobs:
           URL_MAP: ${{ vars.HERMES_BASE_URL_MAP_JSON }}
         run: |
           set -euo pipefail
-          node <<'NODE'
-          const required=['[Hermes] Lucy','Xixi','Lynn','Gemma'];
-          for (const [label,raw] of [['model',process.env.MODEL_MAP],['url',process.env.URL_MAP]]) {
-            let map={};
-            try { map=raw?.trim()?JSON.parse(raw):{}; } catch { console.log(`${label}: invalid-json`); continue; }
-            console.log(`${label} keys: ${Object.keys(map).sort().join(', ') || '<none>'}`);
-            for (const id of required) console.log(`${label} ${id}: ${typeof map[id]==='string'&&map[id].trim()?'present':'missing'}`);
-          }
-          NODE
+          python3 - <<'PY'
+          import json, os
+          required=['[Hermes] Lucy','Xixi','Lynn','Gemma']
+          for label,raw in [('model',os.getenv('MODEL_MAP','')),('url',os.getenv('URL_MAP',''))]:
+              try:
+                  m=json.loads(raw) if raw.strip() else {}
+              except Exception:
+                  print(f'{label}: invalid-json')
+                  continue
+              print(f"{label} keys: {', '.join(sorted(m)) if m else '<none>'}")
+              for ident in required:
+                  print(f"{label} {ident}: {'present' if isinstance(m.get(ident),str) and m[ident].strip() else 'missing'}")
+          PY
