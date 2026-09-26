@@ -2,6 +2,9 @@ name: Diagnose Hermes staging profiles
 
 on:
   workflow_dispatch:
+  push:
+    branches:
+      - lucy/chat-hermes-mux-diagnostics-20260927
 
 permissions:
   contents: read
@@ -56,6 +59,39 @@ jobs:
             echo "--- hermes $args"
             timeout 10s hermes $args 2>&1 | sed -E 's/(key|token|secret|password)=[^[:space:]]+/\1=<redacted>/Ig' | head -120 || true
           done
+
+      - name: Probe Hermes multiplexer Gemma text and image paths
+        shell: bash
+        env:
+          HERMES_API_KEY: ${{ secrets.HERMES_API_KEY }}
+          HERMES_BASE_URL: ${{ vars.HERMES_BASE_URL }}
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import base64,json,os,time,urllib.request,urllib.error
+          base=(os.environ.get("HERMES_BASE_URL") or "http://host.docker.internal:8642").rstrip("/")
+          key=os.environ["HERMES_API_KEY"]
+          def call(label,payload,timeout=45):
+              req=urllib.request.Request(base+"/v1/chat/completions",data=json.dumps(payload).encode(),
+                headers={"Authorization":"Bearer "+key,"Content-Type":"application/json","User-Agent":"Lucy-CDL-mux-diagnostic"},
+                method="POST")
+              t=time.time()
+              try:
+                  with urllib.request.urlopen(req,timeout=timeout) as r:
+                      raw=r.read(6000).decode("utf-8","replace")
+                  print(json.dumps({"label":label,"http":r.status,"elapsed":round(time.time()-t,3),"bodyPrefix":raw[:1200]},ensure_ascii=False))
+              except urllib.error.HTTPError as e:
+                  raw=e.read(4000).decode("utf-8","replace")
+                  print(json.dumps({"label":label,"http":e.code,"elapsed":round(time.time()-t,3),"bodyPrefix":raw[:1200]},ensure_ascii=False))
+              except Exception as e:
+                  print(json.dumps({"label":label,"http":None,"elapsed":round(time.time()-t,3),"error":type(e).__name__+":"+str(e)},ensure_ascii=False))
+          call("gemma-text",{"model":"gemma","messages":[{"role":"user","content":"Reply exactly READY."}],"max_tokens":16})
+          png="iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAusB9Y9Z9U8AAAAASUVORK5CYII="
+          call("gemma-image",{"model":"gemma","messages":[{"role":"user","content":[
+            {"type":"text","text":"Reply exactly READY after processing this attached image."},
+            {"type":"image_url","image_url":{"url":"data:image/png;base64,"+png}}
+          ]}],"max_tokens":32},timeout=90)
+          PY
 
       - name: Inspect staging map coverage
         shell: bash
