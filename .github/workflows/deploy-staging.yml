@@ -194,6 +194,7 @@ jobs:
           OPENCLAW_READINESS_PROBE_PROMPT: ${{ vars.OPENCLAW_READINESS_PROBE_PROMPT || vars.LETTA_READINESS_PROBE_PROMPT }}
           HERMES_BASE_URL: ${{ vars.HERMES_BASE_URL }}
           # Hermes 0.21.x routes named profiles through the default 8642 gateway multiplexer.
+          # Staging canaries require hermes-agent, gemma, lynn, and xixi to resolve through that single endpoint.
           # Keep the model map below, but do not send staging personas to retired per-profile ports.
           HERMES_BASE_URL_MAP_JSON: ''
           HERMES_CHAT_PATH: ${{ vars.HERMES_CHAT_PATH }}
