@@ -5,6 +5,7 @@ import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import type { FastifyInstance } from 'fastify';
 import { buildApp } from './index.js';
+import { httpAdapterConfig } from './adapters/http.js';
 
 process.env.NODE_ENV = 'test';
 
@@ -32,6 +33,20 @@ describe('B200 participant contract', () => {
     await app.ready();
     return app;
   }
+
+  it('uses OpenAI-compatible B200 defaults when a base URL is configured', () => {
+    process.env.B200_BASE_URL = 'http://b200.test';
+    const config = httpAdapterConfig('b200');
+    expect(config).toMatchObject({
+      baseUrl: 'http://b200.test',
+      chatPath: '/v1/chat/completions',
+      healthPath: '/health',
+      agentId: '[B200] qwen3.8-27b',
+      timeoutMs: 60000,
+      protocol: 'openai',
+      modelMap: { '[B200] qwen3.8-27b': 'qwen3.8-27b' },
+    });
+  });
 
   it('keeps B200 visible but inert when B200_BASE_URL is unset', async () => {
     delete process.env.B200_BASE_URL;
