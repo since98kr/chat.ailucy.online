@@ -159,6 +159,7 @@ const adapters: Record<SystemId, ChatBackendAdapter> = {
   openclaw: createAdapter('openclaw'),
   hermes: createAdapter('hermes'),
   claude: createAdapter('claude'),
+  b200: createAdapter('b200'),
 };
 
 export function getAdapter(systemId: SystemId) {
