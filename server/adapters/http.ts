@@ -572,7 +572,8 @@ export function httpAdapterConfig(systemId: SystemId): HttpAdapterConfig | null 
     agentId: process.env[`${prefix}_AGENT_ID`] ?? (b200 ? '[B200] qwen3.8-27b' : undefined),
     timeoutMs: Number(process.env[`${prefix}_TIMEOUT_MS`] ?? (b200 ? 60_000 : 10_000)),
     protocol: parseProtocol(process.env[`${prefix}_PROTOCOL`] ?? (b200 ? 'openai' : undefined)),
-    modelMap: parseModelMap(process.env[`${prefix}_MODEL_MAP_JSON`]),
+    modelMap: parseModelMap(process.env[`${prefix}_MODEL_MAP_JSON`])
+      ?? (b200 ? { '[B200] qwen3.8-27b': 'qwen3.8-27b' } : undefined),
     maxArtifactBytes: Number(process.env[`${prefix}_MAX_ARTIFACT_BYTES`] ?? 10 * 1024 * 1024),
     maxArtifactTotalBytes: Number(process.env[`${prefix}_MAX_ARTIFACT_TOTAL_BYTES`] ?? 20 * 1024 * 1024),
     artifactToolEnabled: parseBoolean(process.env[`${prefix}_ARTIFACT_TOOL_ENABLED`]),
