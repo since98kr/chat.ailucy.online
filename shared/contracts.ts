@@ -1,4 +1,4 @@
-export type SystemId = 'openclaw' | 'hermes' | 'claude';
+export type SystemId = 'openclaw' | 'hermes' | 'claude' | 'b200';
 /** Persisted/input compatibility only. New product state must never use this value. */
 export type LegacySystemId = 'letta';
 export type ConversationStatus = 'active' | 'archived' | 'trashed';
