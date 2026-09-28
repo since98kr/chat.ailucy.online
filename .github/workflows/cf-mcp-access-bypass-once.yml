@@ -1,0 +1,77 @@
+name: One-shot CF MCP Access bypass
+
+on:
+  workflow_dispatch:
+
+jobs:
+  bypass:
+    runs-on: [self-hosted, chat-staging]
+    environment: staging
+    timeout-minutes: 10
+    steps:
+      - name: Create or verify narrow MCP bypass
+        env:
+          CF_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CF_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: |
+          set -euo pipefail
+          base="https://api.cloudflare.com/client/v4/accounts/${CF_ACCOUNT_ID}/access"
+
+          get() {
+            curl -fsS -H "Authorization: Bearer ${CF_API_TOKEN}" -H "Content-Type: application/json" "$1"
+          }
+          post() {
+            curl -fsS -X POST -H "Authorization: Bearer ${CF_API_TOKEN}" -H "Content-Type: application/json" --data "$2" "$1"
+          }
+
+          verify="$(curl -fsS -H "Authorization: Bearer ${CF_API_TOKEN}" https://api.cloudflare.com/client/v4/user/tokens/verify)"
+          test "$(jq -r '.success' <<<"$verify")" = "true"
+          echo "token_verify=ok"
+
+          apps="$(get "${base}/apps?per_page=100")"
+          test "$(jq -r '.success' <<<"$apps")" = "true"
+
+          app_id="$(jq -r '[.result[]? | select(.domain=="mcp.ailucy.online/mcp")][0].id // empty' <<<"$apps")"
+          if [ -z "$app_id" ]; then
+            body="$(jq -nc '{name:"AI Egress MCP public endpoint",domain:"mcp.ailucy.online/mcp",type:"self_hosted",session_duration:"24h",app_launcher_visible:false}')"
+            created="$(post "${base}/apps" "$body")"
+            test "$(jq -r '.success' <<<"$created")" = "true"
+            app_id="$(jq -r '.result.id' <<<"$created")"
+            echo "app=create domain=mcp.ailucy.online/mcp"
+          else
+            echo "app=exists domain=mcp.ailucy.online/mcp"
+          fi
+
+          policies="$(get "${base}/apps/${app_id}/policies")"
+          bypass_id="$(jq -r '[.result[]? | select(.decision=="bypass") | select(any(.include[]?; has("everyone")))][0].id // empty' <<<"$policies")"
+          if [ -z "$bypass_id" ]; then
+            pbody="$(jq -nc '{name:"Bypass MCP machine endpoint",decision:"bypass",precedence:1,include:[{everyone:{}}]}')"
+            pcreated="$(post "${base}/apps/${app_id}/policies" "$pbody")"
+            test "$(jq -r '.success' <<<"$pcreated")" = "true"
+            bypass_id="$(jq -r '.result.id' <<<"$pcreated")"
+            echo "policy=create decision=bypass include=everyone"
+          else
+            echo "policy=exists decision=bypass include=everyone"
+          fi
+
+          echo "app_id=$app_id"
+          echo "policy_id=$bypass_id"
+
+      - name: Verify Access login is gone only at MCP path
+        run: |
+          set -euo pipefail
+          headers="$(mktemp)"
+          body="$(mktemp)"
+          code="$(curl -sS --max-time 20 -D "$headers" -o "$body" -w '%{http_code}'             -X POST 'https://mcp.ailucy.online/mcp'             -H 'Content-Type: application/json'             --data '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-03-26","capabilities":{},"clientInfo":{"name":"cf-bypass-probe","version":"1"}}}' || true)"
+          location="$(awk 'BEGIN{IGNORECASE=1} /^location:/{sub(/^[^:]+:[[:space:]]*/,""); sub(/\r$/,""); print; exit}' "$headers")"
+          echo "http_code=$code"
+          if printf '%s' "$location" | grep -Eq 'cloudflareaccess\.com|/cdn-cgi/access/login'; then
+            echo "ERROR: Cloudflare Access login redirect still active"
+            exit 1
+          fi
+          if [ "$code" = "401" ]; then
+            echo "PASS: Cloudflare login bypassed; MCP bearer auth is now the active gate"
+            exit 0
+          fi
+          echo "ERROR: expected MCP-side 401 without bearer, got $code"
+          exit 1
