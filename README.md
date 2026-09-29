@@ -45,6 +45,8 @@ Chat V2
 - Separate active, archived, and trashed lists.
 - Search across titles, previews, message bodies, and filenames.
 - Branch from a selected message while retaining source lineage, participants, and federation boundary.
+- Lightweight in-message markdown (fenced code blocks, inline code, bold) plus automatic URL links, rendered without `dangerouslySetInnerHTML`.
+- Bottom-anchored auto-scroll that follows the live stream only while the reader is pinned near the bottom, with a jump-to-latest control when reading history.
 - Markdown transcript, collaboration, Capsule, and workflow-evidence export.
 
 ### Hermes multi-agent collaboration
@@ -128,7 +130,7 @@ Chat V2
 - Non-mutating staging readiness workflow.
 - Strict staging deployment with exact-runtime preflight, verified backup, authenticated status, SHA validation, evidence retention, and automatic rollback.
 
-Production deployment and Cloudflare routing are not enabled.
+Production deployment is live: `chat.ailucy.online` is served from the home production server (`agentlucy`) via a Cloudflare Access + Tunnel origin into the `chat-v2-production` container, with the OpenClaw Gateway reached over a private authenticated ingress. Concrete tunnel IDs, host ports, and process identifiers are intentionally kept out of this document and live in the private ops runbook.
 
 ## Development
 
