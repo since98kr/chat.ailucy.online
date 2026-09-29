@@ -1,5 +1,5 @@
-import { useState } from 'react';
-import { Bot, Check, Copy, Download, FileText, GitBranch, Image, LoaderCircle, RefreshCw } from 'lucide-react';
+import { useEffect, useRef, useState } from 'react';
+import { ArrowDown, Bot, Check, Copy, Download, FileText, GitBranch, Image, LoaderCircle, RefreshCw } from 'lucide-react';
 import type { ArtifactDeliveryRecord, ArtifactRecord, ConversationDetail, MessageRecord, SystemId } from '../shared/contracts';
 import { isInlineImageMime } from '../shared/artifact-mime';
 import { artifactContentUrl, artifactDownloadUrl } from './api';
@@ -8,6 +8,11 @@ import { renderMessageContent } from './message-content';
 import MessageTranscript from './MessageTranscript';
 import type { RunTranscript, TranscriptState } from './run-transcript';
 import { selectTranscripts } from './run-transcript';
+
+// Distance (px) from the bottom within which we still consider the user to be
+// "following" the live stream and may auto-scroll. Beyond this the user is
+// reading history, so we must not yank them back down.
+const NEAR_BOTTOM_THRESHOLD = 120;
 
 const sourceBadgeStyle = {
   display: 'inline-block',
@@ -66,6 +71,53 @@ export default function MessageStream({
   retryEnabled: boolean;
   retryingMessageId: string | null;
 }) {
+  const scrollRef = useRef<HTMLDivElement | null>(null);
+  // Whether the user is currently pinned to the bottom of the transcript. Only
+  // while pinned do new messages / stream deltas auto-scroll into view.
+  const pinnedRef = useRef(true);
+  const [showJump, setShowJump] = useState(false);
+  const conversationId = conversation?.id ?? null;
+  const messages = conversation?.messages;
+
+  const isNearBottom = () => {
+    const node = scrollRef.current;
+    if (!node) return true;
+    return node.scrollHeight - node.scrollTop - node.clientHeight <= NEAR_BOTTOM_THRESHOLD;
+  };
+
+  const scrollToBottom = (behavior: ScrollBehavior = 'auto') => {
+    streamEndRef.current?.scrollIntoView({ block: 'end', behavior });
+    pinnedRef.current = true;
+    setShowJump(false);
+  };
+
+  // Track the user's scroll intent. Reading history unpins auto-scroll; scrolling
+  // back to the bottom re-pins it.
+  const handleScroll = () => {
+    const near = isNearBottom();
+    pinnedRef.current = near;
+    setShowJump(!near);
+  };
+
+  // On conversation switch, always land at the newest message.
+  useEffect(() => {
+    if (!conversationId) return;
+    pinnedRef.current = true;
+    setShowJump(false);
+    requestAnimationFrame(() => streamEndRef.current?.scrollIntoView({ block: 'end' }));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [conversationId]);
+
+  // On new content / status changes, auto-scroll only when the user is pinned.
+  useEffect(() => {
+    if (pinnedRef.current) {
+      streamEndRef.current?.scrollIntoView({ block: 'end' });
+    } else {
+      setShowJump(true);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [messages, runStatus, retryingMessageId]);
+
   if (!conversation && !loading) {
     return (
       <div className="conversation-canvas">
@@ -81,7 +133,7 @@ export default function MessageStream({
 
   return (
     <div className="conversation-canvas">
-      <div className="message-stream">
+      <div className="message-stream" ref={scrollRef} onScroll={handleScroll}>
         {conversation?.messages.map((message, messageIndex, messages) => {
           const siblingAttempts = !message.parentMessageId || message.role !== 'assistant'
             ? []
@@ -117,6 +169,16 @@ export default function MessageStream({
         {runStatus && <div className="run-status"><LoaderCircle size={15} className="spin" /> {runStatus}</div>}
         <div ref={streamEndRef} />
       </div>
+      {showJump && (
+        <button
+          type="button"
+          className="jump-to-latest"
+          onClick={() => scrollToBottom('smooth')}
+          aria-label="최신 메시지로 이동"
+        >
+          <ArrowDown size={15} /> 최신 메시지
+        </button>
+      )}
     </div>
   );
 }
