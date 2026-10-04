@@ -46,6 +46,27 @@ describe('adapter health preflight semantics', () => {
     expect(check.detail).toContain('optional-unconfigured');
   });
 
+  it('treats an intentionally unconfigured B200 backend as optional and non-routeable', () => {
+    const check = evaluateAdapterHealthForPreflight(
+      'b200',
+      { ok: false, mode: 'unavailable', detail: 'b200 real backend is not configured', latencyMs: 0 },
+      true,
+      {},
+    );
+    expect(check).toMatchObject({ ok: true, level: 'warning' });
+    expect(check.detail).toContain('optional-unconfigured');
+  });
+
+  it('fails closed when B200 is configured but unhealthy', () => {
+    const check = evaluateAdapterHealthForPreflight(
+      'b200',
+      { ok: false, mode: 'http', detail: '503 Service Unavailable', latencyMs: 5 },
+      true,
+      { B200_BASE_URL: 'http://b200.internal' },
+    );
+    expect(check).toMatchObject({ ok: false, level: 'error' });
+  });
+
   it('does not waive an HTTP Claude failure merely because CLAUDE_BASE_URL is absent from the caller env', () => {
     const check = evaluateAdapterHealthForPreflight(
       'claude',
