@@ -132,8 +132,8 @@ export default function MessageStream({
   }
 
   return (
-    <div className="conversation-canvas">
-      <div className="message-stream" ref={scrollRef} onScroll={handleScroll}>
+    <div className="conversation-canvas" ref={scrollRef} onScroll={handleScroll}>
+      <div className="message-stream">
         {conversation?.messages.map((message, messageIndex, messages) => {
           const siblingAttempts = !message.parentMessageId || message.role !== 'assistant'
             ? []
