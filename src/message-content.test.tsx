@@ -22,7 +22,7 @@ describe('message content rendering', () => {
   });
 
   it('renders fenced code without injecting raw HTML', () => {
-    const html = render('\\`\\`\\`html\\n<script>alert(1)</script>\\`\\`\\`');
+    const html = render('```html\n<script>alert(1)</script>```');
     expect(html).toContain('class="message-code-block"');
     expect(html).toContain('&lt;script&gt;alert(1)&lt;/script&gt;');
     expect(html).not.toContain('<script>');
