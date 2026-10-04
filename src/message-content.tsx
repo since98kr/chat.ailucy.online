@@ -123,7 +123,25 @@ function renderInline(text: string, keyPrefix: string): ReactNode[] {
       );
     }
     if (token.type === 'bold') {
-      return <strong key={key}>{token.value}</strong>;
+      return (
+        <strong key={key}>
+          {segmentMessageContent(token.value).map((segment, segmentIndex) => (
+            segment.type === 'link'
+              ? (
+                <a
+                  key={`${key}-bold-link-${segmentIndex}`}
+                  href={segment.value}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="message-link"
+                >
+                  {segment.value}
+                </a>
+              )
+              : <span key={`${key}-bold-text-${segmentIndex}`}>{segment.value}</span>
+          ))}
+        </strong>
+      );
     }
     return <span key={key}>{token.value}</span>;
   });
