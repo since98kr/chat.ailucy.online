@@ -246,6 +246,8 @@
 
 @keyframes blink { 50% { opacity: .2; } }
 
+.conversation-canvas { position: relative; }
+
 /* Jump-to-latest button (shown when the user has scrolled up during a stream) */
 .jump-to-latest {
   position: absolute;
