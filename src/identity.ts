@@ -5,9 +5,12 @@ export const OPENCLAW_LUCY_ID = '[OpenClaw] Lucy';
 export const CHATGPT_LUCY_ID = '[ChatGPT] Lucy';
 
 export function displaySystemName(systemId: SystemId) {
-  if (systemId === 'openclaw') return 'OpenClaw';
-  if (systemId === 'hermes') return 'Hermes';
-  return 'Claude';
+  switch (systemId) {
+    case 'openclaw': return 'OpenClaw';
+    case 'hermes': return 'Hermes';
+    case 'claude': return 'Claude';
+    case 'b200': return 'B200';
+  }
 }
 
 /** Legacy agent ids may still arrive from migrated historical messages. */

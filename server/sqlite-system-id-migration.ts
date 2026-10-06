@@ -11,7 +11,8 @@ function quoted(identifier: string) {
 }
 
 const LEGACY_SYSTEM_ID_CHECK = /\('letta'\s*,\s*'hermes'(?:\s*,\s*'claude')?\)/g;
-const CANONICAL_SYSTEM_ID_CHECK = "('openclaw', 'hermes', 'claude')";
+const CANONICAL_THREE_SYSTEM_ID_CHECK = /\('openclaw'\s*,\s*'hermes'\s*,\s*'claude'\)/g;
+const CANONICAL_SYSTEM_ID_CHECK = "('openclaw', 'hermes', 'claude', 'b200')";
 
 /**
  * Migrate legacy persisted `letta` system identity into canonical `openclaw`.
@@ -34,8 +35,9 @@ export function widenSystemIdCheckConstraints(db: Database.Database, table: stri
 
   const hasLegacyIdentity = sql.includes("'letta'");
   const hasCanonicalIdentity = sql.includes("'openclaw'");
-  if (!hasLegacyIdentity && hasCanonicalIdentity) return false;
-  if (!hasLegacyIdentity) return false;
+  const hasB200Identity = sql.includes("'b200'");
+  if (!hasLegacyIdentity && hasCanonicalIdentity && hasB200Identity) return false;
+  if (!hasLegacyIdentity && !hasCanonicalIdentity) return false;
   if (db.inTransaction) throw new Error(`Cannot migrate ${table} system IDs inside an active transaction`);
 
   const tableName = quoted(table);
@@ -63,9 +65,11 @@ export function widenSystemIdCheckConstraints(db: Database.Database, table: stri
     /^CREATE TABLE\s+(?:IF NOT EXISTS\s+)?(?:"[^"]+"|`[^`]+`|\[[^\]]+\]|\S+)/i,
     `CREATE TABLE ${tempName}`,
   );
-  const createSql = renamedCreateSql.replace(LEGACY_SYSTEM_ID_CHECK, CANONICAL_SYSTEM_ID_CHECK);
+  const createSql = renamedCreateSql
+    .replace(LEGACY_SYSTEM_ID_CHECK, CANONICAL_SYSTEM_ID_CHECK)
+    .replace(CANONICAL_THREE_SYSTEM_ID_CHECK, CANONICAL_SYSTEM_ID_CHECK);
   if (createSql === renamedCreateSql) {
-    throw new Error(`Cannot migrate ${table}: expected legacy SystemId CHECK was not found`);
+    throw new Error(`Cannot migrate ${table}: expected legacy/canonical SystemId CHECK was not found`);
   }
 
   const foreignKeysEnabled = Number(db.pragma('foreign_keys', { simple: true })) !== 0;

@@ -561,17 +561,19 @@ export function httpAdapterConfig(systemId: SystemId): HttpAdapterConfig | null 
   const prefix = systemId.toUpperCase();
   const baseUrl = process.env[`${prefix}_BASE_URL`]?.trim();
   if (!baseUrl) return null;
+  const b200 = systemId === 'b200';
   return {
     baseUrl,
     baseUrlMap: parseBaseUrlMap(process.env[`${prefix}_BASE_URL_MAP_JSON`]),
-    chatPath: process.env[`${prefix}_CHAT_PATH`] ?? '/v1/chat/stream',
+    chatPath: process.env[`${prefix}_CHAT_PATH`] ?? (b200 ? '/v1/chat/completions' : '/v1/chat/stream'),
     healthPath: process.env[`${prefix}_HEALTH_PATH`] ?? '/health',
     apiKey: process.env[`${prefix}_API_KEY`],
     provider: process.env[`${prefix}_PROVIDER`]?.trim() || undefined,
-    agentId: process.env[`${prefix}_AGENT_ID`],
-    timeoutMs: Number(process.env[`${prefix}_TIMEOUT_MS`] ?? 10_000),
-    protocol: parseProtocol(process.env[`${prefix}_PROTOCOL`]),
-    modelMap: parseModelMap(process.env[`${prefix}_MODEL_MAP_JSON`]),
+    agentId: process.env[`${prefix}_AGENT_ID`] ?? (b200 ? '[B200] qwen3.8-27b' : undefined),
+    timeoutMs: Number(process.env[`${prefix}_TIMEOUT_MS`] ?? (b200 ? 60_000 : 10_000)),
+    protocol: parseProtocol(process.env[`${prefix}_PROTOCOL`] ?? (b200 ? 'openai' : undefined)),
+    modelMap: parseModelMap(process.env[`${prefix}_MODEL_MAP_JSON`])
+      ?? (b200 ? { '[B200] qwen3.8-27b': 'qwen3.8-27b' } : undefined),
     maxArtifactBytes: Number(process.env[`${prefix}_MAX_ARTIFACT_BYTES`] ?? 10 * 1024 * 1024),
     maxArtifactTotalBytes: Number(process.env[`${prefix}_MAX_ARTIFACT_TOTAL_BYTES`] ?? 20 * 1024 * 1024),
     artifactToolEnabled: parseBoolean(process.env[`${prefix}_ARTIFACT_TOOL_ENABLED`]),

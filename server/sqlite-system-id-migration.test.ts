@@ -12,6 +12,7 @@ delete process.env.OPENCLAW_BASE_URL;
 delete process.env.LETTA_BASE_URL;
 delete process.env.HERMES_BASE_URL;
 delete process.env.CLAUDE_BASE_URL;
+delete process.env.B200_BASE_URL;
 
 describe('canonical SystemId schema migration', () => {
   let app: FastifyInstance | undefined;
@@ -23,9 +24,10 @@ describe('canonical SystemId schema migration', () => {
     app = undefined;
     directory = undefined;
     delete process.env.CLAUDE_BASE_URL;
+    delete process.env.B200_BASE_URL;
   });
 
-  it('rebuilds every legacy SystemId CHECK, migrates Letta rows to OpenClaw, and accepts Claude', () => {
+  it('rebuilds legacy SystemId CHECKs, migrates Letta rows, and accepts canonical systems', () => {
     const db = new Database(':memory:');
     db.exec(`
       CREATE TABLE capsules (
@@ -41,6 +43,7 @@ describe('canonical SystemId schema migration', () => {
       target_system_id: 'hermes',
     });
     expect(() => db.prepare('INSERT INTO capsules VALUES (?, ?, ?)').run('new', 'claude', 'hermes')).not.toThrow();
+    expect(() => db.prepare('INSERT INTO capsules VALUES (?, ?, ?)').run('b200', 'b200', 'hermes')).not.toThrow();
     expect(() => db.prepare('INSERT INTO capsules VALUES (?, ?, ?)').run('retired', 'letta', 'hermes')).toThrow();
     expect(widenSystemIdCheckConstraints(db, 'capsules')).toBe(false);
     db.close();
@@ -156,7 +159,7 @@ describe('canonical SystemId schema migration', () => {
     });
 
     const config = await app.inject({ method: 'GET', url: '/api/conversations/legacy-chat/federation' });
-    expect(config.json().federation.config.allowedSystemIds).toEqual(['openclaw', 'hermes', 'claude']);
+    expect(config.json().federation.config.allowedSystemIds).toEqual(['openclaw', 'hermes', 'claude', 'b200']);
     expect(config.json().federation.capsules).toEqual(expect.arrayContaining([
       expect.objectContaining({ id: 'legacy-capsule', sourceSystemId: 'openclaw', targetSystemId: 'hermes' }),
     ]));

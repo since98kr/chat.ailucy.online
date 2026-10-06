@@ -61,6 +61,10 @@ export function claudeDirectChatEnabled(env: NodeJS.ProcessEnv = process.env) {
   return Boolean(env.CLAUDE_BASE_URL?.trim());
 }
 
+export function b200DirectChatEnabled(env: NodeJS.ProcessEnv = process.env) {
+  return Boolean(env.B200_BASE_URL?.trim());
+}
+
 const seedAgents: Array<Omit<AgentRecord, 'createdAt' | 'updatedAt'>> = [
   {
     id: OPENCLAW_LUCY_ID,
@@ -140,6 +144,19 @@ const seedAgents: Array<Omit<AgentRecord, 'createdAt' | 'updatedAt'>> = [
     isLead: true,
     sortOrder: 15,
   },
+  {
+    id: '[B200] qwen3.8-27b',
+    systemId: 'b200',
+    displayName: '[B200] qwen3.8-27b',
+    shortName: 'qwen3.8-27b',
+    role: 'Local GPU Model',
+    description: 'OpenAI-compatible local model served from the private B200 GPU runtime.',
+    capabilities: ['reasoning', 'analysis', 'conversation'],
+    enabled: true,
+    directChatEnabled: false,
+    isLead: true,
+    sortOrder: 50,
+  },
 ];
 
 function mapAgent(row: AgentRow): AgentRecord {
@@ -204,7 +221,7 @@ export class CollaborationService {
     this.db.exec(`
       CREATE TABLE IF NOT EXISTS agents (
         id TEXT PRIMARY KEY,
-        system_id TEXT NOT NULL CHECK (system_id IN ('openclaw', 'hermes', 'claude')),
+        system_id TEXT NOT NULL CHECK (system_id IN ('openclaw', 'hermes', 'claude', 'b200')),
         display_name TEXT NOT NULL,
         short_name TEXT NOT NULL,
         role TEXT NOT NULL,
@@ -272,7 +289,9 @@ export class CollaborationService {
         const createdAt = timestamp();
         const directChatEnabled = agent.systemId === 'claude'
           ? claudeDirectChatEnabled()
-          : agent.directChatEnabled;
+          : agent.systemId === 'b200'
+            ? b200DirectChatEnabled()
+            : agent.directChatEnabled;
         statement.run(
           agent.id,
           agent.systemId,

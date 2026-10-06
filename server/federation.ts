@@ -17,7 +17,7 @@ import type { ChatDatabase } from './database.js';
 import { widenSystemIdCheckConstraints } from './sqlite-system-id-migration.js';
 
 const now = () => new Date().toISOString();
-const CANONICAL_SYSTEM_IDS: SystemId[] = ['openclaw', 'hermes', 'claude'];
+const CANONICAL_SYSTEM_IDS: SystemId[] = ['openclaw', 'hermes', 'claude', 'b200'];
 const parseJson = <T>(value: string, fallback: T): T => {
   try {
     return JSON.parse(value) as T;
@@ -179,8 +179,8 @@ export class FederationService {
       CREATE TABLE IF NOT EXISTS memory_capsules (
         id TEXT PRIMARY KEY,
         conversation_id TEXT NOT NULL REFERENCES conversations(id) ON DELETE CASCADE,
-        source_system_id TEXT NOT NULL CHECK (source_system_id IN ('openclaw', 'hermes', 'claude')),
-        target_system_id TEXT NOT NULL CHECK (target_system_id IN ('openclaw', 'hermes', 'claude')),
+        source_system_id TEXT NOT NULL CHECK (source_system_id IN ('openclaw', 'hermes', 'claude', 'b200')),
+        target_system_id TEXT NOT NULL CHECK (target_system_id IN ('openclaw', 'hermes', 'claude', 'b200')),
         title TEXT NOT NULL,
         content TEXT NOT NULL,
         status TEXT NOT NULL DEFAULT 'draft' CHECK (status IN ('draft', 'approved', 'revoked')),
@@ -212,7 +212,7 @@ export class FederationService {
         id TEXT PRIMARY KEY,
         run_id TEXT NOT NULL REFERENCES workflow_runs(id) ON DELETE CASCADE,
         agent_id TEXT NOT NULL,
-        system_id TEXT NOT NULL CHECK (system_id IN ('openclaw', 'hermes', 'claude')),
+        system_id TEXT NOT NULL CHECK (system_id IN ('openclaw', 'hermes', 'claude', 'b200')),
         position INTEGER NOT NULL,
         parallel_group INTEGER NOT NULL DEFAULT 0,
         depends_on_step_ids_json TEXT NOT NULL DEFAULT '[]',
@@ -249,6 +249,14 @@ export class FederationService {
       SET allowed_system_ids_json = ?
       WHERE allowed_system_ids_json LIKE '%"letta"%'
     `).run(JSON.stringify(CANONICAL_SYSTEM_IDS));
+    this.db.prepare(`
+      UPDATE conversation_federation
+      SET allowed_system_ids_json = ?
+      WHERE allowed_system_ids_json = ?
+    `).run(
+      JSON.stringify(CANONICAL_SYSTEM_IDS),
+      JSON.stringify(['openclaw', 'hermes', 'claude']),
+    );
   }
 
   enableConversation(conversationId: string, coordinatorAgentId = '[Hermes] Lucy') {
