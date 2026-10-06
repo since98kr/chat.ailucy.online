@@ -192,6 +192,9 @@ jobs:
           OPENCLAW_READINESS_PROBE_ENABLED: ${{ vars.OPENCLAW_READINESS_PROBE_ENABLED || vars.LETTA_READINESS_PROBE_ENABLED }}
           OPENCLAW_READINESS_PROBE_MODEL: ${{ vars.OPENCLAW_READINESS_PROBE_MODEL || vars.LETTA_READINESS_PROBE_MODEL }}
           OPENCLAW_READINESS_PROBE_PROMPT: ${{ vars.OPENCLAW_READINESS_PROBE_PROMPT || vars.LETTA_READINESS_PROBE_PROMPT }}
+          B200_READINESS_PROBE_ENABLED: ${{ vars.B200_READINESS_PROBE_ENABLED }}
+          B200_READINESS_PROBE_MODEL: ${{ vars.B200_READINESS_PROBE_MODEL }}
+          B200_READINESS_PROBE_PROMPT: ${{ vars.B200_READINESS_PROBE_PROMPT }}
           HERMES_BASE_URL: ${{ vars.HERMES_BASE_URL }}
           # Hermes 0.21.x routes named profiles through the default 8642 gateway multiplexer.
           # Staging canaries require hermes-agent, gemma, lynn, and xixi to resolve through that single endpoint.
