@@ -1,10 +1,18 @@
 # chat.ailucy.online V2 — Product Specification
 
+> **Identity migration note (2026-09):** The canonical cognitive identity is
+> `[OpenClaw] Lucy`. The former `[Letta] Lucy` identity has been retired to a
+> legacy fallback lane and is preserved only until the OpenClaw path fully
+> clears exact-main staging. Runtime data already ships as `[OpenClaw] Lucy`;
+> this specification is aligned to that shipped runtime. Legacy `LETTA_*`
+> environment variables are still honored as fallbacks behind the canonical
+> `OPENCLAW_*` names.
+
 ## Product goal
 
 A private Web/PWA chat interface for communicating with two distinct backend agent systems without flattening their identities or memory models.
 
-- **Letta**: a persistent personal relationship with `[Letta] Lucy`.
+- **OpenClaw**: a persistent personal relationship with `[OpenClaw] Lucy`, the canonical cognitive identity.
 - **Hermes**: a collaborative agent system led by `[Hermes] Lucy`, expandable with Xixi, Lynn, Gemma, and future subagents.
 
 The system is optimized for a single user. It must reduce cognitive load by separating agendas into explicit Conversations.
@@ -17,17 +25,17 @@ System
     └── Participant / Agent
 ```
 
-### Letta
+### OpenClaw
 
 ```text
-Letta
-└── [Letta] Lucy · Personal
+OpenClaw
+└── [OpenClaw] Lucy · Personal
     ├── Conversation A
     ├── Conversation B
     └── Conversation C
 ```
 
-Conversation boundaries separate agendas, while `[Letta] Lucy` retains approved long-term personal memory across Conversations.
+Conversation boundaries separate agendas, while `[OpenClaw] Lucy` retains approved long-term personal memory across Conversations. (The legacy `[Letta] Lucy` lane remains available as a fallback only.)
 
 ### Hermes
 
@@ -45,19 +53,19 @@ Each Hermes Conversation starts with `[Hermes] Lucy`. Subagents may be added per
 
 Identity and transport are separate concerns. The information architecture above describes identity and is not changed by the execution runtime.
 
-`[Letta] Lucy` owns identity, memory, judgment, planning, orchestration and acceptance. When `LETTA_PROTOCOL=openclaw` is configured, Chat reaches that identity through a private OpenClaw Gateway agent endpoint, and OpenClaw owns execution-runtime concerns: workers, tools, tasks, scheduling, approvals and audit.
+`[OpenClaw] Lucy` owns identity, memory, judgment, planning, orchestration and acceptance. When `OPENCLAW_PROTOCOL=openclaw` (legacy `LETTA_PROTOCOL=openclaw`) is configured, Chat reaches that identity through a private OpenClaw Gateway agent endpoint, and OpenClaw owns execution-runtime concerns: workers, tools, tasks, scheduling, approvals and audit.
 
 ```text
 Chat V2
-  -> [Letta] Lucy conversation identity
+  -> [OpenClaw] Lucy conversation identity
   -> private OpenClaw Gateway agent endpoint
-  -> Letta-backed Lucy cognition/session
+  -> OpenClaw-backed Lucy cognition/session
   -> OpenClaw execution fabric
 ```
 
 Consequences for this specification:
 
-- OpenClaw is a runtime, never a Participant or a persona in the product model.
+- OpenClaw is both the canonical identity host and the execution runtime; it is never presented as a separate ad-hoc persona in the product model.
 - A Conversation maps to one stable OpenClaw session key, independent from workflow run and idempotency identifiers.
 - Side-effecting work is denied or approved by OpenClaw policy; Chat never fabricates approval success.
 - The legacy native Letta bridge stays available as a fallback until the OpenClaw path passes exact-main staging.
@@ -105,7 +113,7 @@ Conversation transcript deletion, artifact deletion, and long-term memory deleti
 
 ### Phase 1 — Reliable one-to-one chat
 
-- `[Letta] Lucy` one-to-one chat.
+- `[OpenClaw] Lucy` one-to-one chat.
 - `[Hermes] Lucy` one-to-one chat.
 - Conversation management.
 - Streaming, stop, retry, reconnect, and optimistic user messages.
@@ -166,4 +174,4 @@ Machine-enforced boundaries include:
 
 Under the OpenClaw execution runtime these boundaries are enforced by OpenClaw policy, approval and audit surfaces. Approvals are never weakened to make Chat tests pass, and raw tool arguments, credentials, private paths and audit payloads are never streamed to the browser.
 
-Letta prioritizes efficient production through one responsible Lucy. Hermes preserves cognitive autonomy and independent disagreement while restricting irreversible execution.
+OpenClaw prioritizes efficient production through one responsible Lucy. Hermes preserves cognitive autonomy and independent disagreement while restricting irreversible execution.

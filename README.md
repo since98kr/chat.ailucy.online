@@ -1,6 +1,12 @@
 # chat.ailucy.online V2
 
-A private Web/PWA chat interface for Tei's Letta and Hermes agent systems.
+A private Web/PWA chat interface for Tei's OpenClaw and Hermes agent systems.
+
+> **Identity migration note (2026-09):** The canonical cognitive identity is now
+> `[OpenClaw] Lucy`. The former `[Letta] Lucy` identity has been retired to a
+> legacy fallback and is preserved only until the OpenClaw path fully clears
+> exact-main staging. Runtime data (conversations, authorized agents) already
+> ships as `[OpenClaw] Lucy`; this document is aligned to that shipped runtime.
 
 ## Product model
 
@@ -10,28 +16,29 @@ System
     └── Participant / Agent
 ```
 
-- **Letta** contains `[Letta] Lucy · Personal` and preserves approved long-term personal memory across separated Conversations.
+- **OpenClaw** hosts `[OpenClaw] Lucy` as the canonical cognitive identity and preserves approved long-term personal memory across separated Conversations.
 - **Hermes** contains `[Hermes] Lucy`, Xixi, Lynn, Gemma, and an expandable agent registry.
 - **Conversations** are cognitive workspaces: create, rename, pin, archive, trash, full-content search, branch, and export.
 - Hermes participation is explicit per Conversation; registration never means automatic invocation.
-- Federated Conversations are explicitly enabled and coordinate selected Letta/Hermes lanes without unrestricted memory sharing.
+- Federated Conversations are explicitly enabled and coordinate selected OpenClaw/Hermes lanes without unrestricted memory sharing.
+- The legacy Letta native bridge remains available as a fallback lane and is not removed until the OpenClaw path passes exact-main staging.
 
 ## Runtime boundary
 
-`[Letta] Lucy` is the cognitive identity. OpenClaw is the execution fabric behind that identity. OpenClaw is not a persona, and it does not own Lucy's long-term identity or memory.
+`[OpenClaw] Lucy` is the cognitive identity. OpenClaw is also the execution fabric behind that identity. OpenClaw owns execution-runtime concerns (workers, tools, tasks, scheduler, approvals, audit); it does not fabricate Lucy's judgment or long-term memory contract.
 
 ```text
 Chat V2
-  -> [Letta] Lucy conversation identity
+  -> [OpenClaw] Lucy conversation identity
   -> private OpenClaw Gateway agent endpoint
-  -> Letta-backed Lucy cognition/session
+  -> OpenClaw-backed Lucy cognition/session
   -> OpenClaw execution fabric
        workers / tools / tasks / scheduler / approvals / audit
 ```
 
-- Selected explicitly with `LETTA_PROTOCOL=openclaw`; the Gateway stays on loopback, tailnet, or another private authenticated ingress.
-- `LETTA_OPENCLAW_AGENT_TARGET` is mandatory, so `[Letta] Lucy` is never routed to whichever OpenClaw agent happens to be the current default.
-- Side-effecting execution belongs to the OpenClaw policy, approval, and audit surfaces rather than to a direct Letta shell.
+- Selected explicitly with `OPENCLAW_PROTOCOL=openclaw` (legacy `LETTA_PROTOCOL=openclaw` is still honored as a fallback); the Gateway stays on loopback, tailnet, or another private authenticated ingress.
+- `OPENCLAW_AGENT_TARGET` (legacy `LETTA_OPENCLAW_AGENT_TARGET`) is mandatory, so `[OpenClaw] Lucy` is never routed to whichever OpenClaw agent happens to be the current default.
+- Side-effecting execution belongs to the OpenClaw policy, approval, and audit surfaces rather than to a direct shell.
 - The legacy native Letta bridge remains available as a fallback and is not removed until the OpenClaw path passes exact-main staging.
 - Acceptance criteria and rollout order: [`docs/OPENCLAW_LETTA_CHAT_MIGRATION.md`](docs/OPENCLAW_LETTA_CHAT_MIGRATION.md), [`docs/OPENCLAW_LETTA_CHAT_ACCEPTANCE.md`](docs/OPENCLAW_LETTA_CHAT_ACCEPTANCE.md).
 
@@ -61,7 +68,7 @@ Chat V2
 ### Federated Conversations
 
 - Opt-in cross-system workspace coordinated by `[Hermes] Lucy`.
-- Explicit selection of Letta and Hermes worker lanes.
+- Explicit selection of OpenClaw and Hermes worker lanes.
 - Independent selected workers execute in the same parallel group.
 - Coordinator synthesis executes after required worker steps terminate.
 - Draft, approved, and revoked Memory Capsule lifecycle.
@@ -83,8 +90,8 @@ Chat V2
 
 ### Backend systems
 
-- Independent Letta and Hermes adapter boundaries.
-- OpenClaw Gateway transport for `[Letta] Lucy` with a stable per-Conversation session key.
+- Independent OpenClaw and Hermes adapter boundaries; the native Letta bridge remains a legacy fallback.
+- OpenClaw Gateway transport for `[OpenClaw] Lucy` with a stable per-Conversation session key.
 - Only the current user turn, approved memory capsules, and current attachments are sent; the full transcript is not replayed into a persistent session.
 - Hosted OpenClaw staging configuration gate surfaces a missing Gateway URL or token and loopback-only ingress.
 - Deterministic mock mode for local development.
