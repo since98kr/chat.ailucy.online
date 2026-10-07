@@ -36,9 +36,9 @@ function App() {
     chat.searchConversations(search);
   }, [chat.searchConversations, search]);
 
-  useEffect(() => {
-    streamEndRef.current?.scrollIntoView({ block: 'end' });
-  }, [chat.activeConversation?.messages, chat.runStatus, retryingMessageId]);
+  // Auto-scroll behavior is owned by MessageStream, which only follows the live
+  // stream while the user is pinned to the bottom. App no longer force-scrolls
+  // on every message/status change, so reading history is never interrupted.
 
   useEffect(() => {
     setFederatedTargets([]);
